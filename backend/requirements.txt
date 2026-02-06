@@ -1,0 +1,9 @@
+fastapi
+uvicorn
+sqlalchemy
+psycopg2-binary
+python-dotenv
+streamlit
+google-generativeai
+supabase
+psycopg2-binary
