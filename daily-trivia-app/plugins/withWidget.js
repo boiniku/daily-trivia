@@ -10,7 +10,7 @@ const withWidget = (config) => {
     return withXcodeProject(config, async (config) => {
         const projectName = config.modRequest.projectName;
         const projectPath = config.modResults.filepath;
-        const project = xcode.project(projectPath);
+        const project = config.modResults; // Use the already parsed project instance
 
         const WIDGET_BUNDLE_ID = `${config.ios.bundleIdentifier}.${WIDGET_BUNDLE_ID_SUFFIX}`;
 

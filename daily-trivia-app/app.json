@@ -17,6 +17,7 @@
       "bundleIdentifier": "com.dailytrivia.app",
       "entitlements": {
         "com.apple.security.application-groups": [
+          "group.com.dailytrivia.app",
           "group.com.dailytrivia.app"
         ]
       },
@@ -24,8 +25,12 @@
         "SKAdNetworkItems": [
           {
             "SKAdNetworkIdentifier": "cstr6suwn9.skadnetwork"
+          },
+          {
+            "SKAdNetworkIdentifier": "cstr6suwn9.skadnetwork"
           }
-        ]
+        ],
+        "ITSAppUsesNonExemptEncryption": false
       }
     },
     "android": {
@@ -48,7 +53,14 @@
           "androidAppId": "ca-app-pub-3940256099942544~3347511713",
           "iosAppId": "ca-app-pub-3940256099942544~1458002511"
         }
-      ]
-    ]
+      ],
+      "expo-font"
+    ],
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "4beb275b-46fb-4009-8e83-a1ac1219c716"
+      }
+    }
   }
 }
