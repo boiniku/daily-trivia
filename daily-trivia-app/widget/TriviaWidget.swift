@@ -1,0 +1,233 @@
+import WidgetKit
+import SwiftUI
+
+struct TriviaData: Codable {
+    let title: String
+    let content: String
+}
+
+struct Provider: TimelineProvider {
+    func placeholder(in context: Context) -> TriviaEntry {
+        TriviaEntry(date: Date(), title: "雑学のタイトル", content: "ここに雑学の内容が表示されます。", theme: .morning)
+    }
+
+    func getSnapshot(in context: Context, completion: @escaping (TriviaEntry) -> ()) {
+        let entry = TriviaEntry(date: Date(), title: "富士山の高さ", content: "富士山の高さは3776メートルです。", theme: .noon)
+        completion(entry)
+    }
+
+    func getTimeline(in context: Context, completion: @escaping (Timeline<TriviaEntry>) -> ()) {
+        var entries: [TriviaEntry] = []
+        let currentDate = Date()
+        let calendar = Calendar.current
+        
+        // App Groupからデータを取得
+        // "group.com.dailytrivia.app" は Config Plugin で設定する予定の識別子
+        let userDefaults = UserDefaults(suiteName: "group.com.dailytrivia.app")
+        let triviaJson = userDefaults?.string(forKey: "daily_trivia")
+        
+        var triviaList: [TriviaData] = []
+        
+        if let jsonString = triviaJson, let data = jsonString.data(using: .utf8) {
+            do {
+                triviaList = try JSONDecoder().decode([TriviaData].self, from: data)
+            } catch {
+                print("Failed to decode JSON: \(error)")
+            }
+        }
+        
+        // データのフォールバック (データがない場合)
+        if triviaList.isEmpty {
+            triviaList = [
+                TriviaData(title: "データ未取得", content: "アプリを開いて今日の雑学を取得してください！"),
+                TriviaData(title: "データ未取得", content: "アプリを開いて今日の雑学を取得してください！"),
+                TriviaData(title: "データ未取得", content: "アプリを開いて今日の雑学を取得してください！")
+            ]
+        } 
+        // 足りない分を埋める
+        while triviaList.count < 3 {
+            triviaList.append(triviaList.last ?? TriviaData(title: "No Data", content: "No Data"))
+        }
+
+        // 今日の日付の基準 (2:00 AM スタート)
+        // 現在時刻が 0:00-1:59 の場合、前日の2:00からのサイクルとして扱う
+        var baseDate = currentDate
+        let currentHour = calendar.component(.hour, from: currentDate)
+        if currentHour < 2 {
+            baseDate = calendar.date(byAdding: .day, value: -1, to: currentDate)!
+        }
+        
+        // Morning (2:00)
+        // 2:00 AM of the base date
+        let morningDate = calendar.date(bySettingHour: 2, minute: 0, second: 0, of: baseDate)!
+        let morningEntry = TriviaEntry(
+            date: morningDate,
+            title: triviaList[0].title,
+            content: triviaList[0].content,
+            theme: .morning
+        )
+        entries.append(morningEntry)
+        
+        // Noon (10:00)
+        let noonDate = calendar.date(bySettingHour: 10, minute: 0, second: 0, of: baseDate)!
+        let noonEntry = TriviaEntry(
+            date: noonDate,
+            title: triviaList[1].title,
+            content: triviaList[1].content,
+            theme: .noon
+        )
+        entries.append(noonEntry)
+        
+        // Night (18:00)
+        let nightDate = calendar.date(bySettingHour: 18, minute: 0, second: 0, of: baseDate)!
+        let nightEntry = TriviaEntry(
+            date: nightDate,
+            title: triviaList[2].title,
+            content: triviaList[2].content,
+            theme: .night
+        )
+        entries.append(nightEntry)
+
+        // 次の更新は明日の2時
+        let nextUpdate = calendar.date(byAdding: .day, value: 1, to: morningDate)!
+        let timeline = Timeline(entries: entries, policy: .after(nextUpdate))
+        completion(timeline)
+    }
+}
+
+enum TriviaTheme {
+    case morning, noon, night
+}
+
+struct TriviaEntry: TimelineEntry {
+    let date: Date
+    let title: String
+    let content: String
+    let theme: TriviaTheme
+}
+
+struct TriviaWidgetEntryView : View {
+    var entry: Provider.Entry
+
+    var body: some View {
+        ZStack {
+            // 背景 (Storybook Style)
+            BackgroundView(theme: entry.theme)
+            
+            // コンテンツ
+            VStack(alignment: .leading, spacing: 5) {
+                Text(entry.themeTitle)
+                    .font(.caption)
+                    .fontWeight(.bold)
+                    .foregroundColor(.white.opacity(0.9))
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(Color.black.opacity(0.2))
+                    .cornerRadius(8)
+                
+                Spacer()
+                
+                Text(entry.title)
+                    .font(.system(size: 16, weight: .heavy, design: .rounded))
+                    .foregroundColor(.white)
+                    .shadow(radius: 2)
+                
+                Text(entry.content)
+                    .font(.system(size: 12, weight: .medium, design: .rounded))
+                    .foregroundColor(.white)
+                    .lineLimit(4)
+                    .shadow(radius: 1)
+                
+                Spacer()
+            }
+            .padding()
+        }
+    }
+}
+
+extension TriviaEntry {
+    var themeTitle: String {
+        switch theme {
+        case .morning: return "☀️ おはよう雑学"
+        case .noon: return "⛅️ こんにちは雑学"
+        case .night: return "🌙 こんばんは雑学"
+        }
+    }
+}
+
+struct BackgroundView: View {
+    let theme: TriviaTheme
+    
+    var body: some View {
+        GeometryReader { geometry in
+            ZStack {
+                // Base Gradient
+                LinearGradient(gradient: Gradient(colors: gradientColors), startPoint: .top, endPoint: .bottom)
+                
+                // Storybook Elements
+                if theme == .morning {
+                    // Soft Sunrise
+                    Circle()
+                        .fill(Color.orange.opacity(0.6))
+                        .frame(width: 100, height: 100)
+                        .position(x: geometry.size.width * 0.8, y: geometry.size.height * 0.3)
+                        .blur(radius: 20)
+                } else if theme == .noon {
+                    // Fluffy Clouds (Simple Circles)
+                    Circle()
+                        .fill(Color.white.opacity(0.6))
+                        .frame(width: 60, height: 60)
+                        .position(x: 30, y: 30)
+                    Circle()
+                        .fill(Color.white.opacity(0.7))
+                        .frame(width: 80, height: 80)
+                        .position(x: geometry.size.width - 40, y: 50)
+                    // Green Field at bottom
+                    VStack {
+                        Spacer()
+                        Rectangle()
+                            .fill(Color.green.opacity(0.6))
+                            .frame(height: 30)
+                            .cornerRadius(15)
+                            .offset(y: 15)
+                    }
+                } else if theme == .night {
+                    // Stars
+                    Circle().fill(Color.yellow).frame(width: 4, height: 4).position(x: 20, y: 20)
+                    Circle().fill(Color.yellow).frame(width: 3, height: 3).position(x: 100, y: 40)
+                    Circle().fill(Color.yellow).frame(width: 5, height: 5).position(x: geometry.size.width - 30, y: 30)
+                    // Moon
+                    Circle()
+                        .fill(Color.yellow.opacity(0.8))
+                        .frame(width: 40, height: 40)
+                        .position(x: 40, y: 40)
+                }
+            }
+        }
+    }
+    
+    var gradientColors: [Color] {
+        switch theme {
+        case .morning:
+            return [Color(red: 1.0, green: 0.8, blue: 0.6), Color(red: 1.0, green: 0.6, blue: 0.6)] // Pastel Orange/Pink
+        case .noon:
+            return [Color(red: 0.4, green: 0.8, blue: 1.0), Color(red: 0.6, green: 0.9, blue: 1.0)] // Sky Blue
+        case .night:
+            return [Color(red: 0.1, green: 0.1, blue: 0.4), Color(red: 0.2, green: 0.2, blue: 0.6)] // Dark Blue
+        }
+    }
+}
+
+@main
+struct TriviaWidget: Widget {
+    let kind: String = "TriviaWidget"
+
+    var body: some WidgetConfiguration {
+        StaticConfiguration(kind: kind, provider: Provider()) { entry in
+            TriviaWidgetEntryView(entry: entry)
+        }
+        .configurationDisplayName("毎日雑学")
+        .description("朝・昼・夜で変わる雑学をお届けします。")
+        .supportedFamilies([.systemSmall, .systemMedium])
+    }
+}
