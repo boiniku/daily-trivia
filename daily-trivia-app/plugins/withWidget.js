@@ -87,13 +87,41 @@ const withWidget = (config) => {
         // We cheat a bit: simpler way is to depend on EAS to handle most build settings defaults
         // But we MUST specify the Info.plist path and Swift version
 
-        project.updateBuildProperty('SWIFT_VERSION', '5.0', null, targetName);
-        project.updateBuildProperty('INFOPLIST_FILE', `${targetName}/Info.plist`, null, targetName);
-        project.updateBuildProperty('PRODUCT_BUNDLE_IDENTIFIER', WIDGET_BUNDLE_ID, null, targetName);
-        project.updateBuildProperty('IPHONEOS_DEPLOYMENT_TARGET', '17.0', null, targetName);
-        project.updateBuildProperty('TARGETED_DEVICE_FAMILY', '"1"', null, targetName); // iPhone
-        project.updateBuildProperty('DEVELOPMENT_TEAM', config.ios.appleTeamId || '"YOUR_TEAM_ID"', null, targetName);
-        project.updateBuildProperty('ASSETCATALOG_COMPILER_APPICON_NAME', 'AppIcon', null, targetName);
+        // 5. Configure Build Settings Manually to ensure they are applied to the Target
+        const configurations = project.pbxXCBuildConfigurationSection();
+        const targetUuid = target.uuid;
+        const targetBuildConfigurationList = project.pbxNativeTargetSection()[targetUuid].buildConfigurationList;
+        const buildConfigurationList = project.pbxXCConfigurationListSection()[targetBuildConfigurationList];
+        const targetBuildConfigurations = buildConfigurationList.buildConfigurations;
+
+        targetBuildConfigurations.forEach((config) => {
+            const configUuid = config.value;
+            const buildConfig = configurations[configUuid];
+
+            if (buildConfig) {
+                buildConfig.buildSettings['SWIFT_VERSION'] = '5.0';
+                buildConfig.buildSettings['INFOPLIST_FILE'] = `${targetName}/Info.plist`;
+                buildConfig.buildSettings['PRODUCT_BUNDLE_IDENTIFIER'] = WIDGET_BUNDLE_ID;
+                buildConfig.buildSettings['IPHONEOS_DEPLOYMENT_TARGET'] = '17.0';
+                buildConfig.buildSettings['TARGETED_DEVICE_FAMILY'] = '"1"';
+                buildConfig.buildSettings['ASSETCATALOG_COMPILER_APPICON_NAME'] = 'AppIcon';
+
+                // Set Development Team if available
+                if (config.ios && config.ios.appleTeamId) {
+                    buildConfig.buildSettings['DEVELOPMENT_TEAM'] = config.ios.appleTeamId;
+                } else {
+                    // Fallback or leave empty to let EAS handle it (EAS usually handles signing)
+                    // But "resource bundles are signed by default" error suggests we might need it.
+                    // Let's try to NOT set it if it's missing, risking another error, 
+                    // BUT the error said "requires setting the development team".
+                    // If we are in EAS, CODE_SIGN_IDENTITY and DEVELOPMENT_TEAM are usually injected.
+                    // The error might be because we have a new target that EAS doesn't know about or haven't propagated credentials to?
+                    // Actually, usually manual targets need explicit team setting or "Automatic" signing.
+                    // Let's set CODE_SIGN_STYLE = Automatic
+                    buildConfig.buildSettings['CODE_SIGN_STYLE'] = 'Automatic';
+                }
+            }
+        });
 
         // 5. Copy Files (Dangerous Mod)
         // We use withDangerousMod to copy files from /widget to /ios/TriviaWidget
