@@ -6,7 +6,8 @@ import Constants from 'expo-constants';
 import TriviaCard from '../../components/TriviaCard';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Crypto from 'expo-crypto';
-import { syncTriviaToWidget } from '../../utils/widgetSync';
+// TEMP: Disabled for minimal build test
+// import { syncTriviaToWidget } from '../../utils/widgetSync';
 // TEMP: Disabled for minimal build test
 // import { BannerAd, BannerAdSize, TestIds } from 'react-native-google-mobile-ads';
 import { useRevenueCat } from '../../contexts/RevenueCatContext';
@@ -75,7 +76,8 @@ export default function HomeScreen() {
             }
             const data = await response.json();
             setTriviaList(data);
-            await syncTriviaToWidget(data); // Sync to widget
+            // TEMP: Disabled for minimal build test
+            // await syncTriviaToWidget(data); // Sync to widget
         } catch (error) {
             console.error('Fetch error:', error);
             Alert.alert('エラー', 'データの取得に失敗しました。');
