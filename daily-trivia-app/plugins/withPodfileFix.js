@@ -10,9 +10,7 @@ const withPodfileFix = (config) => {
             if (fs.existsSync(podfilePath)) {
                 let podfileContent = fs.readFileSync(podfilePath, 'utf8');
 
-                // Check if the fix is already applied
-                if (!podfileContent.includes('CODE_SIGNING_ALLOWED')) {
-                    const fix = `
+                const fixCode = `
     installer.pods_project.targets.each do |target|
       if target.respond_to?(:product_type) and target.product_type == "com.apple.product-type.bundle"
         target.build_configurations.each do |config|
@@ -21,30 +19,34 @@ const withPodfileFix = (config) => {
       end
     end
 `;
-                    // Insert the fix inside the existing post_install block
-                    // Expo's default Podfile usually ends with:
-                    // post_install do |installer|
-                    //   ...
-                    // end
 
-                    // We look for the last "end" of the post_install block. 
-                    // But blindly replacing the last "end" is risky.
-                    // Safer strategy: Find "react_native_post_install(installer)" and insert after it.
+                // Check if the fix is already applied
+                if (!podfileContent.includes("config.build_settings['CODE_SIGNING_ALLOWED'] = 'NO'")) {
 
-                    // Standard Expo Podfile always has 'post_install do |installer|'
                     if (podfileContent.includes('post_install do |installer|')) {
+                        // Inject into existing post_install block
+                        console.log('[withPodfileFix] Injecting fix into existing post_install block.');
                         podfileContent = podfileContent.replace(
                             'post_install do |installer|',
-                            `post_install do |installer|\n${fix}`
+                            `post_install do |installer|${fixCode}`
                         );
-                        fs.writeFileSync(podfilePath, podfileContent);
-                        console.log('[withPodfileFix] Applied resource bundle signing fix to Podfile (anchored to post_install).');
                     } else {
-                        console.warn('[withPodfileFix] Could not find post_install block in Podfile, skipping fix.');
-                        // Fallback: Try appending if not found (risky, but better than nothing?)
-                        // No, if no post_install, the Podfile is very weird.
+                        // Append new post_install block if not found
+                        console.log('[withPodfileFix] Appending new post_install block.');
+                        podfileContent += `
+post_install do |installer|
+${fixCode}
+end
+`;
                     }
+
+                    fs.writeFileSync(podfilePath, podfileContent);
+                    console.log('[withPodfileFix] Applied resource bundle signing fix to Podfile.');
+                } else {
+                    console.log('[withPodfileFix] Fix already present in Podfile.');
                 }
+            } else {
+                console.warn('[withPodfileFix] Podfile not found at ' + podfilePath);
             }
             return config;
         },
