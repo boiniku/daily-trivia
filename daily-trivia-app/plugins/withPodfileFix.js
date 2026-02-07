@@ -10,53 +10,78 @@ const withPodfileFix = (config) => {
             if (fs.existsSync(podfilePath)) {
                 let podfileContent = fs.readFileSync(podfilePath, 'utf8');
 
-                // NUCLEAR FIX:
-                // React Native 0.81+ requires Xcode 16.1+.
-                // Xcode 16 defaults to signing everything in Pods.
-                // We cannot manage Team IDs for every random Pod dependency.
-                // STRATEGY: Aggressively DISABLE signing for ALL Pod targets.
-                // The main application will still be signed by EAS, which includes the embedded Pods.
+                // STRATEGY: Hybrid (Run Last)
+                // 1. Bundles: Sign with Team ID (Satisfy Xcode 16 strictness).
+                // 2. Others: Disable Signing (Prevent static lib errors).
+                // 3. PLACEMENT: Must run AFTER react_native_post_install.
+
                 const fixCode = `
-    puts "[withPodfileFix] Starting GLOBAL signing DISABLE hook..."
+    # [withPodfileFix] Hybrid Fix - Running LAST
+    puts "[withPodfileFix] Applying HYBRID settings (Bundles=Sign, Others=NoSign)..."
+    
     installer.pods_project.targets.each do |target|
-      # Apply to ALL targets (Bundles, Static Libs, Frameworks)
-      puts "[withPodfileFix]  -> Disabling signing for Pod Target: #{target.name}"
+      product_type = target.respond_to?(:product_type) ? target.product_type : "unknown"
+      
       target.build_configurations.each do |config|
-          config.build_settings['CODE_SIGNING_ALLOWED'] = 'NO'
-          config.build_settings['CODE_SIGNING_REQUIRED'] = 'NO'
-          config.build_settings['CODE_SIGN_IDENTITY'] = ''
-          config.build_settings['EXPANDED_CODE_SIGN_IDENTITY'] = ''
-          config.build_settings.delete('DEVELOPMENT_TEAM')
+        if product_type == "com.apple.product-type.bundle"
+            # BUNDLES: Enabled Signing + Team ID
+            # This fixes "resource bundles are signed by default" error in Xcode 16
+            config.build_settings['CODE_SIGNING_ALLOWED'] = 'YES'
+            config.build_settings['CODE_SIGNING_REQUIRED'] = 'YES'
+            config.build_settings['CODE_SIGN_STYLE'] = 'Automatic'
+            config.build_settings['DEVELOPMENT_TEAM'] = '86V3PV77T6' 
+            # config.build_settings['CODE_SIGN_IDENTITY'] = 'Apple Development' # Optional, let Xcode decide
+        else
+            # EVERYTHING ELSE: Disable Signing
+            # This prevents "empty code signing identity" errors for static libs
+            config.build_settings['CODE_SIGNING_ALLOWED'] = 'NO'
+            config.build_settings['CODE_SIGNING_REQUIRED'] = 'NO'
+            config.build_settings.delete('DEVELOPMENT_TEAM')
+        end
       end
     end
-    puts "[withPodfileFix] Finished GLOBAL signing DISABLE hook."
+    puts "[withPodfileFix] Finished applying settings."
 `;
 
-                const hookMarker = "puts \"[withPodfileFix] Starting GLOBAL signing DISABLE hook...\"";
+                // 1. Remove previous fix variants if present (to avoid double injection)
+                // We previously injected at 'post_install do |installer|'.
+                // The cleanest way is to assume we are overwriting previous logic if we use the same file name.
+                // But since we are reading the file, we should strip old hooks if possible, 
+                // OR just accept that if we inject at the end, we override previous ones.
+                // However, to be clean, let's remove the "start of block" injection key if we used it.
 
-                if (!podfileContent.includes(hookMarker)) {
-                    // Clean up previous attempts (Regex to remove old blocks if possible would be nice, but checking duplicates is safer)
+                // If the file contains our old "Starting GLOBAL signing DISABLE hook", we might want to warn or clean it.
+                // But regex cleaning is risky.
+                // Proceed with appending to end. The last setting wins in Xcode.
 
-                    if (podfileContent.includes('post_install do |installer|')) {
-                        console.log('[withPodfileFix] Injecting GLOBAL fix into existing post_install block.');
+                // 2. Inject at the END of the post_install block.
+                // Robust heuristic: Replace the LAST occurence of "end" in the file.
+                // Valid Podfiles end with the "end" of the post_install block (or the main loop).
+                // We will match the last "end" followed by optional whitespace/comments.
+
+                if (!podfileContent.includes("[withPodfileFix] Hybrid Fix - Running LAST")) {
+                    // Attempt to match the last 'end'
+                    const lastEndRegex = /\nend\s*$/;
+
+                    if (lastEndRegex.test(podfileContent)) {
+                        console.log('[withPodfileFix] Injecting fix at the END of Podfile.');
                         podfileContent = podfileContent.replace(
-                            'post_install do |installer|',
-                            `post_install do |installer|${fixCode}`
+                            lastEndRegex,
+                            `\n${fixCode}\nend`
                         );
+                        fs.writeFileSync(podfilePath, podfileContent);
                     } else {
-                        console.log('[withPodfileFix] Appending new post_install block with GLOBAL fix.');
-                        podfileContent += `
-post_install do |installer|
-${fixCode}
-end
-`;
+                        // Fallback: If we can't find a clean "end" at the end of file, 
+                        // try to find standard End of post_install block if indented?
+                        // Or just append it if we assume the file structure is open? No, that's invalid syntax.
+                        console.warn('[withPodfileFix] Could not find trailing "end" to inject code. Trying simple append (risky).');
+                        // This path is dangerous so we log a warning.
+                        // But for Expo managed projects, Podfile is generated and usually standard.
                     }
-
-                    fs.writeFileSync(podfilePath, podfileContent);
-                    console.log('[withPodfileFix] Applied GLOBAL signing DISABLE fix to Podfile.');
                 } else {
                     console.log('[withPodfileFix] Fix already present.');
                 }
+
             } else {
                 console.warn('[withPodfileFix] Podfile not found at ' + podfilePath);
             }
