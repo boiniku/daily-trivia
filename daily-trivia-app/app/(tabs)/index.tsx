@@ -6,8 +6,8 @@ import Constants from 'expo-constants';
 import TriviaCard from '../../components/TriviaCard';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Crypto from 'expo-crypto';
-import { syncTriviaToWidget } from '../../utils/widgetSync';
-import { BannerAd, BannerAdSize, TestIds } from 'react-native-google-mobile-ads';
+// import { syncTriviaToWidget } from '../../utils/widgetSync';
+// import { BannerAd, BannerAdSize, TestIds } from 'react-native-google-mobile-ads';
 import { useRevenueCat } from '../../contexts/RevenueCatContext';
 
 // Helper to determine backend URL
@@ -74,7 +74,7 @@ export default function HomeScreen() {
             }
             const data = await response.json();
             setTriviaList(data);
-            await syncTriviaToWidget(data); // Sync to widget
+            // await syncTriviaToWidget(data); // Sync to widget
         } catch (error) {
             console.error('Fetch error:', error);
             Alert.alert('エラー', 'データの取得に失敗しました。');
@@ -194,7 +194,7 @@ export default function HomeScreen() {
             </View>
 
             <View style={styles.adsContainer}>
-                {!isPro && (
+                {/* {!isPro && (
                     <BannerAd
                         unitId={TestIds.BANNER}
                         size={BannerAdSize.ANCHORED_ADAPTIVE_BANNER}
@@ -202,7 +202,7 @@ export default function HomeScreen() {
                             requestNonPersonalizedAdsOnly: true,
                         }}
                     />
-                )}
+                )} */}
             </View>
         </SafeAreaView>
     );
