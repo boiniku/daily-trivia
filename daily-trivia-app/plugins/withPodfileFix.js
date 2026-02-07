@@ -31,15 +31,18 @@ const withPodfileFix = (config) => {
                     // But blindly replacing the last "end" is risky.
                     // Safer strategy: Find "react_native_post_install(installer)" and insert after it.
 
-                    if (podfileContent.includes('react_native_post_install(installer)')) {
+                    // Standard Expo Podfile always has 'post_install do |installer|'
+                    if (podfileContent.includes('post_install do |installer|')) {
                         podfileContent = podfileContent.replace(
-                            'react_native_post_install(installer)',
-                            `react_native_post_install(installer)\n${fix}`
+                            'post_install do |installer|',
+                            `post_install do |installer|\n${fix}`
                         );
                         fs.writeFileSync(podfilePath, podfileContent);
-                        console.log('[withPodfileFix] Applied resource bundle signing fix to Podfile.');
+                        console.log('[withPodfileFix] Applied resource bundle signing fix to Podfile (anchored to post_install).');
                     } else {
-                        console.warn('[withPodfileFix] Could not find react_native_post_install in Podfile, skipping fix.');
+                        console.warn('[withPodfileFix] Could not find post_install block in Podfile, skipping fix.');
+                        // Fallback: Try appending if not found (risky, but better than nothing?)
+                        // No, if no post_install, the Podfile is very weird.
                     }
                 }
             }
