@@ -87,21 +87,38 @@ const withWidget = (config) => {
         // We cheat a bit: simpler way is to depend on EAS to handle most build settings defaults
         // But we MUST specify the Info.plist path and Swift version
 
-        // 5. Configure Build Settings Manually to ensure they are applied to the Target
-        try {
-            const configurations = project.pbxXCBuildConfigurationSection();
-            const targetUuid = target.uuid;
+        // 5. Configure Build Settings Manually (Robust Search Strategy)
+        // Also set Project-level SWIFT_VERSION to be safe
+        project.addBuildProperty('SWIFT_VERSION', '5.0');
 
-            if (targetUuid && project.pbxNativeTargetSection()[targetUuid]) {
-                const targetBuildConfigurationList = project.pbxNativeTargetSection()[targetUuid].buildConfigurationList;
-                const buildConfigurationList = project.pbxXCConfigurationListSection()[targetBuildConfigurationList];
+        try {
+            const nativeTargets = project.pbxNativeTargetSection();
+            let widgetTargetUuid = null;
+
+            // Search for the target by name to ensure we get the right one
+            for (const uuid in nativeTargets) {
+                const t = nativeTargets[uuid];
+                if (t.isa === 'PBXNativeTarget' && (t.name === targetName || t.productName === targetName)) {
+                    widgetTargetUuid = uuid;
+                    console.log(`[withWidget] Found widget target: ${t.name} (UUID: ${uuid})`);
+                    break;
+                }
+            }
+
+            if (widgetTargetUuid) {
+                const targetBuildConfigurationList = nativeTargets[widgetTargetUuid].buildConfigurationList;
+                const configurationListSection = project.pbxXCConfigurationListSection();
+                const buildConfigurationList = configurationListSection[targetBuildConfigurationList];
                 const targetBuildConfigurations = buildConfigurationList.buildConfigurations;
+                const configurations = project.pbxXCBuildConfigurationSection();
 
                 targetBuildConfigurations.forEach((config) => {
                     const configUuid = config.value;
                     const buildConfig = configurations[configUuid];
 
                     if (buildConfig) {
+                        if (!buildConfig.buildSettings) buildConfig.buildSettings = {};
+
                         buildConfig.buildSettings['SWIFT_VERSION'] = '5.0';
                         buildConfig.buildSettings['INFOPLIST_FILE'] = `${targetName}/Info.plist`;
                         buildConfig.buildSettings['PRODUCT_BUNDLE_IDENTIFIER'] = WIDGET_BUNDLE_ID;
@@ -109,21 +126,24 @@ const withWidget = (config) => {
                         buildConfig.buildSettings['TARGETED_DEVICE_FAMILY'] = '"1"'; // iPhone
                         buildConfig.buildSettings['ASSETCATALOG_COMPILER_APPICON_NAME'] = 'AppIcon';
 
-                        // Set Development Team if available
+                        // Signing
                         if (config.ios && config.ios.appleTeamId) {
                             buildConfig.buildSettings['DEVELOPMENT_TEAM'] = config.ios.appleTeamId;
                         } else {
+                            // If we don't have a team ID, let's try Automatic signing or just don't set it (EAS handles it)
+                            // But usually manual targets like this need one.
                             buildConfig.buildSettings['CODE_SIGN_STYLE'] = 'Automatic';
                         }
-                        console.log(`[withWidget] Configured build settings for ${config.comment}`);
+
+                        console.log(`[withWidget] Applied settings to config: ${buildConfig.name} (UUID: ${configUuid})`);
                     }
                 });
             } else {
-                console.warn('[withWidget] Target UUID not found, skipping manual settings.');
+                console.error('[withWidget] CRITICAL: Could not find widget target by name after creation.');
+                // Fallback: This is very unlikely if addTarget succeeded.
             }
         } catch (e) {
-            console.error('[withWidget] Failed to configure build settings manually:', e);
-            // Fallback: This might fail if the target is weird, but worth a shot or just depend on defaults
+            console.error('[withWidget] Exception in manual build configuration:', e);
         }
 
         // 5. Copy Files (Dangerous Mod)
