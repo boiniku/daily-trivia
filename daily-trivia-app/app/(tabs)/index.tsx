@@ -40,13 +40,16 @@ export default function HomeScreen() {
     const router = useRouter();
     const [currentIndex, setCurrentIndex] = useState(0);
     const [triviaList, setTriviaList] = useState<TriviaItem[]>([]);
-    const [loading, setLoading] = useState(true);
+    const [loading, setLoading] = useState(false); // TEMP: Set to false immediately
     const DAILY_LIMIT = 3;
     const { isPro } = useRevenueCat();
 
+    // TEMP: Skip all initialization for debugging
+    /*
     useEffect(() => {
         initializeUserAndFetch();
     }, []);
+    */
 
     const initializeUserAndFetch = async () => {
         try {
