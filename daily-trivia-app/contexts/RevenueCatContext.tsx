@@ -18,10 +18,13 @@ interface RevenueCatContextType {
 const RevenueCatContext = createContext<RevenueCatContextType | undefined>(undefined);
 
 export const RevenueCatProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+    // TEMP: Disabled for minimal build test - just return dummy values
     const [isPro, setIsPro] = useState(false);
     const [currentOffering, setCurrentOffering] = useState<PurchasesOffering | null>(null);
-    const [loading, setLoading] = useState(true);
+    const [loading, setLoading] = useState(false); // Set to false immediately
 
+    // TEMP: Skip all RevenueCat initialization
+    /*
     useEffect(() => {
         const init = async () => {
             try {
@@ -44,6 +47,7 @@ export const RevenueCatProvider: React.FC<{ children: React.ReactNode }> = ({ ch
 
         init();
     }, []);
+    */
 
     const updateCustomerStatus = (customerInfo: CustomerInfo) => {
         // "pro" is the entitlement identifier in RevenueCat
@@ -63,29 +67,13 @@ export const RevenueCatProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     };
 
     const purchasePackage = async (pack: any) => {
-        try {
-            const { customerInfo } = await Purchases.purchasePackage(pack);
-            updateCustomerStatus(customerInfo);
-        } catch (e: any) {
-            if (!e.userCancelled) {
-                Alert.alert('Error', e.message);
-            }
-        }
+        // TEMP: Disabled
+        Alert.alert('Disabled', 'Purchase is disabled in test build');
     };
 
     const restorePurchases = async () => {
-        try {
-            const customerInfo = await Purchases.restorePurchases();
-            updateCustomerStatus(customerInfo);
-
-            if (customerInfo.entitlements.active['pro']) {
-                Alert.alert('復元成功', 'プレミアムプランを復元しました。');
-            } else {
-                Alert.alert('復元完了', '有効な購入が見つかりませんでした。');
-            }
-        } catch (e: any) {
-            Alert.alert('Error', e.message);
-        }
+        // TEMP: Disabled
+        Alert.alert('Disabled', 'Restore is disabled in test build');
     };
 
     return (
