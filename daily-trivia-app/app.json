@@ -42,7 +42,6 @@
     },
     "plugins": [
       "expo-router",
-      "./plugins/withWidget",
       [
         "expo-build-properties",
         {
@@ -51,23 +50,12 @@
           }
         }
       ],
-      [
-        "react-native-google-mobile-ads",
-        {
-          "androidAppId": "ca-app-pub-3940256099942544~3347511713",
-          "iosAppId": "ca-app-pub-3940256099942544~1458002511"
-        }
-      ],
       "expo-font"
     ],
     "extra": {
       "router": {},
       "eas": {
         "projectId": "4beb275b-46fb-4009-8e83-a1ac1219c716"
-      },
-      "react-native-google-mobile-ads": {
-        "android_app_id": "ca-app-pub-3940256099942544~3347511713",
-        "ios_app_id": "ca-app-pub-3940256099942544~1458002511"
       }
     }
   }

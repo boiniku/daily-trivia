@@ -5,16 +5,18 @@ import { StatusBar } from 'expo-status-bar';
 import { useEffect } from 'react';
 import { View } from 'react-native';
 import { RevenueCatProvider } from '../contexts/RevenueCatContext';
-import mobileAds from 'react-native-google-mobile-ads';
+// TEMP: Disabled for minimal build test
+// import mobileAds from 'react-native-google-mobile-ads';
 
 export default function RootLayout() {
 
   useEffect(() => {
-    mobileAds()
-      .initialize()
-      .then(adapterStatuses => {
-        // Initialization complete!
-      });
+    // TEMP: Disabled for minimal build test
+    // mobileAds()
+    //   .initialize()
+    //   .then(adapterStatuses => {
+    //     // Initialization complete!
+    //   });
   }, []);
 
   return (

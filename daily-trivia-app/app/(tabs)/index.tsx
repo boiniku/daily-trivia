@@ -7,7 +7,8 @@ import TriviaCard from '../../components/TriviaCard';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Crypto from 'expo-crypto';
 import { syncTriviaToWidget } from '../../utils/widgetSync';
-import { BannerAd, BannerAdSize, TestIds } from 'react-native-google-mobile-ads';
+// TEMP: Disabled for minimal build test
+// import { BannerAd, BannerAdSize, TestIds } from 'react-native-google-mobile-ads';
 import { useRevenueCat } from '../../contexts/RevenueCatContext';
 
 // Helper to determine backend URL
@@ -194,7 +195,8 @@ export default function HomeScreen() {
             </View>
 
             <View style={styles.adsContainer}>
-                {!isPro && (
+                {/* TEMP: Disabled for minimal build test */}
+                {/* {!isPro && (
                     <BannerAd
                         unitId={TestIds.BANNER}
                         size={BannerAdSize.ANCHORED_ADAPTIVE_BANNER}
@@ -202,7 +204,7 @@ export default function HomeScreen() {
                             requestNonPersonalizedAdsOnly: true,
                         }}
                     />
-                )}
+                )} */}
             </View>
         </SafeAreaView>
     );
