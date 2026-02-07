@@ -47,7 +47,14 @@
     "plugins": [
       "expo-router",
       "./plugins/withWidget",
-      "./plugins/withPodfileFix",
+      [
+        "expo-build-properties",
+        {
+          "ios": {
+            "deploymentTarget": "15.1"
+          }
+        }
+      ],
       [
         "react-native-google-mobile-ads",
         {
