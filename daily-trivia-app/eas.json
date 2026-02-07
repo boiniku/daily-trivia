@@ -12,10 +12,7 @@
       "distribution": "internal"
     },
     "production": {
-      "autoIncrement": true,
-      "ios": {
-        "image": "macos-12.4"
-      }
+      "autoIncrement": true
     }
   },
   "submit": {
