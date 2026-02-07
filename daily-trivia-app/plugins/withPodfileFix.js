@@ -10,78 +10,71 @@ const withPodfileFix = (config) => {
             if (fs.existsSync(podfilePath)) {
                 let podfileContent = fs.readFileSync(podfilePath, 'utf8');
 
-                // STRATEGY: Hybrid (Run Last)
-                // 1. Bundles: Sign with Team ID (Satisfy Xcode 16 strictness).
-                // 2. Others: Disable Signing (Prevent static lib errors).
-                // 3. PLACEMENT: Must run AFTER react_native_post_install.
+                // MONKEY-PATCH STRATEGY:
+                // Instead of trying to guess where to inject the code to run "last",
+                // we monkey-patch the `save` method of the project object.
+                // This guarantees our logic runs at the absolute end, just before the project is written to disk,
+                // overriding any changes made by standard React Native hooks.
 
                 const fixCode = `
-    # [withPodfileFix] Hybrid Fix - Running LAST
-    puts "[withPodfileFix] Applying HYBRID settings (Bundles=Sign, Others=NoSign)..."
-    
-    installer.pods_project.targets.each do |target|
-      product_type = target.respond_to?(:product_type) ? target.product_type : "unknown"
-      
-      target.build_configurations.each do |config|
-        if product_type == "com.apple.product-type.bundle"
-            # BUNDLES: Enabled Signing + Team ID
-            # This fixes "resource bundles are signed by default" error in Xcode 16
-            config.build_settings['CODE_SIGNING_ALLOWED'] = 'YES'
-            config.build_settings['CODE_SIGNING_REQUIRED'] = 'YES'
-            config.build_settings['CODE_SIGN_STYLE'] = 'Automatic'
-            config.build_settings['DEVELOPMENT_TEAM'] = '86V3PV77T6' 
-            # config.build_settings['CODE_SIGN_IDENTITY'] = 'Apple Development' # Optional, let Xcode decide
-        else
-            # EVERYTHING ELSE: Disable Signing
-            # This prevents "empty code signing identity" errors for static libs
-            config.build_settings['CODE_SIGNING_ALLOWED'] = 'NO'
-            config.build_settings['CODE_SIGNING_REQUIRED'] = 'NO'
-            config.build_settings.delete('DEVELOPMENT_TEAM')
+    # [withPodfileFix] Monkey-patch 'save' to ensure fix runs LAST
+    # This prevents react_native_post_install from overwriting our changes.
+    unless installer.pods_project.respond_to?(:original_save_before_fix)
+      puts "[withPodfileFix] Installing save-hook monkey patch..."
+      class << installer.pods_project
+        alias_method :original_save_before_fix, :save
+        
+        def save(*args)
+          puts "[withPodfileFix] ----------------------------------------------------------------"
+          puts "[withPodfileFix] 🐒 Running Late-Stage Signing Fix (inside Project#save) 🐒"
+          
+          self.targets.each do |target|
+            # Apply to ALL targets (Lib, Bundle, Framework)
+            # We aggressively disable signing for Pods to avoid Xcode 14/15/16 Team ID requirements.
+            target.build_configurations.each do |config|
+              config.build_settings['CODE_SIGNING_ALLOWED'] = 'NO'
+              config.build_settings['CODE_SIGNING_REQUIRED'] = 'NO'
+              config.build_settings['CODE_SIGN_IDENTITY'] = ''
+              config.build_settings['EXPANDED_CODE_SIGN_IDENTITY'] = ''
+              config.build_settings.delete('DEVELOPMENT_TEAM')
+            end
+            puts "[withPodfileFix]  -> Disabled signing for: #{target.name}"
+          end
+          
+          puts "[withPodfileFix] ----------------------------------------------------------------"
+          original_save_before_fix(*args)
         end
       end
     end
-    puts "[withPodfileFix] Finished applying settings."
 `;
 
-                // 1. Remove previous fix variants if present (to avoid double injection)
-                // We previously injected at 'post_install do |installer|'.
-                // The cleanest way is to assume we are overwriting previous logic if we use the same file name.
-                // But since we are reading the file, we should strip old hooks if possible, 
-                // OR just accept that if we inject at the end, we override previous ones.
-                // However, to be clean, let's remove the "start of block" injection key if we used it.
+                const hookMarker = "[withPodfileFix] Monkey-patch 'save'";
 
-                // If the file contains our old "Starting GLOBAL signing DISABLE hook", we might want to warn or clean it.
-                // But regex cleaning is risky.
-                // Proceed with appending to end. The last setting wins in Xcode.
+                if (!podfileContent.includes(hookMarker)) {
 
-                // 2. Inject at the END of the post_install block.
-                // Robust heuristic: Replace the LAST occurence of "end" in the file.
-                // Valid Podfiles end with the "end" of the post_install block (or the main loop).
-                // We will match the last "end" followed by optional whitespace/comments.
-
-                if (!podfileContent.includes("[withPodfileFix] Hybrid Fix - Running LAST")) {
-                    // Attempt to match the last 'end'
-                    const lastEndRegex = /\nend\s*$/;
-
-                    if (lastEndRegex.test(podfileContent)) {
-                        console.log('[withPodfileFix] Injecting fix at the END of Podfile.');
+                    // Inject specifically at the START of the post_install block.
+                    // This creates the hook immediately so it's ready when .save() is called later.
+                    if (podfileContent.includes('post_install do |installer|')) {
+                        console.log('[withPodfileFix] Injecting Monkey-Patch fix into post_install block.');
                         podfileContent = podfileContent.replace(
-                            lastEndRegex,
-                            `\n${fixCode}\nend`
+                            'post_install do |installer|',
+                            `post_install do |installer|${fixCode}`
                         );
-                        fs.writeFileSync(podfilePath, podfileContent);
                     } else {
-                        // Fallback: If we can't find a clean "end" at the end of file, 
-                        // try to find standard End of post_install block if indented?
-                        // Or just append it if we assume the file structure is open? No, that's invalid syntax.
-                        console.warn('[withPodfileFix] Could not find trailing "end" to inject code. Trying simple append (risky).');
-                        // This path is dangerous so we log a warning.
-                        // But for Expo managed projects, Podfile is generated and usually standard.
+                        // Fallback? (Shouldn't happen in managed expo)
+                        console.warn('[withPodfileFix] "post_install do |installer|" block not found. Appending one (less robust).');
+                        podfileContent += `
+post_install do |installer|
+${fixCode}
+end
+`;
                     }
+
+                    fs.writeFileSync(podfilePath, podfileContent);
+                    console.log('[withPodfileFix] Applied Monkey-Patch fix to Podfile.');
                 } else {
                     console.log('[withPodfileFix] Fix already present.');
                 }
-
             } else {
                 console.warn('[withPodfileFix] Podfile not found at ' + podfilePath);
             }
