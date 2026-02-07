@@ -5,17 +5,17 @@ import { StatusBar } from 'expo-status-bar';
 import { useEffect } from 'react';
 import { View } from 'react-native';
 import { RevenueCatProvider } from '../contexts/RevenueCatContext';
-// import mobileAds from 'react-native-google-mobile-ads';
+import mobileAds from 'react-native-google-mobile-ads';
 
 export default function RootLayout() {
 
-  //   useEffect(() => {
-  //     mobileAds()
-  //       .initialize()
-  //       .then(adapterStatuses => {
-  //         // Initialization complete!
-  //       });
-  //   }, []);
+  useEffect(() => {
+    mobileAds()
+      .initialize()
+      .then(adapterStatuses => {
+        // Initialization complete!
+      });
+  }, []);
 
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
