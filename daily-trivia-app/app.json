@@ -47,6 +47,7 @@
     "plugins": [
       "expo-router",
       "./plugins/withWidget",
+      "./plugins/withPodfileFix",
       [
         "react-native-google-mobile-ads",
         {
