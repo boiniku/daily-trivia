@@ -10,43 +10,31 @@ const withPodfileFix = (config) => {
             if (fs.existsSync(podfilePath)) {
                 let podfileContent = fs.readFileSync(podfilePath, 'utf8');
 
-                // Robust fix for Xcode 14+ resource bundle signing with logging
+                // Blanket fix: Disable signing for ALL Pods
                 const fixCode = `
-    puts "[withPodfileFix] Starting post_install hook..."
+    puts "[withPodfileFix] Starting blanket post_install hook..."
     installer.pods_project.targets.each do |target|
-      # Log target details for debugging
-      product_type = target.respond_to?(:product_type) ? target.product_type : "unknown"
-      puts "[withPodfileFix] Processing target: #{target.name} (Type: #{product_type})"
-
-      # Fix for Google-Mobile-Ads-SDK and other resource bundles
-      # We check for 'bundle' product type OR specific pod names known to cause issues
-      if (product_type == "com.apple.product-type.bundle") or (target.name.include?("Google-Mobile-Ads-SDK"))
-        puts "[withPodfileFix]  -> Applying signing fix to #{target.name}"
-        target.build_configurations.each do |config|
-            config.build_settings['CODE_SIGNING_ALLOWED'] = 'NO'
-            config.build_settings['CODE_SIGNING_REQUIRED'] = 'NO'
-            config.build_settings['CODE_SIGNING_IDENTITY'] = '-'
-            config.build_settings['EXPANDED_CODE_SIGN_IDENTITY'] = '-'
-        end
+      puts "[withPodfileFix] Disabling signing for target: #{target.name}"
+      target.build_configurations.each do |config|
+          config.build_settings['CODE_SIGNING_ALLOWED'] = 'NO'
+          config.build_settings['CODE_SIGNING_REQUIRED'] = 'NO'
+          config.build_settings['CODE_SIGNING_IDENTITY'] = ""
+          config.build_settings['EXPANDED_CODE_SIGN_IDENTITY'] = ""
       end
     end
-    puts "[withPodfileFix] Finished post_install hook."
+    puts "[withPodfileFix] Finished blanket post_install hook."
 `;
 
-                // Check if the fix is arguably already there (checking for unique string)
-                if (!podfileContent.includes("puts \"[withPodfileFix] Starting post_install hook...\"")) {
+                if (!podfileContent.includes("puts \"[withPodfileFix] Starting blanket post_install hook...\"")) {
 
                     if (podfileContent.includes('post_install do |installer|')) {
-                        // Inject into existing post_install block
-                        console.log('[withPodfileFix] Injecting robust fix with logging into existing post_install block.');
-                        // We replace the start of the block with start + fix
+                        console.log('[withPodfileFix] Injecting blanket fix into existing post_install block.');
                         podfileContent = podfileContent.replace(
                             'post_install do |installer|',
                             `post_install do |installer|${fixCode}`
                         );
                     } else {
-                        // Append new post_install block if not found
-                        console.log('[withPodfileFix] Appending new post_install block with robust fix and logging.');
+                        console.log('[withPodfileFix] Appending new post_install block with blanket fix.');
                         podfileContent += `
 post_install do |installer|
 ${fixCode}
@@ -55,9 +43,9 @@ end
                     }
 
                     fs.writeFileSync(podfilePath, podfileContent);
-                    console.log('[withPodfileFix] Applied robust resource bundle signing fix to Podfile.');
+                    console.log('[withPodfileFix] Applied blanket signing fix to Podfile.');
                 } else {
-                    console.log('[withPodfileFix] Robust fix already present in Podfile.');
+                    console.log('[withPodfileFix] Blanket fix already present in Podfile.');
                 }
             } else {
                 console.warn('[withPodfileFix] Podfile not found at ' + podfilePath);
