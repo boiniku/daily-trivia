@@ -126,14 +126,9 @@ const withWidget = (config) => {
                         buildConfig.buildSettings['TARGETED_DEVICE_FAMILY'] = '"1"'; // iPhone
                         buildConfig.buildSettings['ASSETCATALOG_COMPILER_APPICON_NAME'] = 'AppIcon';
 
-                        // Signing
-                        if (config.ios && config.ios.appleTeamId) {
-                            buildConfig.buildSettings['DEVELOPMENT_TEAM'] = config.ios.appleTeamId;
-                        } else {
-                            // If we don't have a team ID, let's try Automatic signing or just don't set it (EAS handles it)
-                            // But usually manual targets like this need one.
-                            buildConfig.buildSettings['CODE_SIGN_STYLE'] = 'Automatic';
-                        }
+                        // Signing - Set Team ID explicitly for EAS Build
+                        buildConfig.buildSettings['DEVELOPMENT_TEAM'] = '86V3PV77T6';
+                        buildConfig.buildSettings['CODE_SIGN_STYLE'] = 'Automatic';
 
                         console.log(`[withWidget] Applied settings to config: ${buildConfig.name} (UUID: ${configUuid})`);
                     }
