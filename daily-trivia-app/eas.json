@@ -13,7 +13,9 @@
     },
     "production": {
       "autoIncrement": true,
-      "image": "macos-12.4"
+      "ios": {
+        "image": "macos-12.4"
+      }
     }
   },
   "submit": {
