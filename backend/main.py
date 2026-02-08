@@ -46,7 +46,7 @@ def read_root():
     return {"message": "Hello from Daily Trivia Backend with Neon DB!"}
 
 import random
-from datetime import date
+from datetime import date, datetime
 from models import Trivia, Collection, CollectionItem, DailyAssignment
 
 @app.get("/trivia/today", response_model=List[TriviaSchema])
