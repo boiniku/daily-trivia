@@ -7,16 +7,11 @@ import Constants from 'expo-constants';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Crypto from 'expo-crypto';
 
+import { Config } from '../../constants/Config';
+
 // Helper to determine backend URL (Duplicated code, should be refactored to a util)
 const getBackendUrl = () => {
-    if (Platform.OS === 'web') return 'http://localhost:8000';
-    if (Platform.OS === 'android') return 'http://10.0.2.2:8000';
-    const hostUri = Constants.expoConfig?.hostUri;
-    if (hostUri) {
-        const ip = hostUri.split(':')[0];
-        return `http://${ip}:8000`;
-    }
-    return 'http://localhost:8000';
+    return Config.BACKEND_URL;
 };
 
 interface Collection {

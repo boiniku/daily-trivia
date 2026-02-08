@@ -4,16 +4,10 @@ import { useState, useEffect } from 'react';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import Constants from 'expo-constants';
+import { Config } from '../../constants/Config';
 
 const getBackendUrl = () => {
-    if (Platform.OS === 'web') return 'http://localhost:8000';
-    if (Platform.OS === 'android') return 'http://10.0.2.2:8000';
-    const hostUri = Constants.expoConfig?.hostUri;
-    if (hostUri) {
-        const ip = hostUri.split(':')[0];
-        return `http://${ip}:8000`;
-    }
-    return 'http://localhost:8000';
+    return Config.BACKEND_URL;
 };
 
 interface TriviaItem {

@@ -6,25 +6,16 @@ import Constants from 'expo-constants';
 import TriviaCard from '../../components/TriviaCard';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Crypto from 'expo-crypto';
-// TEMP: Disabled for minimal build test
-// import { syncTriviaToWidget } from '../../utils/widgetSync';
+import { syncTriviaToWidget } from '../../utils/widgetSync';
 // TEMP: Disabled for minimal build test
 // import { BannerAd, BannerAdSize, TestIds } from 'react-native-google-mobile-ads';
 import { useRevenueCat } from '../../contexts/RevenueCatContext';
 
+import { Config } from '../../constants/Config';
+
 // Helper to determine backend URL
 const getBackendUrl = () => {
-    if (Platform.OS === 'web') return 'http://localhost:8000';
-    if (Platform.OS === 'android') return 'http://10.0.2.2:8000'; // Emulator default
-
-    // For physical devices or iOS simulator, try to use the packager IP
-    const hostUri = Constants.expoConfig?.hostUri;
-    if (hostUri) {
-        const ip = hostUri.split(':')[0];
-        return `http://${ip}:8000`;
-    }
-
-    return 'http://localhost:8000';
+    return Config.BACKEND_URL;
 };
 
 interface TriviaItem {
@@ -44,12 +35,9 @@ export default function HomeScreen() {
     const DAILY_LIMIT = 3;
     const { isPro } = useRevenueCat();
 
-    // TEMP: Skip all initialization for debugging
-    /*
     useEffect(() => {
         initializeUserAndFetch();
     }, []);
-    */
 
     const initializeUserAndFetch = async () => {
         try {
@@ -75,12 +63,15 @@ export default function HomeScreen() {
             console.log('Fetching from:', apiUrl);
             const response = await fetch(apiUrl);
             if (!response.ok) {
-                throw new Error('Network response was not ok');
+                const errorText = await response.text();
+                console.error(`HTTP Error: ${response.status} ${response.statusText}`);
+                console.error(`Response body: ${errorText}`);
+                throw new Error(`Network response was not ok: ${response.status}`);
             }
             const data = await response.json();
             setTriviaList(data);
-            // TEMP: Disabled for minimal build test
-            // await syncTriviaToWidget(data); // Sync to widget
+            // Sync to widget
+            await syncTriviaToWidget(data);
         } catch (error) {
             console.error('Fetch error:', error);
             Alert.alert('エラー', 'データの取得に失敗しました。');

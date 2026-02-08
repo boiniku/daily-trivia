@@ -1,6 +1,9 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { Platform, Alert } from 'react-native';
-import Purchases, { CustomerInfo, PurchasesOffering } from 'react-native-purchases';
+// import Purchases, { CustomerInfo, PurchasesOffering } from 'react-native-purchases';
+
+// Mock types since we removed the import
+type PurchasesOffering = any;
 
 const API_KEYS = {
     ios: process.env.EXPO_PUBLIC_REVENUECAT_IOS_API_KEY || '',
@@ -18,7 +21,7 @@ interface RevenueCatContextType {
 const RevenueCatContext = createContext<RevenueCatContextType | undefined>(undefined);
 
 export const RevenueCatProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-    // TEMP: Disabled for minimal build test - just return dummy values
+    // TEMP: Mock implementation to fix startup crash
     const [isPro, setIsPro] = useState(false);
     const [currentOffering, setCurrentOffering] = useState<PurchasesOffering | null>(null);
     const [loading, setLoading] = useState(false); // Set to false immediately
@@ -49,7 +52,7 @@ export const RevenueCatProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     }, []);
     */
 
-    const updateCustomerStatus = (customerInfo: CustomerInfo) => {
+    const updateCustomerStatus = (customerInfo: any) => {
         // "pro" is the entitlement identifier in RevenueCat
         const isProActive = customerInfo.entitlements.active['pro'] !== undefined;
         setIsPro(isProActive);
@@ -57,10 +60,10 @@ export const RevenueCatProvider: React.FC<{ children: React.ReactNode }> = ({ ch
 
     const loadOfferings = async () => {
         try {
-            const offerings = await Purchases.getOfferings();
-            if (offerings.current) {
-                setCurrentOffering(offerings.current);
-            }
+            // const offerings = await Purchases.getOfferings();
+            // if (offerings.current) {
+            //     setCurrentOffering(offerings.current);
+            // }
         } catch (e) {
             console.error('Error loading offerings:', e);
         }
@@ -68,12 +71,12 @@ export const RevenueCatProvider: React.FC<{ children: React.ReactNode }> = ({ ch
 
     const purchasePackage = async (pack: any) => {
         // TEMP: Disabled
-        Alert.alert('Disabled', 'Purchase is disabled in test build');
+        Alert.alert('Disabled', 'Purchase is disabled in test build to prevent crashes');
     };
 
     const restorePurchases = async () => {
         // TEMP: Disabled
-        Alert.alert('Disabled', 'Restore is disabled in test build');
+        Alert.alert('Disabled', 'Restore is disabled in test build to prevent crashes');
     };
 
     return (

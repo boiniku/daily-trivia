@@ -1,4 +1,5 @@
-import { View, Text, StyleSheet, Pressable, SafeAreaView } from 'react-native';
+import { View, Text, StyleSheet, Pressable } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { Colors, Theme } from '../../constants/Colors';
 
 export default function SettingsScreen() {

@@ -4,6 +4,7 @@
     "slug": "daily-trivia-app",
     "version": "1.0.0",
     "orientation": "portrait",
+    "scheme": "dailytrivia",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
     "newArchEnabled": true,
@@ -50,7 +51,8 @@
           }
         }
       ],
-      "expo-font"
+      "expo-font",
+      "./plugins/withWidget"
     ],
     "extra": {
       "router": {},

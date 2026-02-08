@@ -1,0 +1,10 @@
+env: load .env
+env: export EXPO_PUBLIC_REVENUECAT_IOS_API_KEY EXPO_PUBLIC_REVENUECAT_ANDROID_API_KEY
+! Git branch has uncommitted file changes
+› It's recommended to commit all changes before proceeding in case you want to revert generated changes.
+Git status is dirty but the command will continue because the terminal is not interactive.
+- Clearing ios
+√ Cleared ios code
+⚠️  Skipping generating the iOS native project files. Run npx expo prebuild again from macOS or Linux to generate the iOS project.
+
+CommandError: At least one platform must be enabled when syncing
