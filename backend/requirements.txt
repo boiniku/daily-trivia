@@ -6,4 +6,4 @@ python-dotenv
 streamlit
 google-generativeai
 supabase
-psycopg2-binary
+gunicorn
