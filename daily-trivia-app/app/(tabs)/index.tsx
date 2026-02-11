@@ -1,17 +1,17 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { View, Text, StyleSheet, Pressable, ActivityIndicator, Alert, Platform } from 'react-native';
-import { Link, useRouter } from 'expo-router';
+import { Link, useRouter, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Constants from 'expo-constants';
 import TriviaCard from '../../components/TriviaCard';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Crypto from 'expo-crypto';
 import { syncTriviaToWidget } from '../../utils/widgetSync';
-// TEMP: Disabled for minimal build test
-// import { BannerAd, BannerAdSize, TestIds } from 'react-native-google-mobile-ads';
+import { BannerAd, BannerAdSize, TestIds } from 'react-native-google-mobile-ads';
 import { useRevenueCat } from '../../contexts/RevenueCatContext';
-
+import { Theme, Colors } from '../../constants/Colors';
 import { Config } from '../../constants/Config';
+import DefaultPreference from 'react-native-default-preference';
 
 // Helper to determine backend URL
 const getBackendUrl = () => {
@@ -31,13 +31,50 @@ export default function HomeScreen() {
     const router = useRouter();
     const [currentIndex, setCurrentIndex] = useState(0);
     const [triviaList, setTriviaList] = useState<TriviaItem[]>([]);
-    const [loading, setLoading] = useState(false); // TEMP: Set to false immediately
+    const [loading, setLoading] = useState(true);
     const DAILY_LIMIT = 3;
-    const { isPro } = useRevenueCat();
+    const { isPro, currentOffering, purchasePackage } = useRevenueCat();
+
+    const checkTutorial = async () => {
+        try {
+            const hasSeen = await AsyncStorage.getItem('hasSeenTutorial');
+            if (hasSeen !== 'true') {
+                router.replace('/tutorial');
+            }
+        } catch (e) {
+            console.error(e);
+        }
+    };
+
+    const params = useLocalSearchParams();
 
     useEffect(() => {
+        if (params.reload === 'true') {
+            initializeUserAndFetch();
+        }
+    }, [params.reload]);
+
+    useEffect(() => {
+        checkTutorial();
         initializeUserAndFetch();
     }, []);
+
+    const handlePurchase = async () => {
+        if (isPro) {
+            Alert.alert('確認', 'すでにサブスクリプションに登録済みです。');
+            return;
+        }
+        if (!currentOffering?.current?.availablePackages?.length) {
+            Alert.alert('エラー', '現在購入可能なプランがありません。');
+            return;
+        }
+
+        try {
+            await purchasePackage(currentOffering.current.availablePackages[0]);
+        } catch (e) {
+            console.log('Purchase cancelled or failed', e);
+        }
+    };
 
     const initializeUserAndFetch = async () => {
         try {
@@ -49,6 +86,15 @@ export default function HomeScreen() {
             }
             console.log('User ID:', userId);
 
+            // Sync with App Group for Widget
+            try {
+                await DefaultPreference.setName('group.com.dailytrivia.app');
+                await DefaultPreference.set('user_id', userId);
+                console.log('Synced user_id with App Group');
+            } catch (e) {
+                console.error('Failed to sync user_id with App Group:', e);
+            }
+
             await fetchTrivia(userId);
         } catch (error) {
             console.error('Initialization error:', error);
@@ -57,26 +103,67 @@ export default function HomeScreen() {
         }
     };
 
-    const fetchTrivia = async (userId: string) => {
+    const fetchTrivia = async (userId: string, retryCount = 0) => {
         try {
-            const apiUrl = `${getBackendUrl()}/trivia/today?user_id=${userId}`;
-            console.log('Fetching from:', apiUrl);
+            const limit = isPro ? 14 : DAILY_LIMIT; // Pro gets 14 initially to support infinite scroll start
+            const apiUrl = `${getBackendUrl()}/trivia/today?user_id=${userId}&limit=${limit}`;
+            console.log(`Fetching from: ${apiUrl} (Attempt: ${retryCount + 1})`);
             const response = await fetch(apiUrl);
+
             if (!response.ok) {
                 const errorText = await response.text();
+                // If 500 error, valid JSON might still be returned in some cases, but usually it's HTML or text
                 console.error(`HTTP Error: ${response.status} ${response.statusText}`);
                 console.error(`Response body: ${errorText}`);
                 throw new Error(`Network response was not ok: ${response.status}`);
             }
+
             const data = await response.json();
+
+            // Validate data structure
+            if (!Array.isArray(data)) {
+                throw new Error('Invalid data format: expected an array');
+            }
+
             setTriviaList(data);
-            // Sync to widget
-            await syncTriviaToWidget(data);
+            setLoading(false);
+
+            // Sync to widget in background (don't block UI)
+            syncTriviaToWidget(data, userId).catch(err => console.error('Background widget sync failed:', err));
         } catch (error) {
             console.error('Fetch error:', error);
-            Alert.alert('エラー', 'データの取得に失敗しました。');
-        } finally {
-            setLoading(false);
+            if (retryCount < 2) {
+                console.log(`Retrying fetch in 2 seconds... (${retryCount + 1}/2)`);
+                setTimeout(() => fetchTrivia(userId, retryCount + 1), 2000);
+            } else {
+                setLoading(false);
+                Alert.alert(
+                    '通信エラー',
+                    'データの取得に失敗しました。時間をおいて再度お試しください。',
+                    [
+                        { text: '再試行', onPress: () => fetchTrivia(userId, 0) }
+                    ]
+                );
+            }
+        }
+    };
+
+    const fetchMoreTrivia = async () => {
+        try {
+            const userId = await AsyncStorage.getItem('user_id');
+            // Fetch 7 more items
+            const apiUrl = `${getBackendUrl()}/trivia/today?user_id=${userId}&limit=7`;
+            const response = await fetch(apiUrl);
+            if (response.ok) {
+                const data = await response.json();
+                if (Array.isArray(data) && data.length > 0) {
+                    // Append new unique items
+                    // Append new items (allowing duplicates for infinite scroll)
+                    setTriviaList(prev => [...prev, ...data]);
+                }
+            }
+        } catch (e) {
+            console.log("Failed to fetch more trivia", e);
         }
     };
 
@@ -117,6 +204,13 @@ export default function HomeScreen() {
         // Wait a bit for animation to finish before updating state to remove card
         setTimeout(() => {
             setCurrentIndex((prev) => prev + 1);
+
+            // For Pro Users: Fetch more trivia if running low
+            // Check if we are close to the end (e.g., 7 items left)
+            if (isPro && currentIndex >= triviaList.length - 7) {
+                // detailed implementation: fetch more and append
+                fetchMoreTrivia();
+            }
         }, 200);
     };
 
@@ -130,19 +224,32 @@ export default function HomeScreen() {
                 explanation: item.explanation,
                 source: item.source,
                 category: item.category,
-                content: item.content // Add this!
+                content: item.content
             }
         });
     };
 
-    const isLimitReached = currentIndex >= DAILY_LIMIT;
+    const isLimitReached = !isPro && currentIndex >= DAILY_LIMIT;
     const currentItem = triviaList[currentIndex];
 
     if (loading) {
         return (
             <SafeAreaView style={[styles.container, styles.center]}>
                 <ActivityIndicator size="large" color="#007AFF" />
-                <Text style={{ marginTop: 10 }}>雑学を読み込み中...</Text>
+                <Text style={{ marginTop: 10, color: Colors.light.subtext }}>雑学を読み込み中...</Text>
+                <Text style={{ fontSize: 10, color: '#CCC', marginTop: 4 }}>v1.0.1</Text>
+            </SafeAreaView>
+        );
+    }
+
+    // Add empty check for non-loading state
+    if (!loading && triviaList.length === 0) {
+        return (
+            <SafeAreaView style={[styles.container, styles.center]}>
+                <Text style={styles.subText}>雑学データが見つかりませんでした。</Text>
+                <Pressable style={styles.upgradeButton} onPress={() => initializeUserAndFetch()}>
+                    <Text style={styles.upgradeText}>再読み込み</Text>
+                </Pressable>
             </SafeAreaView>
         );
     }
@@ -183,30 +290,30 @@ export default function HomeScreen() {
                     <View style={styles.finishedContainer}>
                         <Text style={styles.finishedText}>今日の雑学は以上です！</Text>
                         <Text style={styles.subText}>また明日見に来てください。</Text>
-                        <Pressable style={styles.upgradeButton}>
-                            <Text style={styles.upgradeText}>サブスクで無制限に見る</Text>
-                        </Pressable>
+                        {!isPro && (
+                            <Pressable style={styles.upgradeButton} onPress={handlePurchase}>
+                                <Text style={styles.upgradeText}>サブスクで無制限に見る</Text>
+                            </Pressable>
+                        )}
                     </View>
                 )}
             </View>
 
             <View style={styles.adsContainer}>
-                {/* TEMP: Disabled for minimal build test */}
-                {/* {!isPro && (
+                {/* Banner Ad */}
+                {!isPro && (
                     <BannerAd
-                        unitId={TestIds.BANNER}
+                        unitId={Platform.OS === 'ios' ? Config.BANNER_ID_IOS : Config.BANNER_ID_ANDROID}
                         size={BannerAdSize.ANCHORED_ADAPTIVE_BANNER}
                         requestOptions={{
                             requestNonPersonalizedAdsOnly: true,
                         }}
                     />
-                )} */}
+                )}
             </View>
         </SafeAreaView>
     );
 }
-
-import { Theme, Colors } from '../../constants/Colors';
 
 const styles = StyleSheet.create({
     container: {

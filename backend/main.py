@@ -5,6 +5,7 @@ from database import get_db
 from models import Trivia, Collection, CollectionItem
 
 app = FastAPI()
+# Force redeploy
 
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -50,7 +51,14 @@ from datetime import date, datetime
 from models import Trivia, Collection, CollectionItem, DailyAssignment
 
 @app.get("/trivia/today", response_model=List[TriviaSchema])
-def get_todays_trivia(user_id: str, db: Session = Depends(get_db)):
+def get_todays_trivia(
+    user_id: str, 
+    limit: int = 3, 
+    category: str | None = None,
+    db: Session = Depends(get_db)
+):
+    from sqlalchemy.sql import func
+    
     def log(message):
         try:
             with open("backend.log", "a", encoding="utf-8") as f:
@@ -60,158 +68,164 @@ def get_todays_trivia(user_id: str, db: Session = Depends(get_db)):
 
     try:
         # Custom "Day" starts at 2:00 AM
-        # If current time is before 2:00 AM, it counts as the previous day.
         from datetime import timedelta
         current_time = datetime.now()
         effective_date = (current_time - timedelta(hours=2)).date()
         
-        log(f"DEBUG: Requesting trivia for user_id={user_id}, effective_date={effective_date} (raw: {current_time})")
+        log(f"DEBUG: Requesting trivia for user_id={user_id}, category={category}, limit={limit}")
         
-        # 1. Check if daily assignment exists for this user and date
-        assignments = db.query(DailyAssignment).filter(
-            DailyAssignment.user_id == user_id,
-            DailyAssignment.date == effective_date
-        ).all()
-        
-        if assignments:
-            log(f"DEBUG: Found {len(assignments)} assignments.")
-            # Return assigned logic
-            trivia_ids = [a.trivia_id for a in assignments]
-            trivias = db.query(Trivia).filter(Trivia.id.in_(trivia_ids)).all()
-            return trivias
-
-        # 2. Get IDs of trivia already in "History" collection for THIS USER
-        # Find user's history collection
-        history_collection = db.query(Collection).filter(
-            Collection.user_id == user_id, 
-            Collection.title == "過去に見た雑学"
-        ).first()
-        
-        seen_ids = []
-        if history_collection:
-            seen_items = db.query(CollectionItem.trivia_id).filter(
-                CollectionItem.collection_id == history_collection.id
+        # 1. Check if daily assignment exists for this user and date (ONLY if default limit=3 and no category)
+        if limit == 3 and not category:
+            assignments = db.query(DailyAssignment).filter(
+                DailyAssignment.user_id == user_id,
+                DailyAssignment.date == effective_date
             ).all()
-            seen_ids = [item.trivia_id for item in seen_items]
-        
-        # Also check past daily assignments to avoid repetition
-        past_assignments = db.query(DailyAssignment.trivia_id).filter(
-            DailyAssignment.user_id == user_id
-        ).all()
-        seen_ids.extend([p.trivia_id for p in past_assignments])
-        seen_ids = list(set(seen_ids)) # Unique
-        
-        log(f"DEBUG: Seen IDs: {seen_ids}")
-        
-        # Query trivias NOT in seen_ids
-        if seen_ids:
-            query = db.query(Trivia).filter(~Trivia.id.in_(seen_ids))
-        else:
-            query = db.query(Trivia)
             
-        total_count = query.count()
-        log(f"DEBUG: Available trivias: {total_count}")
+            if assignments:
+                log(f"DEBUG: Found {len(assignments)} assignments.")
+                trivia_ids = [a.trivia_id for a in assignments]
+                trivias = db.query(Trivia).filter(Trivia.id.in_(trivia_ids)).all()
+                return trivias
+
+        # 2. Build Subqueries for Exclusion
+        # Use subqueries instead of fetching all IDs to memory
         
-        # Fallback if all seen
-        if total_count < 3:
-            all_trivias = db.query(Trivia).all()
-            if not all_trivias:
-                return []
-            selected_trivias = random.sample(all_trivias, min(len(all_trivias), 3))
-        else:
-            # Select 3 random IDs from unseen
-            candidate_ids = [t.id for t in query.with_entities(Trivia.id).all()]
-            selected_ids = random.sample(candidate_ids, 3)
-            selected_trivias = db.query(Trivia).filter(Trivia.id.in_(selected_ids)).all()
+        # Subquery for history collection items
+        history_subquery = db.query(CollectionItem.trivia_id).join(Collection).filter(
+            Collection.user_id == user_id,
+            Collection.title == "過去に見た雑学",
+            CollectionItem.collection_id == Collection.id
+        )
         
-        # 3. Save assignments
-        for t in selected_trivias:
-            new_assignment = DailyAssignment(
-                user_id=user_id,
-                date=effective_date,
-                trivia_id=t.id
-            )
-            db.add(new_assignment)
-        db.commit()
+        # Subquery for daily assignments
+        assignments_subquery = db.query(DailyAssignment.trivia_id).filter(
+            DailyAssignment.user_id == user_id
+        )
+
+        # 3. Build Main Query
+        query = db.query(Trivia)
+        
+        # Exclude seen items using NOT IN subquery
+        query = query.filter(~Trivia.id.in_(history_subquery))
+        query = query.filter(~Trivia.id.in_(assignments_subquery))
+        
+        if category:
+            query = query.filter(Trivia.category == category)
+            
+        # 4. Fetch Random Samples using Database Random
+        # order_by(func.random()) is standard for SQLite/PostgreSQL/MySQL
+        # efficient enough for < 100k rows
+        selected_trivias = query.order_by(func.random()).limit(limit).all()
+        
+        # 5. Fallback if not enough unseen
+        if len(selected_trivias) < limit:
+            needed = limit - len(selected_trivias)
+            log(f"DEBUG: Not enough unseen trivia. Need {needed} more.")
+            
+            # Fallback query: Seen trivias
+            fallback_query = db.query(Trivia)
+            if category:
+                fallback_query = fallback_query.filter(Trivia.category == category)
+            
+            # Exclude what we just picked
+            if selected_trivias:
+                picked_ids = [t.id for t in selected_trivias]
+                fallback_query = fallback_query.filter(~Trivia.id.in_(picked_ids))
+            
+            # Randomly pick from fallback
+            fillers = fallback_query.order_by(func.random()).limit(needed).all()
+            selected_trivias.extend(fillers)
+
+        # 6. Save assignments ONLY if it's the standard daily fetch
+        if limit == 3 and not category:
+             for t in selected_trivias:
+                # Check if already assigned today (race condition check)
+                exists = db.query(DailyAssignment).filter(
+                    DailyAssignment.user_id == user_id,
+                    DailyAssignment.date == effective_date,
+                    DailyAssignment.trivia_id == t.id
+                ).first()
+                if not exists:
+                    new_assignment = DailyAssignment(
+                        user_id=user_id,
+                        date=effective_date,
+                        trivia_id=t.id
+                    )
+                    db.add(new_assignment)
+             db.commit()
         
         return selected_trivias
+
     except Exception as e:
         import traceback
         error_msg = traceback.format_exc()
         log(f"ERROR: {error_msg}")
-        print(error_msg)
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/collections", response_model=List[CollectionSchema])
 def get_collections(user_id: str, db: Session = Depends(get_db)):
-    # Fetch collections for this user
-    collections = db.query(Collection).filter(Collection.user_id == user_id).all()
-    
-    # If no collections found for this user, create defaults
-    if not collections:
-        default_collections = [
-            Collection(user_id=user_id, title="過去に見た雑学", icon="time-outline", is_locked=False),
-            Collection(user_id=user_id, title="お気に入り", icon="heart-outline", is_locked=True) 
-            # Note: Favorites logic might change, kept locked per prev implementation, 
-            # now maybe unlocked or locked depending on plan. Keeping as is.
-        ]
-        db.add_all(default_collections)
-        db.commit()
-        # Refresh to get IDs
+    try:
+        # Fetch collections for this user
         collections = db.query(Collection).filter(Collection.user_id == user_id).all()
+        
+        # If no collections found for this user, create defaults
+        if not collections:
+            default_collections = [
+                Collection(user_id=user_id, title="過去に見た雑学", icon="time-outline", is_locked=False),
+                Collection(user_id=user_id, title="お気に入り", icon="heart-outline", is_locked=True) 
+            ]
+            db.add_all(default_collections)
+            db.commit()
+            # Refresh to get IDs
+            collections = db.query(Collection).filter(Collection.user_id == user_id).all()
 
-    # Manually map to schema to include count
-    result = []
-    for c in collections:
-        item_count = db.query(CollectionItem).filter(CollectionItem.collection_id == c.id).count()
-        result.append(CollectionSchema(
-            id=c.id,
-            user_id=c.user_id,
-            title=c.title,
-            icon=c.icon,
-            is_locked=c.is_locked,
-            count=item_count
-        ))
-    return result
+        # Manually map to schema to include count
+        result = []
+        for c in collections:
+            item_count = db.query(CollectionItem).filter(CollectionItem.collection_id == c.id).count()
+            result.append(CollectionSchema(
+                id=c.id,
+                user_id=c.user_id,
+                title=c.title,
+                icon=c.icon,
+                is_locked=c.is_locked,
+                count=item_count
+            ))
+        return result
+    except Exception as e:
+        print(f"Error in get_collections: {e}")
+        raise HTTPException(status_code=500, detail="Failed to fetch collections")
 
-class AddHistoryRequest(BaseModel):
+class CreateCollectionRequest(BaseModel):
     user_id: str
-    trivia_id: int
+    title: str
+    icon: str = "folder-outline"
 
-@app.post("/history")
-def add_to_history(request: AddHistoryRequest, db: Session = Depends(get_db)):
-    # Find list "History" for this user
-    # Ensure collections exist (in case user swipes before visiting collections tab)
-    history_collection = db.query(Collection).filter(
-        Collection.user_id == request.user_id, 
-        Collection.title == "過去に見た雑学"
-    ).first()
-    
-    if not history_collection:
-        # Create defaults if not exist
-        history_collection = Collection(user_id=request.user_id, title="過去に見た雑学", icon="time-outline", is_locked=False)
-        fav_collection = Collection(user_id=request.user_id, title="お気に入り", icon="heart-outline", is_locked=True)
-        db.add(history_collection)
-        db.add(fav_collection)
+@app.post("/collections", response_model=CollectionSchema)
+def create_collection(request: CreateCollectionRequest, db: Session = Depends(get_db)):
+    try:
+        new_collection = Collection(
+            user_id=request.user_id,
+            title=request.title,
+            icon=request.icon,
+            is_locked=False # Custom collections are unlocked
+        )
+        db.add(new_collection)
         db.commit()
-        db.refresh(history_collection)
-    
-    # Check if already exists
-    exists = db.query(CollectionItem).filter(
-        CollectionItem.collection_id == history_collection.id,
-        CollectionItem.trivia_id == request.trivia_id
-    ).first()
-    
-    if exists:
-        return {"message": "Already in history"}
-    
-    new_item = CollectionItem(
-        collection_id=history_collection.id,
-        trivia_id=request.trivia_id
-    )
-    db.add(new_item)
-    db.commit()
-    return {"message": "Added to history"}
+        db.refresh(new_collection)
+        return CollectionSchema(
+            id=new_collection.id,
+            user_id=new_collection.user_id,
+            title=new_collection.title,
+            icon=new_collection.icon,
+            is_locked=new_collection.is_locked,
+            count=0
+        )
+    except Exception as e:
+        import traceback
+        error_msg = traceback.format_exc()
+        print(f"Error creating collection: {error_msg}")
+        raise HTTPException(status_code=500, detail=f"Failed to create collection: {str(e)}")
 
 @app.get("/collections/{collection_id}/items", response_model=List[TriviaSchema])
 def get_collection_items(collection_id: int, db: Session = Depends(get_db)):
