@@ -162,6 +162,52 @@ def get_todays_trivia(
         log(f"ERROR: {error_msg}")
         raise HTTPException(status_code=500, detail=str(e))
 
+class HistoryRequest(BaseModel):
+    user_id: str
+    trivia_id: int
+
+@app.post("/history")
+def add_to_history(request: HistoryRequest, db: Session = Depends(get_db)):
+    try:
+        # Find "History" collection for this user
+        history_collection = db.query(Collection).filter(
+            Collection.user_id == request.user_id,
+            Collection.title == "過去に見た雑学"
+        ).first()
+
+        if not history_collection:
+            # Should exist from get_collections, but just in case
+            history_collection = Collection(
+                user_id=request.user_id, 
+                title="過去に見た雑学", 
+                icon="time-outline", 
+                is_locked=False
+            )
+            db.add(history_collection)
+            db.commit()
+            db.refresh(history_collection)
+
+        # Check if already exists in history
+        exists = db.query(CollectionItem).filter(
+            CollectionItem.collection_id == history_collection.id,
+            CollectionItem.trivia_id == request.trivia_id
+        ).first()
+
+        if not exists:
+            new_item = CollectionItem(
+                collection_id=history_collection.id,
+                trivia_id=request.trivia_id
+            )
+            db.add(new_item)
+            db.commit()
+            return {"message": "Added to history"}
+        else:
+            return {"message": "Already in history"}
+
+    except Exception as e:
+        print(f"Error adding to history: {e}")
+        raise HTTPException(status_code=500, detail="Failed to add to history")
+
 @app.get("/collections", response_model=List[CollectionSchema])
 def get_collections(user_id: str, db: Session = Depends(get_db)):
     try:
@@ -232,4 +278,38 @@ def get_collection_items(collection_id: int, db: Session = Depends(get_db)):
     # Join Trivia and CollectionItem to get trivias in the collection
     trivias = db.query(Trivia).join(CollectionItem).filter(CollectionItem.collection_id == collection_id).all()
     return trivias
+
+class AddCollectionItemRequest(BaseModel):
+    trivia_id: int
+
+@app.post("/collections/{collection_id}/items")
+def add_collection_item(collection_id: int, request: AddCollectionItemRequest, db: Session = Depends(get_db)):
+    try:
+        # Check if collection exists
+        collection = db.query(Collection).filter(Collection.id == collection_id).first()
+        if not collection:
+            raise HTTPException(status_code=404, detail="Collection not found")
+
+        # Check if already exists
+        exists = db.query(CollectionItem).filter(
+            CollectionItem.collection_id == collection_id,
+            CollectionItem.trivia_id == request.trivia_id
+        ).first()
+
+        if exists:
+             raise HTTPException(status_code=400, detail="Already in collection")
+        
+        new_item = CollectionItem(
+            collection_id=collection_id,
+            trivia_id=request.trivia_id
+        )
+        db.add(new_item)
+        db.commit()
+        return {"message": "Added to collection"}
+
+    except HTTPException as he:
+        raise he
+    except Exception as e:
+        print(f"Error adding item to collection: {e}")
+        raise HTTPException(status_code=500, detail="Failed to add item")
 

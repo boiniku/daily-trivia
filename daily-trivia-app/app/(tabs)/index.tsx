@@ -291,7 +291,7 @@ export default function HomeScreen() {
                         <Text style={styles.finishedText}>今日の雑学は以上です！</Text>
                         <Text style={styles.subText}>また明日見に来てください。</Text>
                         {!isPro && (
-                            <Pressable style={styles.upgradeButton} onPress={handlePurchase}>
+                            <Pressable style={styles.upgradeButton} onPress={() => router.push('/settings')}>
                                 <Text style={styles.upgradeText}>サブスクで無制限に見る</Text>
                             </Pressable>
                         )}
