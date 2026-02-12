@@ -147,7 +147,7 @@ export default function DetailsScreen() {
                         <Text style={styles.text}>{explanation}</Text>
                     </View>
 
-                    {source ? (
+                    {/* source ? (
                         <View style={[styles.section, { borderBottomWidth: 0 }]}>
                             <View style={styles.sectionHeader}>
                                 <Ionicons name="book" size={20} color={Colors.light.subtext} style={{ marginRight: 8 }} />
@@ -155,7 +155,7 @@ export default function DetailsScreen() {
                             </View>
                             <Text style={styles.sourceText}>{source}</Text>
                         </View>
-                    ) : null}
+                    ) : null */}
                 </ScrollView>
 
                 {/* Banner Ad */}

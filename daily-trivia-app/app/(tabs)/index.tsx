@@ -240,8 +240,9 @@ export default function HomeScreen() {
                 }),
             });
             console.log('Added to history:', triviaId, 'for user:', userId);
-        } catch (error) {
+        } catch (error: any) {
             console.error('Failed to add to history:', error);
+            Alert.alert('エラー', `履歴への追加に失敗しました: ${error.message || error}`);
         }
     };
 

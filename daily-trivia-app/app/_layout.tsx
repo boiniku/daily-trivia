@@ -6,17 +6,20 @@ import { useEffect } from 'react';
 import { View } from 'react-native';
 import { RevenueCatProvider } from '../contexts/RevenueCatContext';
 // TEMP: Disabled for minimal build test
-// import mobileAds from 'react-native-google-mobile-ads';
+import mobileAds from 'react-native-google-mobile-ads';
 
 export default function RootLayout() {
 
   useEffect(() => {
     // TEMP: Disabled for minimal build test
-    // mobileAds()
-    //   .initialize()
-    //   .then(adapterStatuses => {
-    //     // Initialization complete!
-    //   });
+    mobileAds()
+      .initialize()
+      .then(adapterStatuses => {
+        // Initialization complete!
+      })
+      .catch(error => {
+        console.error('AdMob init error:', error);
+      });
   }, []);
 
   return (

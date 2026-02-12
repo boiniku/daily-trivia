@@ -1,10 +1,14 @@
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { View, Text, StyleSheet, FlatList, Pressable, ActivityIndicator, Alert, Platform } from 'react-native';
+import { View, Text, StyleSheet, FlatList, Pressable, ActivityIndicator, Alert, Platform, ScrollView } from 'react-native';
 import { useState, useEffect } from 'react';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import Constants from 'expo-constants';
 import { Config } from '../../constants/Config';
+import { Theme, Colors } from '../../constants/Colors';
+import { useRevenueCat } from '../../contexts/RevenueCatContext';
+import { InterstitialAd, AdEventType, TestIds } from 'react-native-google-mobile-ads';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const getBackendUrl = () => {
     return Config.BACKEND_URL;
@@ -19,29 +23,108 @@ interface TriviaItem {
     category: string;
 }
 
+const interstitial = InterstitialAd.createForAdRequest(TestIds.INTERSTITIAL, {
+    requestNonPersonalizedAdsOnly: true,
+});
+
 export default function CollectionDetailsScreen() {
     const { id, title } = useLocalSearchParams();
     const router = useRouter();
     const [items, setItems] = useState<TriviaItem[]>([]);
+    const [filteredItems, setFilteredItems] = useState<TriviaItem[]>([]);
     const [loading, setLoading] = useState(true);
+    const { isPro } = useRevenueCat();
+
+    // Filtering
+    const [categories, setCategories] = useState<string[]>([]);
+    const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
+
+    // Ads
+    const [adLoaded, setAdLoaded] = useState(false);
 
     useEffect(() => {
-        if (id) {
-            fetchCollectionItems();
+        fetchCollectionItems();
+
+        // Ad Logic
+        if (!isPro) {
+            const unsubscribe = interstitial.addAdEventListener(AdEventType.LOADED, () => {
+                setAdLoaded(true);
+            });
+
+            const unsubscribeClosed = interstitial.addAdEventListener(AdEventType.CLOSED, () => {
+                setAdLoaded(false);
+                interstitial.load();
+            });
+
+            interstitial.load();
+
+            return () => {
+                unsubscribe();
+                unsubscribeClosed();
+            };
         }
     }, [id]);
+
+    // Check Ad Cooldown when entering
+    useEffect(() => {
+        const checkAdCooldown = async () => {
+            if (isPro) return;
+            // Only show ad if collection is "Past Trivia" (as per request) OR maybe all collections?
+            // "過去に見た雑学フォルダをみたときに出てくる広告のクールタイム"
+            if (title !== "過去に見た雑学") return;
+
+            try {
+                const lastShown = await AsyncStorage.getItem('last_interstitial_shown');
+                const now = Date.now();
+                const COOLDOWN = 5 * 60 * 1000; // 5 minutes
+
+                if (!lastShown || (now - parseInt(lastShown)) > COOLDOWN) {
+                    // Show Ad if loaded
+                    if (adLoaded) {
+                        interstitial.show();
+                        await AsyncStorage.setItem('last_interstitial_shown', now.toString());
+                    } else {
+                        // Watch for load logic if strictly required, but mostly passive here
+                    }
+                }
+            } catch (e) {
+                console.error("Ad cooldown error", e);
+            }
+        };
+
+        if (adLoaded) {
+            checkAdCooldown();
+        }
+    }, [adLoaded, isPro, title]);
 
     const fetchCollectionItems = async () => {
         try {
             const apiUrl = `${getBackendUrl()}/collections/${id}/items`;
             const response = await fetch(apiUrl);
             if (!response.ok) throw new Error('Network error');
-            const data = await response.json();
+            const data: TriviaItem[] = await response.json();
             setItems(data);
+            setFilteredItems(data);
+
+            // Extract unique categories safely
+            if (Array.isArray(data)) {
+                const cats = Array.from(new Set(data.filter(item => item && item.category).map(item => item.category))).filter(Boolean);
+                setCategories(cats);
+            }
+
         } catch (error) {
             Alert.alert('エラー', 'データの取得に失敗しました');
         } finally {
             setLoading(false);
+        }
+    };
+
+    const handleFilter = (category: string | null) => {
+        setSelectedCategory(category);
+        if (category) {
+            setFilteredItems(items.filter(i => i.category === category));
+        } else {
+            setFilteredItems(items);
         }
     };
 
@@ -68,6 +151,9 @@ export default function CollectionDetailsScreen() {
             <View style={styles.itemContent}>
                 <Text style={styles.itemTitle}>{item.title}</Text>
                 <Text style={styles.itemPreview} numberOfLines={1}>{item.content}</Text>
+                <View style={styles.tagBadge}>
+                    <Text style={styles.tagText}>{item.category || 'その他'}</Text>
+                </View>
             </View>
             <Ionicons name="chevron-forward" size={20} color="#ccc" />
         </Pressable>
@@ -79,9 +165,32 @@ export default function CollectionDetailsScreen() {
                 <Pressable onPress={() => router.back()} style={styles.backButton}>
                     <Ionicons name="arrow-back" size={24} color={Colors.light.primary} />
                 </Pressable>
-                <Text style={styles.headerTitle}>{title || 'フォルダの中身'}</Text>
-                <View style={{ width: 24 }} />
+                <Text style={styles.headerTitle} numberOfLines={1}>{title || 'フォルダの中身'}</Text>
+                <View style={{ width: 40 }} />
             </View>
+
+            {/* Category Filter */}
+            {categories.length > 0 && (
+                <View style={styles.filterContainer}>
+                    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 20 }}>
+                        <Pressable
+                            style={[styles.filterChip, selectedCategory === null && styles.filterChipActive]}
+                            onPress={() => handleFilter(null)}
+                        >
+                            <Text style={[styles.filterText, selectedCategory === null && styles.filterTextActive]}>すべて</Text>
+                        </Pressable>
+                        {categories.map(cat => (
+                            <Pressable
+                                key={cat}
+                                style={[styles.filterChip, selectedCategory === cat && styles.filterChipActive]}
+                                onPress={() => handleFilter(cat)}
+                            >
+                                <Text style={[styles.filterText, selectedCategory === cat && styles.filterTextActive]}>{cat}</Text>
+                            </Pressable>
+                        ))}
+                    </ScrollView>
+                </View>
+            )}
 
             {loading ? (
                 <View style={styles.center}>
@@ -89,7 +198,7 @@ export default function CollectionDetailsScreen() {
                 </View>
             ) : (
                 <FlatList
-                    data={items}
+                    data={filteredItems}
                     renderItem={renderItem}
                     keyExtractor={item => item.id.toString()}
                     contentContainerStyle={styles.listContent}
@@ -103,8 +212,6 @@ export default function CollectionDetailsScreen() {
         </SafeAreaView>
     );
 }
-
-import { Theme, Colors } from '../../constants/Colors'; // Import Colors
 
 const styles = StyleSheet.create({
     container: {
@@ -121,14 +228,14 @@ const styles = StyleSheet.create({
         padding: 8,
         borderRadius: 20,
         backgroundColor: '#F5F5F5',
+        ...Theme.shadow.small,
     },
     headerTitle: {
-        fontSize: 24,
+        fontSize: 22, // Slightly smaller to fit
         fontWeight: '900',
         color: Colors.light.primary,
         flex: 1,
         textAlign: 'center',
-        marginRight: 40, // Balance back button
     },
     center: {
         flex: 1,
@@ -137,6 +244,7 @@ const styles = StyleSheet.create({
     },
     listContent: {
         padding: 20,
+        paddingBottom: 100,
     },
     itemContainer: {
         flexDirection: 'row',
@@ -174,6 +282,7 @@ const styles = StyleSheet.create({
         fontSize: 13,
         color: Colors.light.subtext,
         fontWeight: '500',
+        marginBottom: 6,
     },
     emptyContainer: {
         padding: 40,
@@ -182,6 +291,44 @@ const styles = StyleSheet.create({
     emptyText: {
         color: Colors.light.subtext,
         fontSize: 16,
+        fontWeight: 'bold',
+    },
+    // Filter Styles
+    filterContainer: {
+        marginBottom: 10,
+        height: 40,
+    },
+    filterChip: {
+        paddingHorizontal: 16,
+        paddingVertical: 8,
+        borderRadius: 20,
+        backgroundColor: Colors.light.cardBackground,
+        marginRight: 8,
+        borderWidth: 1,
+        borderColor: Colors.light.border,
+    },
+    filterChipActive: {
+        backgroundColor: Colors.light.primary,
+        borderColor: Colors.light.primary,
+    },
+    filterText: {
+        fontSize: 13,
+        fontWeight: '600',
+        color: Colors.light.subtext,
+    },
+    filterTextActive: {
+        color: 'white',
+    },
+    tagBadge: {
+        backgroundColor: '#E3F2FD',
+        alignSelf: 'flex-start',
+        paddingHorizontal: 8,
+        paddingVertical: 2,
+        borderRadius: 8,
+    },
+    tagText: {
+        fontSize: 10,
+        color: '#1565C0',
         fontWeight: 'bold',
     }
 });

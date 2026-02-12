@@ -31,8 +31,8 @@ class CollectionItem(Base):
     __tablename__ = "collection_items"
 
     id = Column(Integer, primary_key=True, index=True)
-    collection_id = Column(Integer, ForeignKey("collections.id"))
-    trivia_id = Column(Integer, ForeignKey("trivia.id"))
+    collection_id = Column(Integer, ForeignKey("collections.id"), index=True)
+    trivia_id = Column(Integer, ForeignKey("trivia.id"), index=True)
     saved_at = Column(DateTime, default=datetime.utcnow)
 
     # Relationships
@@ -45,7 +45,7 @@ class DailyAssignment(Base):
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(String, index=True) # UUID from frontend
     date = Column(Date, index=True)
-    trivia_id = Column(Integer, ForeignKey("trivia.id"))
+    trivia_id = Column(Integer, ForeignKey("trivia.id"), index=True)
 
     trivia = relationship("Trivia")
 

@@ -2,17 +2,19 @@ import WidgetKit
 import SwiftUI
 
 struct TriviaData: Codable {
+    let id: Int
     let title: String
     let content: String
+    let date: String?
 }
 
 struct Provider: TimelineProvider {
     func placeholder(in context: Context) -> TriviaEntry {
-        TriviaEntry(date: Date(), title: "雑学のタイトル", content: "ここに雑学の内容が表示されます。", theme: .morning)
+        TriviaEntry(date: Date(), id: 0, title: "雑学のタイトル", content: "ここに雑学の内容が表示されます。", theme: .morning)
     }
 
     func getSnapshot(in context: Context, completion: @escaping (TriviaEntry) -> ()) {
-        let entry = TriviaEntry(date: Date(), title: "富士山の高さ", content: "富士山の高さは3776メートルです。", theme: .noon)
+        let entry = TriviaEntry(date: Date(), id: 0, title: "富士山の高さ", content: "富士山の高さは3776メートルです。", theme: .noon)
         completion(entry)
     }
 
@@ -21,13 +23,13 @@ struct Provider: TimelineProvider {
         let currentDate = Date()
         let calendar = Calendar.current
         
-        // App Groupからデータを取得
-        // "group.com.dailytrivia.app" は Config Plugin で設定する予定の識別子
+        // App Group defaults
         let userDefaults = UserDefaults(suiteName: "group.com.dailytrivia.app")
         let triviaJson = userDefaults?.string(forKey: "daily_trivia")
         
         var triviaList: [TriviaData] = []
         
+        // 1. Try to load local data
         if let jsonString = triviaJson, let data = jsonString.data(using: .utf8) {
             do {
                 triviaList = try JSONDecoder().decode([TriviaData].self, from: data)
@@ -36,21 +38,90 @@ struct Provider: TimelineProvider {
             }
         }
         
-        // データのフォールバック (データがない場合)
+        // 2. Check if data is valid (today's data)
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd"
+        let todayStr = formatter.string(from: currentDate)
+        
+        var isValidData = false
+        if !triviaList.isEmpty {
+            if let firstItemDate = triviaList[0].date {
+                isValidData = (firstItemDate == todayStr)
+            } else {
+                isValidData = true // Fallback for legacy data
+            }
+        }
+        
+        // 3. If invalid, try to fetch from API
+        if !isValidData {
+            let userId = userDefaults?.string(forKey: "user_id") ?? "widget_guest"
+            let urlString = "https://daily-trivia-e7ge.onrender.com/trivia/today?user_id=\(userId)"
+            
+            if let url = URL(string: urlString) {
+                print("Fetching widget data from: \(urlString)")
+                
+                let dispatchGroup = DispatchGroup()
+                dispatchGroup.enter()
+                
+                let task = URLSession.shared.dataTask(with: url) { data, response, error in
+                    defer { dispatchGroup.leave() }
+                    
+                    if let data = data {
+                        do {
+                            // Decode API response
+                            struct APITriviaItem: Codable {
+                                let id: Int
+                                let title: String
+                                let content: String
+                            }
+                            
+                            let apiItems = try JSONDecoder().decode([APITriviaItem].self, from: data)
+                            
+                            // Map to Widget Data Format
+                            let newTriviaList = apiItems.prefix(3).map { item in
+                                TriviaData(id: item.id, title: item.title, content: item.content, date: todayStr)
+                            }
+                            
+                            if !newTriviaList.isEmpty {
+                                triviaList = newTriviaList
+                                
+                                // Save to UserDefaults for cache
+                                if let encoded = try? JSONEncoder().encode(newTriviaList) {
+                                    if let jsonString = String(data: encoded, encoding: .utf8) {
+                                        userDefaults?.set(jsonString, forKey: "daily_trivia")
+                                        print("Saved fetched data to UserDefaults")
+                                    }
+                                }
+                            }
+                        } catch {
+                            print("Widget fetch error: \(error)")
+                        }
+                    }
+                }
+                task.resume()
+                
+                // Wait for up to 3 seconds for network
+                let result = dispatchGroup.wait(timeout: .now() + 3)
+                if result == .timedOut {
+                    print("Widget fetch timed out")
+                }
+            }
+        }
+        
+        // 4. Fallback if still empty
         if triviaList.isEmpty {
             triviaList = [
-                TriviaData(title: "データ未取得", content: "アプリを開いて今日の雑学を取得してください！"),
-                TriviaData(title: "データ未取得", content: "アプリを開いて今日の雑学を取得してください！"),
-                TriviaData(title: "データ未取得", content: "アプリを開いて今日の雑学を取得してください！")
+                TriviaData(id: 0, title: "データ取得中...", content: "通信環境の良い場所で\nお待ちください。", date: todayStr),
+                TriviaData(id: 0, title: "データ取得中...", content: "通信環境の良い場所で\nお待ちください。", date: todayStr),
+                TriviaData(id: 0, title: "データ取得中...", content: "通信環境の良い場所で\nお待ちください。", date: todayStr)
             ]
-        } 
-        // 足りない分を埋める
+        }
+        // Fill up to 3 items
         while triviaList.count < 3 {
-            triviaList.append(triviaList.last ?? TriviaData(title: "No Data", content: "No Data"))
+             triviaList.append(triviaList.last ?? TriviaData(id: 0, title: "No Data", content: "No Data", date: todayStr))
         }
 
-        // 今日の日付の基準 (2:00 AM スタート)
-        // 現在時刻が 0:00-1:59 の場合、前日の2:00からのサイクルとして扱う
+        // 5. Build Timeline
         var baseDate = currentDate
         let currentHour = calendar.component(.hour, from: currentDate)
         if currentHour < 2 {
@@ -58,10 +129,10 @@ struct Provider: TimelineProvider {
         }
         
         // Morning (2:00)
-        // 2:00 AM of the base date
         let morningDate = calendar.date(bySettingHour: 2, minute: 0, second: 0, of: baseDate)!
         let morningEntry = TriviaEntry(
             date: morningDate,
+            id: triviaList[0].id,
             title: triviaList[0].title,
             content: triviaList[0].content,
             theme: .morning
@@ -72,6 +143,7 @@ struct Provider: TimelineProvider {
         let noonDate = calendar.date(bySettingHour: 10, minute: 0, second: 0, of: baseDate)!
         let noonEntry = TriviaEntry(
             date: noonDate,
+            id: triviaList[1].id,
             title: triviaList[1].title,
             content: triviaList[1].content,
             theme: .noon
@@ -82,13 +154,14 @@ struct Provider: TimelineProvider {
         let nightDate = calendar.date(bySettingHour: 18, minute: 0, second: 0, of: baseDate)!
         let nightEntry = TriviaEntry(
             date: nightDate,
+            id: triviaList[2].id,
             title: triviaList[2].title,
             content: triviaList[2].content,
             theme: .night
         )
         entries.append(nightEntry)
 
-        // 次の更新は明日の2時
+        // Next update: Tomorrow 2:00 AM
         let nextUpdate = calendar.date(byAdding: .day, value: 1, to: morningDate)!
         let timeline = Timeline(entries: entries, policy: .after(nextUpdate))
         completion(timeline)
@@ -101,6 +174,7 @@ enum TriviaTheme {
 
 struct TriviaEntry: TimelineEntry {
     let date: Date
+    let id: Int
     let title: String
     let content: String
     let theme: TriviaTheme
@@ -128,12 +202,13 @@ struct TriviaWidgetEntryView : View {
                 Spacer()
                 
                 Text(entry.title)
-                    .font(.system(size: 16, weight: .heavy, design: .rounded))
+                    .font(.system(size: 20, weight: .black, design: .rounded))
                     .foregroundColor(.white)
                     .shadow(radius: 2)
+                    .minimumScaleFactor(0.8)
                 
                 Text(entry.content)
-                    .font(.system(size: 12, weight: .medium, design: .rounded))
+                    .font(.system(size: 13, weight: .bold, design: .rounded))
                     .foregroundColor(.white)
                     .lineLimit(4)
                     .shadow(radius: 1)
@@ -142,6 +217,7 @@ struct TriviaWidgetEntryView : View {
             }
             .padding()
         }
+        .widgetURL(URL(string: "dailytrivia://details?id=\(entry.id)&title=\(entry.title.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? "")&content=\(entry.content.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? "")"))
     }
 }
 
@@ -168,10 +244,10 @@ struct BackgroundView: View {
                 if theme == .morning {
                     // Soft Sunrise
                     Circle()
-                        .fill(Color.orange.opacity(0.6))
-                        .frame(width: 100, height: 100)
-                        .position(x: geometry.size.width * 0.8, y: geometry.size.height * 0.3)
-                        .blur(radius: 20)
+                    .fill(Color.orange.opacity(0.6))
+                    .frame(width: 100, height: 100)
+                    .position(x: geometry.size.width * 0.8, y: geometry.size.height * 0.3)
+                    .blur(radius: 20)
                 } else if theme == .noon {
                     // Fluffy Clouds (Simple Circles)
                     Circle()
@@ -229,5 +305,6 @@ struct TriviaWidget: Widget {
         .configurationDisplayName("毎日雑学")
         .description("朝・昼・夜で変わる雑学をお届けします。")
         .supportedFamilies([.systemSmall, .systemMedium])
+        .contentMarginsDisabled()
     }
 }

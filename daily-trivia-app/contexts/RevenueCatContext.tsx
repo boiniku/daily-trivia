@@ -1,9 +1,6 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { Platform, Alert } from 'react-native';
-// import Purchases, { CustomerInfo, PurchasesOffering } from 'react-native-purchases';
-
-// Mock types since we removed the import
-type PurchasesOffering = any;
+import Purchases, { CustomerInfo, PurchasesOfferings, PurchasesPackage } from 'react-native-purchases';
 
 const API_KEYS = {
     ios: process.env.EXPO_PUBLIC_REVENUECAT_IOS_API_KEY || '',
@@ -12,30 +9,41 @@ const API_KEYS = {
 
 interface RevenueCatContextType {
     isPro: boolean;
-    currentOffering: PurchasesOffering | null;
-    purchasePackage: (pack: any) => Promise<void>;
+    currentOffering: PurchasesOfferings | null;
+    purchasePackage: (pack: PurchasesPackage) => Promise<void>;
     restorePurchases: () => Promise<void>;
     loading: boolean;
+    retryLoadOfferings: () => Promise<void>;
 }
 
 const RevenueCatContext = createContext<RevenueCatContextType | undefined>(undefined);
 
 export const RevenueCatProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-    // TEMP: Mock implementation to fix startup crash
     const [isPro, setIsPro] = useState(false);
-    const [currentOffering, setCurrentOffering] = useState<PurchasesOffering | null>(null);
-    const [loading, setLoading] = useState(false); // Set to false immediately
+    const [currentOffering, setCurrentOffering] = useState<PurchasesOfferings | null>(null);
+    const [loading, setLoading] = useState(true);
 
-    // TEMP: Skip all RevenueCat initialization
-    /*
     useEffect(() => {
         const init = async () => {
             try {
+                // Enable debug logs before setup
+                await Purchases.setLogLevel(Purchases.LOG_LEVEL.DEBUG);
+
+                let apiKey = '';
                 if (Platform.OS === 'ios') {
-                    await Purchases.configure({ apiKey: API_KEYS.ios });
+                    apiKey = API_KEYS.ios;
                 } else if (Platform.OS === 'android') {
-                    await Purchases.configure({ apiKey: API_KEYS.android });
+                    apiKey = API_KEYS.android;
                 }
+
+                if (!apiKey) {
+                    console.warn('RevenueCat API key not found for platform:', Platform.OS);
+                    // Alert.alert('設定エラー', 'RevenueCatのAPIキーが設定されていません。'); // Silent fail
+                    setLoading(false);
+                    return;
+                }
+
+                await Purchases.configure({ apiKey });
 
                 const customerInfo = await Purchases.getCustomerInfo();
                 updateCustomerStatus(customerInfo);
@@ -48,11 +56,13 @@ export const RevenueCatProvider: React.FC<{ children: React.ReactNode }> = ({ ch
             }
         };
 
-        init();
+        // Delay initialization to prevent startup crash
+        setTimeout(() => {
+            init();
+        }, 1000);
     }, []);
-    */
 
-    const updateCustomerStatus = (customerInfo: any) => {
+    const updateCustomerStatus = (customerInfo: CustomerInfo) => {
         // "pro" is the entitlement identifier in RevenueCat
         const isProActive = customerInfo.entitlements.active['pro'] !== undefined;
         setIsPro(isProActive);
@@ -60,27 +70,52 @@ export const RevenueCatProvider: React.FC<{ children: React.ReactNode }> = ({ ch
 
     const loadOfferings = async () => {
         try {
-            // const offerings = await Purchases.getOfferings();
-            // if (offerings.current) {
-            //     setCurrentOffering(offerings.current);
-            // }
-        } catch (e) {
+            setLoading(true);
+            const offerings = await Purchases.getOfferings();
+            console.log('Offerings loaded:', offerings);
+            if (offerings.current) {
+                if (offerings.current.availablePackages.length === 0) {
+                    Alert.alert("Debug", "Offeringは取得できましたが、パッケージが空です。\nRevenueCatのProduct IDがApp Storeと一致しているか確認してください。");
+                }
+                setCurrentOffering(offerings);
+            } else {
+                console.log('No current offering configured in RevenueCat console');
+                Alert.alert("Debug", "Offeringが取得できませんでした。\nRevenueCatのダッシュボードで'Default' Offeringが設定されているか確認してください。");
+            }
+        } catch (e: any) {
             console.error('Error loading offerings:', e);
+            Alert.alert("RevenueCat Error", e.message + "\n\n詳細: App Store Connectの契約/税務情報、またはBundle IDの一致を確認してください。");
+        } finally {
+            setLoading(false);
         }
     };
 
-    const purchasePackage = async (pack: any) => {
-        // TEMP: Disabled
-        Alert.alert('Disabled', 'Purchase is disabled in test build to prevent crashes');
+    // Expose loadOfferings for manual retry
+    const retryLoadOfferings = () => loadOfferings();
+
+    const purchasePackage = async (pack: PurchasesPackage) => {
+        try {
+            const { customerInfo } = await Purchases.purchasePackage(pack);
+            updateCustomerStatus(customerInfo);
+        } catch (e: any) {
+            if (!e.userCancelled) {
+                Alert.alert('Error', e.message);
+            }
+        }
     };
 
     const restorePurchases = async () => {
-        // TEMP: Disabled
-        Alert.alert('Disabled', 'Restore is disabled in test build to prevent crashes');
+        try {
+            const customerInfo = await Purchases.restorePurchases();
+            updateCustomerStatus(customerInfo);
+            Alert.alert('Success', 'Purchases restored successfully!');
+        } catch (e: any) {
+            Alert.alert('Error', e.message);
+        }
     };
 
     return (
-        <RevenueCatContext.Provider value={{ isPro, currentOffering, purchasePackage, restorePurchases, loading }}>
+        <RevenueCatContext.Provider value={{ isPro, currentOffering, purchasePackage, restorePurchases, loading, retryLoadOfferings }}>
             {children}
         </RevenueCatContext.Provider>
     );

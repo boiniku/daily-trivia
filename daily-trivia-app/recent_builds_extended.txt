@@ -1,0 +1,37 @@
+
+Builds for @noborida/daily-trivia-app:
+
+ID                       c1128cfa-da49-455b-96ae-1c5fc4048907
+Platform                 iOS
+Status                   finished
+Profile                  production
+Distribution             store
+SDK Version              54.0.0
+Version                  1.0.0
+Build number             34
+Commit                   bc2f7696b03e552c68e8d4cd05e4532086f13109
+Logs                     https://expo.dev/accounts/noborida/projects/daily-trivia-app/builds/c1128cfa-da49-455b-96ae-1c5fc4048907
+Application Archive URL  https://expo.dev/artifacts/eas/pQNvnp1aYNWiQy9x5beBtn.ipa
+Build Artifacts URL      null
+Fingerprint              16c45d7a8d25e85f7bdcc22df20f8d324880a67b
+Started at               2026/2/11 20:48:50
+Finished at              2026/2/11 20:53:38
+Started by               noborida
+
+窶披披・
+ID                       fb331e37-d1c7-4db4-8ac0-6dd737422f5a
+Platform                 iOS
+Status                   finished
+Profile                  production
+Distribution             store
+SDK Version              54.0.0
+Version                  1.0.0
+Build number             32
+Commit                   bc2f7696b03e552c68e8d4cd05e4532086f13109
+Logs                     https://expo.dev/accounts/noborida/projects/daily-trivia-app/builds/fb331e37-d1c7-4db4-8ac0-6dd737422f5a
+Application Archive URL  https://expo.dev/artifacts/eas/x27BAkpP9vCDJeBNNJiW8C.ipa
+Build Artifacts URL      null
+Fingerprint              16c45d7a8d25e85f7bdcc22df20f8d324880a67b
+Started at               2026/2/11 9:04:44
+Finished at              2026/2/11 9:10:28
+Started by               noborida

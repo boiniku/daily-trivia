@@ -205,8 +205,15 @@ def add_to_history(request: HistoryRequest, db: Session = Depends(get_db)):
             return {"message": "Already in history"}
 
     except Exception as e:
+        import traceback
+        error_msg = traceback.format_exc()
+        try:
+            with open("history_errors.log", "a", encoding="utf-8") as f:
+                f.write(f"{datetime.now()}: Error adding to history: {error_msg}\n")
+        except:
+            pass
         print(f"Error adding to history: {e}")
-        raise HTTPException(status_code=500, detail="Failed to add to history")
+        raise HTTPException(status_code=500, detail=f"Failed to add to history: {str(e)}")
 
 @app.get("/collections", response_model=List[CollectionSchema])
 def get_collections(user_id: str, db: Session = Depends(get_db)):

@@ -1,5 +1,5 @@
-import { useState, useCallback } from 'react';
-import { View, Text, StyleSheet, Pressable, FlatList, ActivityIndicator, Alert, Platform } from 'react-native';
+import { useState, useCallback, useEffect } from 'react';
+import { View, Text, StyleSheet, Pressable, FlatList, ActivityIndicator, Alert, Platform, Modal, TextInput, RefreshControl } from 'react-native';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -8,8 +8,11 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Crypto from 'expo-crypto';
 
 import { Config } from '../../constants/Config';
+import { useRevenueCat } from '../../contexts/RevenueCatContext';
+import { BannerAd, BannerAdSize, TestIds, useRewardedAd } from 'react-native-google-mobile-ads';
+import { Theme, Colors } from '../../constants/Colors';
 
-// Helper to determine backend URL (Duplicated code, should be refactored to a util)
+// Helper to determine backend URL
 const getBackendUrl = () => {
     return Config.BACKEND_URL;
 };
@@ -26,6 +29,37 @@ export default function CollectionsScreen() {
     const router = useRouter();
     const [collections, setCollections] = useState<Collection[]>([]);
     const [loading, setLoading] = useState(true);
+    const [refreshing, setRefreshing] = useState(false);
+    const { isPro } = useRevenueCat();
+
+    const { isLoaded, isClosed, load, show } = useRewardedAd(Platform.OS === 'ios' ? Config.REWARDED_ID_IOS : Config.REWARDED_ID_ANDROID);
+    const [selectedCollection, setSelectedCollection] = useState<Collection | null>(null);
+
+    // Create Collection State
+    const [isModalVisible, setIsModalVisible] = useState(false);
+    const [newFolderName, setNewFolderName] = useState('');
+    const [creating, setCreating] = useState(false);
+
+    useEffect(() => {
+        load();
+    }, [load]);
+
+    useEffect(() => {
+        if (isClosed) {
+            if (selectedCollection) {
+                handleNavigate(selectedCollection);
+                setSelectedCollection(null);
+            }
+            load();
+        }
+    }, [isClosed, selectedCollection, load]);
+
+    const handleNavigate = (item: Collection) => {
+        router.push({
+            pathname: `/collection/[id]`,
+            params: { id: item.id, title: item.title }
+        });
+    };
 
     useFocusEffect(
         useCallback(() => {
@@ -35,23 +69,75 @@ export default function CollectionsScreen() {
 
     const fetchCollections = async () => {
         try {
-            // Get user ID
             let userId = await AsyncStorage.getItem('user_id');
             if (!userId) {
-                // If no user ID here, something is wrong or first time directly here
                 userId = Crypto.randomUUID();
                 await AsyncStorage.setItem('user_id', userId);
             }
 
             const apiUrl = `${getBackendUrl()}/collections?user_id=${userId}`;
             const response = await fetch(apiUrl);
-            if (!response.ok) throw new Error('Network error');
+
+            if (!response.ok) {
+                // Try to parse error
+                const text = await response.text();
+                console.warn("Fetch collections failed:", response.status, text);
+                // Don't throw immediately, maybe return empty?
+                // But if status is 500/400, it's an error.
+                throw new Error(`Server Error: ${response.status}`);
+            }
+
             const data = await response.json();
             setCollections(data);
         } catch (error) {
-            Alert.alert('エラー', '保存場所の取得に失敗しました');
+            console.error('Fetch collections error:', error);
+            // Suppress alert on initial load if it's just a network blip, 
+            // but user complained about the error message.
+            // We'll show a more friendly message or just retry.
+            // Alert.alert('エラー', '保存場所の更新に失敗しました');
         } finally {
             setLoading(false);
+        }
+    };
+
+    const onRefresh = async () => {
+        setRefreshing(true);
+        await fetchCollections();
+        setRefreshing(false);
+    };
+
+    const handleCreateCollection = async () => {
+        if (!newFolderName.trim()) {
+            Alert.alert('エラー', 'フォルダ名を入力してください');
+            return;
+        }
+
+        try {
+            setCreating(true);
+            const userId = await AsyncStorage.getItem('user_id');
+
+            const response = await fetch(`${getBackendUrl()}/collections`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    user_id: userId,
+                    title: newFolderName,
+                    icon: 'folder-outline' // Default icon
+                })
+            });
+
+            if (!response.ok) {
+                const errorData = await response.json().catch(() => ({ detail: 'Create failed' }));
+                throw new Error(errorData.detail || 'Create failed');
+            }
+
+            await fetchCollections(); // Refresh list
+            setNewFolderName('');
+            setIsModalVisible(false);
+        } catch (error: any) {
+            Alert.alert('エラー', `フォルダの作成に失敗しました: ${error.message}`);
+        } finally {
+            setCreating(false);
         }
     };
 
@@ -59,26 +145,32 @@ export default function CollectionsScreen() {
         <Pressable
             style={[styles.folderItem, item.is_locked && styles.folderLocked]}
             onPress={() => {
-                if (!item.is_locked) {
-                    // Navigate to collection details
-                    router.push({
-                        pathname: `/collection/[id]`,
-                        params: { id: item.id, title: item.title }
-                    });
+                // Allow if not locked OR if user is Pro
+                // Pro users can access locked folders (favorites)
+                const isAccessible = !item.is_locked || isPro;
+
+                if (isAccessible) {
+                    setSelectedCollection(item);
+                    // Standard navigation logic
+                    if (!isPro && isLoaded && item.title !== "過去に見た雑学") {
+                        show();
+                    } else {
+                        handleNavigate(item);
+                    }
                 } else {
-                    Alert.alert('制限', 'このフォルダを作成・編集するにはサブスクリプション登録が必要です');
+                    Alert.alert('制限', 'このフォルダを利用するにはサブスクリプションが必要です');
                 }
             }}
         >
             <View style={styles.iconContainer}>
-                <Ionicons name={item.icon as any} size={32} color={item.is_locked ? '#ccc' : Colors.light.primary} />
-                {item.is_locked && (
+                <Ionicons name={item.icon as any} size={32} color={(item.is_locked && !isPro) ? '#ccc' : Colors.light.primary} />
+                {item.is_locked && !isPro && (
                     <View style={styles.lockBadge}>
                         <Ionicons name="lock-closed" size={12} color="white" />
                     </View>
                 )}
             </View>
-            <Text style={styles.folderTitle}>{item.title}</Text>
+            <Text style={styles.folderTitle} numberOfLines={1}>{item.title}</Text>
             <Text style={styles.folderCount}>{item.count} 項目</Text>
         </Pressable>
     );
@@ -93,19 +185,83 @@ export default function CollectionsScreen() {
 
     return (
         <SafeAreaView style={styles.container}>
-            <Text style={styles.headerTitle}>保存場所</Text>
+            <View style={styles.headerRow}>
+                <Text style={styles.headerTitle}>保存場所</Text>
+                {isPro && (
+                    <Pressable style={styles.addButton} onPress={() => setIsModalVisible(true)}>
+                        <Ionicons name="add" size={24} color="white" />
+                        <Text style={styles.addButtonText}>フォルダ作成</Text>
+                    </Pressable>
+                )}
+            </View>
+
             <FlatList
                 data={collections}
                 renderItem={renderItem}
                 keyExtractor={item => item.id.toString()}
                 numColumns={3}
                 contentContainerStyle={styles.listContent}
+                style={{ flex: 1 }} // Ensure list takes available space
+                refreshControl={
+                    <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+                }
+                alwaysBounceVertical={true}
             />
+
+            <View style={{ alignItems: 'center', marginBottom: 90 }}>
+                {!isPro && (
+                    <BannerAd
+                        unitId={Platform.OS === 'ios' ? Config.BANNER_ID_IOS : Config.BANNER_ID_ANDROID}
+                        size={BannerAdSize.ANCHORED_ADAPTIVE_BANNER}
+                        requestOptions={{
+                            requestNonPersonalizedAdsOnly: true,
+                        }}
+                    />
+                )}
+            </View>
+
+            {/* Create Folder Modal */}
+            <Modal
+                transparent={true}
+                visible={isModalVisible}
+                animationType="fade"
+                onRequestClose={() => setIsModalVisible(false)}
+            >
+                <View style={styles.modalOverlay}>
+                    <View style={styles.modalContent}>
+                        <Text style={styles.modalTitle}>新しいフォルダ</Text>
+                        <TextInput
+                            style={styles.input}
+                            placeholder="フォルダ名 (例: 動物ネタ)"
+                            value={newFolderName}
+                            onChangeText={setNewFolderName}
+                            autoFocus
+                        />
+                        <View style={styles.modalButtons}>
+                            <Pressable
+                                style={[styles.modalButton, styles.cancelButton]}
+                                onPress={() => setIsModalVisible(false)}
+                            >
+                                <Text style={styles.cancelButtonText}>キャンセル</Text>
+                            </Pressable>
+                            <Pressable
+                                style={[styles.modalButton, styles.createButton]}
+                                onPress={handleCreateCollection}
+                                disabled={creating}
+                            >
+                                {creating ? (
+                                    <ActivityIndicator color="white" size="small" />
+                                ) : (
+                                    <Text style={styles.createButtonText}>作成</Text>
+                                )}
+                            </Pressable>
+                        </View>
+                    </View>
+                </View>
+            </Modal>
         </SafeAreaView>
     );
 }
-
-import { Theme, Colors } from '../../constants/Colors';
 
 const styles = StyleSheet.create({
     container: {
@@ -116,31 +272,51 @@ const styles = StyleSheet.create({
         justifyContent: 'center',
         alignItems: 'center',
     },
+    headerRow: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        paddingHorizontal: 20,
+        paddingTop: 20, // Reduced top padding
+        paddingBottom: 20,
+    },
     headerTitle: {
         fontSize: 32,
-        fontWeight: '900', // Playful bold
-        paddingHorizontal: 20,
-        paddingTop: 40,
-        paddingBottom: 20,
-        color: Colors.light.primary, // Red
+        fontWeight: '900',
+        color: Colors.light.primary,
         letterSpacing: -0.5,
+    },
+    addButton: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: Colors.light.accent,
+        paddingVertical: 8,
+        paddingHorizontal: 16,
+        borderRadius: 20,
+        ...Theme.shadow.small,
+    },
+    addButtonText: {
+        color: '#8B4500',
+        fontWeight: 'bold',
+        marginLeft: 4,
+        fontSize: 14,
     },
     listContent: {
         padding: 15,
-        paddingBottom: 100,
+        paddingBottom: 100, // Bottom padding for content
     },
     folderItem: {
         flex: 1,
         backgroundColor: Colors.light.cardBackground,
         margin: 8,
         padding: 16,
-        borderRadius: Theme.borderRadius.l, // 24 or 36
+        borderRadius: Theme.borderRadius.l,
         alignItems: 'center',
         justifyContent: 'center',
         maxWidth: '31%',
         aspectRatio: 0.85,
         ...Theme.shadow.small,
-        borderWidth: 2, // Thicker border
+        borderWidth: 2,
         borderColor: Colors.light.border,
     },
     folderLocked: {
@@ -152,10 +328,10 @@ const styles = StyleSheet.create({
     iconContainer: {
         marginBottom: 12,
         position: 'relative',
-        width: 56, // Larger icon area
+        width: 56,
         height: 56,
         borderRadius: 28,
-        backgroundColor: '#FFF8E1', // Pale yellow accent
+        backgroundColor: '#FFF8E1',
         alignItems: 'center',
         justifyContent: 'center',
         borderWidth: 2,
@@ -186,5 +362,67 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         borderWidth: 2,
         borderColor: 'white',
+    },
+    // Modal Styles
+    modalOverlay: {
+        flex: 1,
+        backgroundColor: 'rgba(0,0,0,0.5)',
+        justifyContent: 'center',
+        alignItems: 'center',
+        padding: 20,
+    },
+    modalContent: {
+        width: '100%',
+        maxWidth: 320,
+        backgroundColor: 'white',
+        borderRadius: 24,
+        padding: 24,
+        alignItems: 'center',
+        ...Theme.shadow.pop,
+    },
+    modalTitle: {
+        fontSize: 20,
+        fontWeight: 'bold',
+        marginBottom: 20,
+        color: Colors.light.text,
+    },
+    input: {
+        width: '100%',
+        backgroundColor: '#F5F5F5',
+        padding: 16,
+        borderRadius: 12,
+        fontSize: 16,
+        marginBottom: 24,
+        borderWidth: 1,
+        borderColor: '#E0E0E0',
+    },
+    modalButtons: {
+        flexDirection: 'row',
+        width: '100%',
+        gap: 12,
+    },
+    modalButton: {
+        flex: 1,
+        paddingVertical: 14,
+        borderRadius: 12,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    cancelButton: {
+        backgroundColor: '#F5F5F5',
+    },
+    createButton: {
+        backgroundColor: Colors.light.primary,
+    },
+    cancelButtonText: {
+        color: '#666',
+        fontWeight: 'bold',
+        fontSize: 16,
+    },
+    createButtonText: {
+        color: 'white',
+        fontWeight: 'bold',
+        fontSize: 16,
     }
 });
+
