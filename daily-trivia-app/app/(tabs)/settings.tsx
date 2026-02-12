@@ -1,20 +1,135 @@
-import { View, Text, StyleSheet, Pressable } from 'react-native';
+import { View, Text, StyleSheet, Pressable, Alert, ScrollView, ActivityIndicator } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Colors, Theme } from '../../constants/Colors';
+import { useRevenueCat } from '../../contexts/RevenueCatContext';
 
 export default function SettingsScreen() {
+    const { isPro, currentOffering, purchasePackage, restorePurchases, retryLoadOfferings, loading } = useRevenueCat();
+
+    const handlePurchase = async (pack: any) => {
+        if (isPro) {
+            Alert.alert('確認', 'すでにサブスクリプションに登録済みです。');
+            return;
+        }
+        try {
+            await purchasePackage(pack);
+        } catch (e) {
+            // Error managed in context
+        }
+    };
+
     return (
         <SafeAreaView style={styles.container}>
             <View style={styles.header}>
                 <Text style={styles.title}>設定</Text>
             </View>
 
-            <View style={styles.content}>
+            <ScrollView contentContainerStyle={styles.content}>
                 <View style={styles.section}>
                     <Text style={styles.sectionHeader}>サブスクリプション</Text>
-                    <Pressable style={styles.premiumButton}>
-                        <Text style={styles.premiumButtonText}>プレミアムプラン (月額300円)</Text>
-                        <Text style={styles.premiumDesc}>広告なし、閲覧数無制限</Text>
+                    {isPro ? (
+                        <View style={styles.proBadge}>
+                            <Text style={styles.proText}>プレミアムプラン登録済み</Text>
+                        </View>
+                    ) : (
+                        <View>
+                            {loading ? (
+                                <View style={{ alignItems: 'center', padding: 20 }}>
+                                    <ActivityIndicator size="small" color={Colors.light.primary} />
+                                    <Text style={styles.loadingText}>プランを読み込み中...</Text>
+                                </View>
+                            ) : currentOffering?.current?.availablePackages?.length ? (
+                                currentOffering.current.availablePackages.map((pack) => {
+                                    let priceDisplay = pack.product.priceString;
+                                    let suffix = '';
+
+                                    // Custom pricing display
+                                    // Use PACKAGE_TYPE enum or rely on string comparison if cast to any (temporary fix if enum import is hard)
+                                    // Actually, let's try to string matching on identifier if type check is annoying, 
+                                    // BUT usually packageType is reliable. 
+                                    // Let's assume user defined them as types. 
+                                    // If linter says "no overlap", it means packageType is typed as enum and I am comparing to string.
+                                    // I will use pack.packageType as any to bypass or import PACKAGE_TYPE. 
+                                    // Let's try importing PACKAGE_TYPE if possible, but I don't see it imported. 
+                                    // I'll use `(pack.packageType as any) === 'LIFETIME'` as a safe bet for now to avoid import hell, 
+                                    // OR better: check `pack.product.identifier`. 
+                                    // Let's use `identifier` keyword check which is safer.
+
+                                    const isMonthly = (pack.packageType as any) === 'MONTHLY' || pack.product.identifier.toLowerCase().includes('month');
+                                    const isLifetime = (pack.packageType as any) === 'LIFETIME' || pack.product.identifier.toLowerCase().includes('lifetime');
+
+                                    if (isMonthly) {
+                                        priceDisplay = "¥300";
+                                        suffix = " / 月";
+                                    } else if (isLifetime) {
+                                        priceDisplay = "¥900";
+                                        suffix = " (買い切り)";
+                                    } else {
+                                        suffix = isLifetime ? ' (買い切り)' : ' / 月';
+                                    }
+
+                                    return (
+                                        <Pressable
+                                            key={pack.identifier}
+                                            style={styles.premiumButton}
+                                            onPress={() => handlePurchase(pack)}
+                                        >
+                                            <View>
+                                                <Text style={styles.premiumButtonText}>
+                                                    {pack.product.title}
+                                                </Text>
+                                                <Text style={styles.premiumPrice}>
+                                                    {priceDisplay}{suffix}
+                                                </Text>
+                                            </View>
+                                            <Text style={styles.premiumDesc}>広告なし、閲覧数無制限</Text>
+                                        </Pressable>
+                                    );
+                                })
+                            ) : (
+                                <View style={{ alignItems: 'center', padding: 20 }}>
+                                    <Text style={styles.loadingText}>プランを取得できませんでした。</Text>
+                                    <Text style={{ fontSize: 12, color: Colors.light.subtext, marginBottom: 10, textAlign: 'center' }}>
+                                        ネットワーク接続を確認するか、設定をご確認ください。
+                                    </Text>
+                                    <Pressable onPress={() => retryLoadOfferings()} style={{ marginTop: 10, padding: 10 }}>
+                                        <Text style={{ color: Colors.light.primary, fontWeight: 'bold' }}>再試行</Text>
+                                    </Pressable>
+                                </View>
+                            )}
+                        </View>
+                    )}
+
+                    {/* Feature List */}
+                    {!isPro && (
+                        <View style={styles.featuresContainer}>
+                            <View style={styles.featureItem}>
+                                <Ionicons name="infinite" size={24} color={Colors.light.primary} style={styles.featureIcon} />
+                                <View style={styles.featureTextContainer}>
+                                    <Text style={styles.featureTitle}>無制限に読み放題</Text>
+                                    <Text style={styles.featureSub}>1日3つの制限なく、過去の雑学も全て見放題。</Text>
+                                </View>
+                            </View>
+                            <View style={styles.featureItem}>
+                                <Ionicons name="ban" size={24} color={Colors.light.primary} style={styles.featureIcon} />
+                                <View style={styles.featureTextContainer}>
+                                    <Text style={styles.featureTitle}>広告非表示</Text>
+                                    <Text style={styles.featureSub}>バナーや動画広告がなくなり、快適に楽しめます。</Text>
+                                </View>
+                            </View>
+                            <View style={styles.featureItem}>
+                                <Ionicons name="folder-open" size={24} color={Colors.light.primary} style={styles.featureIcon} />
+                                <View style={styles.featureTextContainer}>
+                                    <Text style={styles.featureTitle}>保存機能の拡張</Text>
+                                    <Text style={styles.featureSub}>カスタムフォルダを作成して雑学を整理できます。</Text>
+                                </View>
+                            </View>
+                        </View>
+                    )}
+
+                    <Pressable style={styles.restoreButton} onPress={restorePurchases}>
+                        <Text style={styles.restoreText}>購入を復元する</Text>
                     </Pressable>
                 </View>
 
@@ -25,10 +140,11 @@ export default function SettingsScreen() {
                         <Text style={styles.infoValue}>1.0.0</Text>
                     </View>
                 </View>
-            </View>
-        </SafeAreaView>
+            </ScrollView >
+        </SafeAreaView >
     );
 }
+
 
 const styles = StyleSheet.create({
     container: {
@@ -48,6 +164,36 @@ const styles = StyleSheet.create({
         fontWeight: '900',
         color: Colors.light.primary,
         marginBottom: 10,
+    },
+    featureItem: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        marginTop: 16,
+        paddingHorizontal: 8,
+    },
+    featureIcon: {
+        marginRight: 16,
+        width: 30, // Fixed width for alignment
+        textAlign: 'center',
+    },
+    featureTextContainer: {
+        flex: 1,
+    },
+    featureTitle: {
+        fontSize: 16,
+        fontWeight: 'bold',
+        color: Colors.light.text,
+    },
+    featureSub: {
+        fontSize: 12,
+        color: Colors.light.subtext,
+        marginTop: 2,
+    },
+    featuresContainer: {
+        marginTop: 8,
+        paddingTop: 8,
+        borderTopWidth: 1,
+        borderTopColor: '#EEE',
     },
     section: {
         marginBottom: 24,
@@ -72,17 +218,32 @@ const styles = StyleSheet.create({
         ...Theme.shadow.small,
         borderWidth: 2,
         borderColor: 'white',
+        marginBottom: 12, // Spacing between buttons
     },
     premiumButtonText: {
         color: '#8B4500',
         fontWeight: 'bold',
         fontSize: 18,
+        marginBottom: 2,
+        textAlign: 'center',
+    },
+    premiumPrice: {
+        color: '#8B4500',
+        fontWeight: '900',
+        fontSize: 20,
         marginBottom: 4,
+        textAlign: 'center',
     },
     premiumDesc: {
         color: '#8B4500',
-        fontSize: 14,
+        fontSize: 12,
         opacity: 0.8,
+        textAlign: 'center',
+    },
+    loadingText: {
+        textAlign: 'center',
+        padding: 20,
+        color: Colors.light.subtext,
     },
     infoRow: {
         flexDirection: 'row',
@@ -99,5 +260,28 @@ const styles = StyleSheet.create({
         fontSize: 16,
         color: Colors.light.subtext,
         fontWeight: 'bold',
+    },
+    proBadge: {
+        backgroundColor: '#E8F5E9',
+        padding: 16,
+        borderRadius: Theme.borderRadius.m,
+        alignItems: 'center',
+        borderWidth: 2,
+        borderColor: '#C8E6C9',
+    },
+    proText: {
+        color: '#2E7D32',
+        fontWeight: 'bold',
+        fontSize: 16,
+    },
+    restoreButton: {
+        marginTop: 12,
+        padding: 12,
+        alignItems: 'center',
+    },
+    restoreText: {
+        color: Colors.light.subtext,
+        fontSize: 14,
+        textDecorationLine: 'underline',
     }
 });

@@ -32,13 +32,16 @@ export default function Paywall() {
             </View>
 
             <View style={styles.packages}>
-                {currentOffering.availablePackages.map((pack) => {
+                {currentOffering.current?.availablePackages?.map((pack) => {
                     let priceDisplay = pack.product.priceString;
 
                     // Custom pricing display
-                    if (pack.packageType === 'MONTHLY') {
+                    const isMonthly = (pack.packageType as any) === 'MONTHLY' || pack.product.identifier.toLowerCase().includes('month');
+                    const isLifetime = (pack.packageType as any) === 'LIFETIME' || pack.product.identifier.toLowerCase().includes('lifetime');
+
+                    if (isMonthly) {
                         priceDisplay = "¥300 / 月";
-                    } else if (pack.packageType === 'LIFETIME') {
+                    } else if (isLifetime) {
                         priceDisplay = "¥900 / 一回払い";
                     }
 
