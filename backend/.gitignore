@@ -32,3 +32,5 @@ coverage.xml
 
 # Jupyter Notebook
 .ipynb_checkpoints
+
+admin_dashboard.py

@@ -40,9 +40,9 @@ export default function Paywall() {
                     const isLifetime = (pack.packageType as any) === 'LIFETIME' || pack.product.identifier.toLowerCase().includes('lifetime');
 
                     if (isMonthly) {
-                        priceDisplay = "¥300 / 月";
+                        priceDisplay = "¥190 / 月";
                     } else if (isLifetime) {
-                        priceDisplay = "¥900 / 一回払い";
+                        priceDisplay = "¥590 / 一回払い";
                     }
 
                     return (

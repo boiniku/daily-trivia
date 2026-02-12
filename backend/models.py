@@ -12,6 +12,7 @@ class Trivia(Base):
     explanation = Column(Text)
     source = Column(String)
     category = Column(String)
+    hee_count = Column(Integer, default=0) # Added for "Hee" button
     embedding = Column(JSON, nullable=True) # Vector for similarity check
 
 class Collection(Base):
@@ -61,3 +62,14 @@ class TriviaCandidate(Base):
     status = Column(String, default="pending", index=True) # pending, approved, rejected
     created_at = Column(DateTime, default=datetime.utcnow)
     embedding = Column(JSON, nullable=True)
+
+class TriviaHee(Base):
+    __tablename__ = "trivia_hees"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(String, index=True)
+    trivia_id = Column(Integer, ForeignKey("trivia.id"), index=True)
+    count = Column(Integer, default=0) # Max 10 per user per trivia
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    trivia = relationship("Trivia")

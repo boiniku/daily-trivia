@@ -27,6 +27,7 @@ class TriviaSchema(BaseModel):
     explanation: str
     source: str
     category: str
+    hee_count: int = 0
     
     class Config:
         from_attributes = True
@@ -333,4 +334,84 @@ def add_collection_item(collection_id: int, request: AddCollectionItemRequest, d
     except Exception as e:
         print(f"Error adding item to collection: {e}")
         raise HTTPException(status_code=500, detail="Failed to add item")
+
+# --- Hee Button Endpoints ---
+
+class HeeRequest(BaseModel):
+    user_id: str
+    count: int = 1 # Number of times pressed in this batch
+
+@app.post("/trivia/{trivia_id}/hee")
+def add_hee(trivia_id: int, request: HeeRequest, db: Session = Depends(get_db)):
+    try:
+        # 1. Check if user has already hit limit for this trivia
+        existing_hee = db.query(TriviaHee).filter(
+            TriviaHee.user_id == request.user_id,
+            TriviaHee.trivia_id == trivia_id
+        ).first()
+
+        current_user_count = existing_hee.count if existing_hee else 0
+        
+        # Max 10 per user per trivia
+        if current_user_count >= 10:
+             return {"message": "Max limit reached", "user_count": 10, "total_count": -1} # -1 means don't update total in UI yet
+
+        # Calculate how many we can add
+        to_add = min(request.count, 10 - current_user_count)
+        
+        if to_add <= 0:
+             return {"message": "Max limit reached", "user_count": current_user_count, "total_count": -1}
+
+        # 2. Update user count
+        if existing_hee:
+            existing_hee.count += to_add
+        else:
+            new_hee = TriviaHee(
+                user_id=request.user_id,
+                trivia_id=trivia_id,
+                count=to_add
+            )
+            db.add(new_hee)
+        
+        # 3. Update total count on Trivia
+        trivia = db.query(Trivia).filter(Trivia.id == trivia_id).first()
+        if trivia:
+            trivia.hee_count = (trivia.hee_count or 0) + to_add
+            total_count = trivia.hee_count
+        else:
+            total_count = 0
+
+        db.commit()
+
+        return {
+            "message": "Hee added", 
+            "user_count": current_user_count + to_add, 
+            "total_count": total_count
+        }
+
+    except Exception as e:
+        print(f"Error adding Hee: {e}")
+        raise HTTPException(status_code=500, detail="Failed to add Hee")
+
+@app.get("/trivia/{trivia_id}/hee")
+def get_hee_status(trivia_id: int, user_id: str, db: Session = Depends(get_db)):
+    try:
+        # Get total count
+        trivia = db.query(Trivia).filter(Trivia.id == trivia_id).first()
+        total_count = trivia.hee_count if trivia else 0
+        
+        # Get user count
+        user_hee = db.query(TriviaHee).filter(
+            TriviaHee.user_id == user_id,
+            TriviaHee.trivia_id == trivia_id
+        ).first()
+        user_count = user_hee.count if user_hee else 0
+        
+        return {
+            "total_count": total_count,
+            "user_count": user_count
+        }
+    except Exception as e:
+        print(f"Error getting Hee status: {e}")
+        raise HTTPException(status_code=500, detail="Failed to get Hee status")
 

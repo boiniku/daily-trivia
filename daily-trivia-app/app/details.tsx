@@ -9,6 +9,7 @@ import { useState, useEffect } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Config } from '../constants/Config';
 import * as Crypto from 'expo-crypto';
+import HeeButton from '../components/HeeButton';
 
 const getBackendUrl = () => {
     return Config.BACKEND_URL;
@@ -138,6 +139,9 @@ export default function DetailsScreen() {
                     <View style={styles.cardSection}>
                         <Text style={styles.mainContent}>{content}</Text>
                     </View>
+
+                    {/* Hee Button */}
+                    <HeeButton triviaId={parseInt(id, 10)} />
 
                     <View style={styles.section}>
                         <View style={styles.sectionHeader}>
