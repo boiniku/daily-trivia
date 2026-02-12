@@ -200,16 +200,26 @@ def add_to_history(request: HistoryRequest, db: Session = Depends(get_db)):
             )
             db.add(new_item)
             db.commit()
+            try:
+                with open("history_debug.log", "a", encoding="utf-8") as f:
+                    f.write(f"{datetime.now()}: ADDED: User {request.user_id}, Trivia {request.trivia_id}\n")
+            except:
+                pass
             return {"message": "Added to history"}
         else:
+            try:
+                with open("history_debug.log", "a", encoding="utf-8") as f:
+                    f.write(f"{datetime.now()}: DUPLICATE: User {request.user_id}, Trivia {request.trivia_id}\n")
+            except:
+                pass
             return {"message": "Already in history"}
 
     except Exception as e:
         import traceback
         error_msg = traceback.format_exc()
         try:
-            with open("history_errors.log", "a", encoding="utf-8") as f:
-                f.write(f"{datetime.now()}: Error adding to history: {error_msg}\n")
+            with open("history_debug.log", "a", encoding="utf-8") as f:
+                f.write(f"{datetime.now()}: ERROR: {error_msg}\n")
         except:
             pass
         print(f"Error adding to history: {e}")
