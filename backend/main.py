@@ -201,15 +201,19 @@ def add_to_history(request: HistoryRequest, db: Session = Depends(get_db)):
             db.add(new_item)
             db.commit()
             try:
+                msg = f"{datetime.now()}: ADDED: User {request.user_id}, Trivia {request.trivia_id}"
+                print(msg)
                 with open("history_debug.log", "a", encoding="utf-8") as f:
-                    f.write(f"{datetime.now()}: ADDED: User {request.user_id}, Trivia {request.trivia_id}\n")
+                    f.write(msg + "\n")
             except:
                 pass
             return {"message": "Added to history"}
         else:
             try:
+                msg = f"{datetime.now()}: DUPLICATE: User {request.user_id}, Trivia {request.trivia_id}"
+                print(msg)
                 with open("history_debug.log", "a", encoding="utf-8") as f:
-                    f.write(f"{datetime.now()}: DUPLICATE: User {request.user_id}, Trivia {request.trivia_id}\n")
+                    f.write(msg + "\n")
             except:
                 pass
             return {"message": "Already in history"}
