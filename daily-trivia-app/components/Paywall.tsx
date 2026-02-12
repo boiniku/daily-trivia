@@ -32,17 +32,28 @@ export default function Paywall() {
             </View>
 
             <View style={styles.packages}>
-                {currentOffering.availablePackages.map((pack) => (
-                    <Pressable
-                        key={pack.identifier}
-                        style={styles.packageButton}
-                        onPress={() => purchasePackage(pack)}
-                    >
-                        <Text style={styles.packageTitle}>{pack.product.title}</Text>
-                        <Text style={styles.packagePrice}>{pack.product.priceString}</Text>
-                        <Text style={styles.packageDesc}>購入する</Text>
-                    </Pressable>
-                ))}
+                {currentOffering.availablePackages.map((pack) => {
+                    let priceDisplay = pack.product.priceString;
+
+                    // Custom pricing display
+                    if (pack.packageType === 'MONTHLY') {
+                        priceDisplay = "¥300 / 月";
+                    } else if (pack.packageType === 'LIFETIME') {
+                        priceDisplay = "¥900 / 一回払い";
+                    }
+
+                    return (
+                        <Pressable
+                            key={pack.identifier}
+                            style={styles.packageButton}
+                            onPress={() => purchasePackage(pack)}
+                        >
+                            <Text style={styles.packageTitle}>{pack.product.title}</Text>
+                            <Text style={styles.packagePrice}>{priceDisplay}</Text>
+                            <Text style={styles.packageDesc}>購入する</Text>
+                        </Pressable>
+                    );
+                })}
             </View>
 
             <Pressable onPress={restorePurchases} style={styles.restoreButton}>

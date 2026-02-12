@@ -95,6 +95,25 @@ export default function HomeScreen() {
                 console.error('Failed to sync user_id with App Group:', e);
             }
 
+            // --- Resume Logic ---
+            const savedStateJson = await AsyncStorage.getItem('triviaState');
+            if (savedStateJson) {
+                const savedState = JSON.parse(savedStateJson);
+                const today = getEffectiveDate();
+
+                if (savedState.date === today && Array.isArray(savedState.list) && savedState.list.length > 0) {
+                    console.log('Restoring state for date:', today);
+                    setTriviaList(savedState.list);
+                    setCurrentIndex(savedState.currentIndex || 0);
+                    setLoading(false);
+                    return; // Skip fetching from server
+                } else {
+                    console.log('Saved state expired or invalid. Clearing.');
+                    await AsyncStorage.removeItem('triviaState');
+                }
+            }
+            // --------------------
+
             await fetchTrivia(userId);
         } catch (error) {
             console.error('Initialization error:', error);
@@ -148,6 +167,28 @@ export default function HomeScreen() {
         }
     };
 
+
+
+    // Helper to get effective date (changes at 2:00 AM)
+    const getEffectiveDate = () => {
+        const now = new Date();
+        now.setHours(now.getHours() - 2);
+        return now.toISOString().split('T')[0]; // Returns YYYY-MM-DD
+    };
+
+    const saveState = async (index: number, list: TriviaItem[]) => {
+        try {
+            const state = {
+                date: getEffectiveDate(),
+                currentIndex: index,
+                list: list
+            };
+            await AsyncStorage.setItem('triviaState', JSON.stringify(state));
+        } catch (e) {
+            console.error('Failed to save state:', e);
+        }
+    };
+
     const fetchMoreTrivia = async () => {
         try {
             const userId = await AsyncStorage.getItem('user_id');
@@ -157,9 +198,12 @@ export default function HomeScreen() {
             if (response.ok) {
                 const data = await response.json();
                 if (Array.isArray(data) && data.length > 0) {
-                    // Append new unique items
                     // Append new items (allowing duplicates for infinite scroll)
-                    setTriviaList(prev => [...prev, ...data]);
+                    setTriviaList(prev => {
+                        const newList = [...prev, ...data];
+                        saveState(currentIndex, newList); // Save state with new list
+                        return newList;
+                    });
                 }
             }
         } catch (e) {
@@ -203,7 +247,11 @@ export default function HomeScreen() {
 
         // Wait a bit for animation to finish before updating state to remove card
         setTimeout(() => {
-            setCurrentIndex((prev) => prev + 1);
+            const nextIndex = currentIndex + 1;
+            setCurrentIndex(nextIndex);
+
+            // Save state
+            saveState(nextIndex, triviaList);
 
             // For Pro Users: Fetch more trivia if running low
             // Check if we are close to the end (e.g., 7 items left)
