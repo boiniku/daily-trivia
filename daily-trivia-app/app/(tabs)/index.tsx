@@ -59,6 +59,15 @@ export default function HomeScreen() {
         initializeUserAndFetch();
     }, []);
 
+    // Watch for Pro status change to fetch more trivia if stuck at limit
+    useEffect(() => {
+        if (isPro && triviaList.length > 0 && currentIndex >= triviaList.length) {
+            console.log("User became Pro at end of list, fetching more...");
+            setLoading(true); // Show loading to avoid blank screen
+            fetchMoreTrivia().finally(() => setLoading(false));
+        }
+    }, [isPro, triviaList.length, currentIndex]);
+
     const handlePurchase = async () => {
         if (isPro) {
             Alert.alert('確認', 'すでにサブスクリプションに登録済みです。');
