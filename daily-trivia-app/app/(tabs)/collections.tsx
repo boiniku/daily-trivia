@@ -11,6 +11,7 @@ import { Config } from '../../constants/Config';
 import { useRevenueCat } from '../../contexts/RevenueCatContext';
 import { BannerAd, BannerAdSize, TestIds, useRewardedAd } from 'react-native-google-mobile-ads';
 import { Theme, Colors } from '../../constants/Colors';
+import { useAuth } from '../../contexts/AuthContext';
 
 // Helper to determine backend URL
 const getBackendUrl = () => {
@@ -31,6 +32,7 @@ export default function CollectionsScreen() {
     const [loading, setLoading] = useState(true);
     const [refreshing, setRefreshing] = useState(false);
     const { isPro } = useRevenueCat();
+    const { userId } = useAuth();
 
     const { isLoaded, isClosed, load, show } = useRewardedAd(Platform.OS === 'ios' ? Config.REWARDED_ID_IOS : Config.REWARDED_ID_ANDROID);
     const [selectedCollection, setSelectedCollection] = useState<Collection | null>(null);
@@ -63,17 +65,22 @@ export default function CollectionsScreen() {
 
     useFocusEffect(
         useCallback(() => {
-            fetchCollections();
-        }, [])
+            if (userId) {
+                fetchCollections();
+            }
+        }, [userId])
     );
+
+    // Watch for userId changes (login/logout)
+    useEffect(() => {
+        if (userId) {
+            fetchCollections();
+        }
+    }, [userId]);
 
     const fetchCollections = async () => {
         try {
-            let userId = await AsyncStorage.getItem('user_id');
-            if (!userId) {
-                userId = Crypto.randomUUID();
-                await AsyncStorage.setItem('user_id', userId);
-            }
+            if (!userId) return;
 
             const apiUrl = `${getBackendUrl()}/collections?user_id=${userId}`;
             const response = await fetch(apiUrl);
@@ -114,7 +121,7 @@ export default function CollectionsScreen() {
 
         try {
             setCreating(true);
-            const userId = await AsyncStorage.getItem('user_id');
+            if (!userId) return;
 
             const response = await fetch(`${getBackendUrl()}/collections`, {
                 method: 'POST',

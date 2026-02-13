@@ -14,6 +14,8 @@ interface RevenueCatContextType {
     restorePurchases: () => Promise<void>;
     loading: boolean;
     retryLoadOfferings: () => Promise<void>;
+    logIn: (userId: string) => Promise<void>;
+    logOut: () => Promise<void>;
 }
 
 const RevenueCatContext = createContext<RevenueCatContextType | undefined>(undefined);
@@ -60,6 +62,16 @@ export const RevenueCatProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         setTimeout(() => {
             init();
         }, 1000);
+
+        // Listen for updates (cancellations, renewals, restoration)
+        const customerInfoUpdated = (info: CustomerInfo) => {
+            updateCustomerStatus(info);
+        };
+        Purchases.addCustomerInfoUpdateListener(customerInfoUpdated);
+
+        return () => {
+            Purchases.removeCustomerInfoUpdateListener(customerInfoUpdated);
+        };
     }, []);
 
     const updateCustomerStatus = (customerInfo: CustomerInfo) => {
@@ -114,8 +126,28 @@ export const RevenueCatProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         }
     };
 
+    const logIn = async (userId: string) => {
+        try {
+            const { customerInfo } = await Purchases.logIn(userId);
+            updateCustomerStatus(customerInfo);
+            console.log("RevenueCat logged in as:", userId);
+        } catch (e: any) {
+            console.error("RevenueCat login error:", e);
+        }
+    };
+
+    const logOut = async () => {
+        try {
+            const customerInfo = await Purchases.logOut();
+            updateCustomerStatus(customerInfo);
+            console.log("RevenueCat logged out");
+        } catch (e: any) {
+            console.error("RevenueCat logout error:", e);
+        }
+    };
+
     return (
-        <RevenueCatContext.Provider value={{ isPro, currentOffering, purchasePackage, restorePurchases, loading, retryLoadOfferings }}>
+        <RevenueCatContext.Provider value={{ isPro, currentOffering, purchasePackage, restorePurchases, loading, retryLoadOfferings, logIn, logOut }}>
             {children}
         </RevenueCatContext.Provider>
     );

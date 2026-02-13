@@ -1,11 +1,16 @@
 import { View, Text, StyleSheet, Pressable, Alert, ScrollView, ActivityIndicator } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useState } from 'react';
 import { Colors, Theme } from '../../constants/Colors';
 import { useRevenueCat } from '../../contexts/RevenueCatContext';
+import { useAuth } from '../../contexts/AuthContext';
+import LoginModal from '../../components/LoginModal';
 
 export default function SettingsScreen() {
     const { isPro, currentOffering, purchasePackage, restorePurchases, retryLoadOfferings, loading } = useRevenueCat();
+    const { userId, isGuest, signOut } = useAuth();
+    const [loginVisible, setLoginVisible] = useState(false);
 
     const handlePurchase = async (pack: any) => {
         if (isPro) {
@@ -19,6 +24,23 @@ export default function SettingsScreen() {
         }
     };
 
+    const handleSignOut = async () => {
+        Alert.alert(
+            "ログアウト",
+            "ログアウトしてもよろしいですか？",
+            [
+                { text: "キャンセル", style: "cancel" },
+                {
+                    text: "ログアウト",
+                    style: "destructive",
+                    onPress: async () => {
+                        await signOut();
+                    }
+                }
+            ]
+        );
+    };
+
     return (
         <SafeAreaView style={styles.container}>
             <View style={styles.header}>
@@ -26,6 +48,30 @@ export default function SettingsScreen() {
             </View>
 
             <ScrollView contentContainerStyle={styles.content}>
+
+                {/* Account Section */}
+                <View style={styles.section}>
+                    <Text style={styles.sectionHeader}>アカウント</Text>
+                    <View style={styles.infoRow}>
+                        <Text style={styles.infoLabel}>現在のステータス</Text>
+                        <Text style={styles.infoValue}>{isGuest ? "ゲスト" : "ログイン済み"}</Text>
+                    </View>
+                    <View style={{ marginBottom: 16 }}>
+                        <Text style={{ fontSize: 10, color: Colors.light.subtext }}>ID: {userId}</Text>
+                    </View>
+
+                    {isGuest ? (
+                        <Pressable style={styles.loginButton} onPress={() => setLoginVisible(true)}>
+                            <Ionicons name="logo-apple" size={20} color="white" style={{ marginRight: 8 }} />
+                            <Text style={styles.loginButtonText}>ログイン / 新規登録</Text>
+                        </Pressable>
+                    ) : (
+                        <Pressable style={styles.logoutButton} onPress={handleSignOut}>
+                            <Text style={styles.logoutButtonText}>ログアウト</Text>
+                        </Pressable>
+                    )}
+                </View>
+
                 <View style={styles.section}>
                     <Text style={styles.sectionHeader}>サブスクリプション</Text>
                     {isPro ? (
@@ -45,17 +91,6 @@ export default function SettingsScreen() {
                                     let suffix = '';
 
                                     // Custom pricing display
-                                    // Use PACKAGE_TYPE enum or rely on string comparison if cast to any (temporary fix if enum import is hard)
-                                    // Actually, let's try to string matching on identifier if type check is annoying, 
-                                    // BUT usually packageType is reliable. 
-                                    // Let's assume user defined them as types. 
-                                    // If linter says "no overlap", it means packageType is typed as enum and I am comparing to string.
-                                    // I will use pack.packageType as any to bypass or import PACKAGE_TYPE. 
-                                    // Let's try importing PACKAGE_TYPE if possible, but I don't see it imported. 
-                                    // I'll use `(pack.packageType as any) === 'LIFETIME'` as a safe bet for now to avoid import hell, 
-                                    // OR better: check `pack.product.identifier`. 
-                                    // Let's use `identifier` keyword check which is safer.
-
                                     const isMonthly = (pack.packageType as any) === 'MONTHLY' || pack.product.identifier.toLowerCase().includes('month');
                                     const isLifetime = (pack.packageType as any) === 'LIFETIME' || pack.product.identifier.toLowerCase().includes('lifetime');
 
@@ -141,6 +176,8 @@ export default function SettingsScreen() {
                     </View>
                 </View>
             </ScrollView >
+
+            <LoginModal visible={loginVisible} onClose={() => setLoginVisible(false)} />
         </SafeAreaView >
     );
 }
@@ -283,5 +320,31 @@ const styles = StyleSheet.create({
         color: Colors.light.subtext,
         fontSize: 14,
         textDecorationLine: 'underline',
+    },
+    loginButton: {
+        backgroundColor: '#000', // Black for Apple
+        padding: 16,
+        borderRadius: Theme.borderRadius.m,
+        alignItems: 'center',
+        flexDirection: 'row',
+        justifyContent: 'center',
+        marginTop: 10,
+    },
+    loginButtonText: {
+        color: 'white',
+        fontWeight: 'bold',
+        fontSize: 16,
+    },
+    logoutButton: {
+        marginTop: 10,
+        padding: 10,
+        alignItems: 'center',
+        borderWidth: 1,
+        borderColor: Colors.light.subtext,
+        borderRadius: Theme.borderRadius.m,
+    },
+    logoutButtonText: {
+        color: Colors.light.subtext,
+        fontSize: 14,
     }
 });

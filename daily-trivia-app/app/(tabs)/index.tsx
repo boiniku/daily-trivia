@@ -27,6 +27,8 @@ interface TriviaItem {
     category: string;
 }
 
+import { useAuth } from '../../contexts/AuthContext';
+
 export default function HomeScreen() {
     const router = useRouter();
     const [currentIndex, setCurrentIndex] = useState(0);
@@ -34,6 +36,7 @@ export default function HomeScreen() {
     const [loading, setLoading] = useState(true);
     const DAILY_LIMIT = 3;
     const { isPro, currentOffering, purchasePackage } = useRevenueCat();
+    const { userId } = useAuth(); // Use AuthContext
 
     const checkTutorial = async () => {
         try {
@@ -54,10 +57,13 @@ export default function HomeScreen() {
         }
     }, [params.reload]);
 
+    // Initial load and watch for userId changes (e.g. login)
     useEffect(() => {
         checkTutorial();
-        initializeUserAndFetch();
-    }, []);
+        if (userId) {
+            initializeUserAndFetch();
+        }
+    }, [userId]); // Re-run when userId changes
 
     // Watch for Pro status change to fetch more trivia if stuck at limit
     useEffect(() => {
@@ -87,22 +93,12 @@ export default function HomeScreen() {
 
     const initializeUserAndFetch = async () => {
         try {
-            // Get or create UUID
-            let userId = await AsyncStorage.getItem('user_id');
-            if (!userId) {
-                userId = Crypto.randomUUID();
-                await AsyncStorage.setItem('user_id', userId);
-            }
-            console.log('User ID:', userId);
+            if (!userId) return;
+            console.log('User ID from Context:', userId);
 
-            // Sync with App Group for Widget
-            try {
-                await DefaultPreference.setName('group.com.dailytrivia.app');
-                await DefaultPreference.set('user_id', userId);
-                console.log('Synced user_id with App Group');
-            } catch (e) {
-                console.error('Failed to sync user_id with App Group:', e);
-            }
+            // Sync with App Group for Widget (AuthContext does this, but keeping it here as backup/redundancy is fine or remove it)
+            // AuthContext syncs on change, so we can probably remove this block or keep for safety.
+            // Let's keep it minimal.
 
             // --- Resume Logic ---
             const savedStateJson = await AsyncStorage.getItem('triviaState');
@@ -200,7 +196,7 @@ export default function HomeScreen() {
 
     const fetchMoreTrivia = async () => {
         try {
-            const userId = await AsyncStorage.getItem('user_id');
+            if (!userId) return;
             // Fetch 7 more items
             const apiUrl = `${getBackendUrl()}/trivia/today?user_id=${userId}&limit=7`;
             const response = await fetch(apiUrl);
@@ -222,7 +218,6 @@ export default function HomeScreen() {
 
     const addToHistory = async (triviaId: number) => {
         try {
-            const userId = await AsyncStorage.getItem('user_id');
             if (!userId) {
                 console.warn("No user ID found for history");
                 return;

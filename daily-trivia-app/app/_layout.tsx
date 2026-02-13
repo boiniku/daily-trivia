@@ -5,6 +5,7 @@ import { StatusBar } from 'expo-status-bar';
 import { useEffect } from 'react';
 import { View } from 'react-native';
 import { RevenueCatProvider } from '../contexts/RevenueCatContext';
+import { AuthProvider } from '../contexts/AuthContext';
 // TEMP: Disabled for minimal build test
 import mobileAds from 'react-native-google-mobile-ads';
 
@@ -26,13 +27,15 @@ export default function RootLayout() {
     <GestureHandlerRootView style={{ flex: 1 }}>
       <ActionSheetProvider>
         <RevenueCatProvider>
-          <View style={{ flex: 1 }}>
-            <Stack screenOptions={{ headerShown: false }}>
-              <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-              <Stack.Screen name="details" options={{ presentation: 'modal', headerShown: false }} />
-            </Stack>
-            <StatusBar style="auto" />
-          </View>
+          <AuthProvider>
+            <View style={{ flex: 1 }}>
+              <Stack screenOptions={{ headerShown: false }}>
+                <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+                <Stack.Screen name="details" options={{ presentation: 'modal', headerShown: false }} />
+              </Stack>
+              <StatusBar style="auto" />
+            </View>
+          </AuthProvider>
         </RevenueCatProvider>
       </ActionSheetProvider>
     </GestureHandlerRootView>

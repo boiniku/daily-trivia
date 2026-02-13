@@ -3,7 +3,7 @@ import { View, Text, StyleSheet, Pressable, Animated, Easing } from 'react-nativ
 import { Ionicons } from '@expo/vector-icons';
 import { Colors, Theme } from '../constants/Colors';
 import { Config } from '../constants/Config';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { useAuth } from '../contexts/AuthContext';
 import * as Haptics from 'expo-haptics';
 
 interface HeeButtonProps {
@@ -15,6 +15,7 @@ export default function HeeButton({ triviaId, initialTotalCount = 0 }: HeeButton
     const [totalCount, setTotalCount] = useState(initialTotalCount);
     const [userCount, setUserCount] = useState(0);
     const [loading, setLoading] = useState(true);
+    const { userId } = useAuth();
     const scaleAnim = useRef(new Animated.Value(1)).current;
 
     // For batching requests
@@ -22,15 +23,13 @@ export default function HeeButton({ triviaId, initialTotalCount = 0 }: HeeButton
     const timeoutRef = useRef<NodeJS.Timeout | null>(null);
 
     useEffect(() => {
-        fetchStatus();
-        return () => {
-            if (timeoutRef.current) clearTimeout(timeoutRef.current);
-        };
-    }, [triviaId]);
+        if (userId) {
+            fetchStatus();
+        }
+    }, [triviaId, userId]);
 
     const fetchStatus = async () => {
         try {
-            const userId = await AsyncStorage.getItem('user_id');
             if (!userId) return;
 
             const response = await fetch(`${Config.BACKEND_URL}/trivia/${triviaId}/hee?user_id=${userId}`);
@@ -88,7 +87,6 @@ export default function HeeButton({ triviaId, initialTotalCount = 0 }: HeeButton
 
     const sendHee = async (count: number) => {
         try {
-            const userId = await AsyncStorage.getItem('user_id');
             if (!userId) return;
 
             const response = await fetch(`${Config.BACKEND_URL}/trivia/${triviaId}/hee`, {
@@ -130,7 +128,7 @@ export default function HeeButton({ triviaId, initialTotalCount = 0 }: HeeButton
                 <Animated.View style={{ transform: [{ scale: scaleAnim }] }}>
                     <Ionicons
                         name={isMaxed ? "checkmark-circle" : "hand-left"}
-                        size={32}
+                        size={20}
                         color="white"
                     />
                 </Animated.View>
@@ -145,22 +143,22 @@ export default function HeeButton({ triviaId, initialTotalCount = 0 }: HeeButton
 const styles = StyleSheet.create({
     container: {
         alignItems: 'center',
-        marginVertical: 20,
+        marginVertical: 10, // Reduced from 20
     },
     totalCount: {
-        fontSize: 24,
+        fontSize: 14, // Reduced from 24
         fontWeight: '900',
         color: Colors.light.text,
-        marginBottom: 10,
+        marginBottom: 4, // Reduced from 10
     },
     button: {
         backgroundColor: Colors.light.primary,
-        paddingVertical: 12,
-        paddingHorizontal: 30,
+        paddingVertical: 8, // Reduced from 12
+        paddingHorizontal: 20, // Reduced from 30
         borderRadius: 50,
         flexDirection: 'row',
         alignItems: 'center',
-        ...Theme.shadow.pop,
+        ...Theme.shadow.small, // Reduced shadow
         borderWidth: 2,
         borderColor: 'white'
     },
@@ -171,7 +169,7 @@ const styles = StyleSheet.create({
     buttonText: {
         color: 'white',
         fontWeight: 'bold',
-        fontSize: 18,
-        marginLeft: 8,
+        fontSize: 14, // Reduced from 18
+        marginLeft: 6, // Reduced from 8
     }
 });

@@ -1,5 +1,5 @@
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { View, Text, StyleSheet, ScrollView, Pressable, Modal, FlatList, ActivityIndicator, Alert, TouchableOpacity, Platform } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, Pressable, Modal, FlatList, ActivityIndicator, Alert, TouchableOpacity, Platform, Linking } from 'react-native';
 import { BannerAd, BannerAdSize, TestIds } from 'react-native-google-mobile-ads';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -9,6 +9,7 @@ import { useState, useEffect } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Config } from '../constants/Config';
 import * as Crypto from 'expo-crypto';
+import { useAuth } from '../contexts/AuthContext';
 import HeeButton from '../components/HeeButton';
 
 const getBackendUrl = () => {
@@ -26,6 +27,7 @@ export default function DetailsScreen() {
     const params = useLocalSearchParams();
     const router = useRouter();
     const { isPro } = useRevenueCat();
+    const { userId } = useAuth();
 
     // Data passed from index.tsx
     const id = params.id as string;
@@ -44,7 +46,7 @@ export default function DetailsScreen() {
     const fetchCollections = async () => {
         setLoadingCollections(true);
         try {
-            const userId = await AsyncStorage.getItem('user_id');
+            if (!userId) return;
             const apiUrl = `${getBackendUrl()}/collections?user_id=${userId}`;
             const response = await fetch(apiUrl);
             if (!response.ok) throw new Error('Fetch failed');
@@ -74,7 +76,7 @@ export default function DetailsScreen() {
     const addToCollection = async (collectionId: number) => {
         setAdding(true);
         try {
-            const userId = await AsyncStorage.getItem('user_id');
+            if (!userId) return;
             const response = await fetch(`${getBackendUrl()}/collections/${collectionId}/items`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -140,8 +142,20 @@ export default function DetailsScreen() {
                         <Text style={styles.mainContent}>{content}</Text>
                     </View>
 
-                    {/* Hee Button */}
-                    <HeeButton triviaId={parseInt(id, 10)} />
+                    {/* Action Buttons Row */}
+                    <View style={styles.actionRow}>
+                        <HeeButton triviaId={parseInt(id, 10)} />
+
+                        <Pressable style={styles.shareButton} onPress={() => {
+                            const shareText = `【${title}】\n${content}\n\n#毎日雑学`;
+                            // Use Universal Link for better handling
+                            const shareUrl = `https://twitter.com/intent/tweet?text=${encodeURIComponent(shareText)}`;
+                            Linking.openURL(shareUrl).catch((err) => console.error('An error occurred', err));
+                        }}>
+                            <Ionicons name="logo-twitter" size={20} color="white" />
+                            <Text style={styles.shareButtonText}>ポスト</Text>
+                        </Pressable>
+                    </View>
 
                     <View style={styles.section}>
                         <View style={styles.sectionHeader}>
@@ -385,5 +399,30 @@ const styles = StyleSheet.create({
         justifyContent: 'center',
         paddingVertical: 10,
         backgroundColor: Colors.light.background,
+    },
+    actionRow: {
+        flexDirection: 'row',
+        justifyContent: 'center',
+        alignItems: 'center',
+        gap: 16,
+        marginBottom: 20,
+    },
+    shareButton: {
+        backgroundColor: '#000000', // X black
+        paddingVertical: 8,
+        paddingHorizontal: 20,
+        borderRadius: 50,
+        flexDirection: 'row',
+        alignItems: 'center',
+        ...Theme.shadow.small,
+        borderWidth: 2,
+        borderColor: 'white',
+        height: 40, // Match visual height of HeeButton roughly (14 font + 16 padding + 4 border ~ 34-40)
+    },
+    shareButtonText: {
+        color: 'white',
+        fontWeight: 'bold',
+        fontSize: 14,
+        marginLeft: 6,
     }
 });

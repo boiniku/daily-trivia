@@ -28,7 +28,8 @@
             "SKAdNetworkIdentifier": "cstr6suwn9.skadnetwork"
           }
         ],
-        "ITSAppUsesNonExemptEncryption": false
+        "ITSAppUsesNonExemptEncryption": false,
+        "googleServicesFile": "./GoogleService-Info.plist"
       }
     },
     "android": {
@@ -48,7 +49,8 @@
         "expo-build-properties",
         {
           "ios": {
-            "deploymentTarget": "15.1"
+            "deploymentTarget": "15.1",
+            "useFrameworks": "static"
           }
         }
       ],
@@ -65,7 +67,9 @@
           "androidAppId": "ca-app-pub-3940256099942544~3347511713",
           "iosAppId": "ca-app-pub-4541342273103383~2822165802"
         }
-      ]
+      ],
+      "@react-native-firebase/app",
+      "@react-native-firebase/auth"
     ],
     "extra": {
       "router": {},
