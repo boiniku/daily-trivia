@@ -39,9 +39,15 @@ struct Provider: TimelineProvider {
         }
         
         // 2. Check if data is valid (today's data)
+        // Calculate "Effective Today" (Current Time - 2 hours)
+        let effectiveDate = calendar.date(byAdding: .hour, value: -2, to: currentDate)!
+        
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy-MM-dd"
-        let todayStr = formatter.string(from: currentDate)
+        formatter.locale = Locale(identifier: "en_US_POSIX") // Ensure consistent formatting
+        formatter.timeZone = TimeZone.current // Use device local timezone
+        
+        let todayStr = formatter.string(from: effectiveDate)
         
         var isValidData = false
         if !triviaList.isEmpty {
@@ -123,9 +129,13 @@ struct Provider: TimelineProvider {
         }
 
         // 5. Build Timeline
+        // Use the same effective date logic for consistency
         var baseDate = currentDate
         let currentHour = calendar.component(.hour, from: currentDate)
         if currentHour < 2 {
+            // If it's 0:00 or 1:00, we are still showing "yesterday's" trivia until 2:00 AM
+            // However, our `todayStr` logic above already handled the date string.
+            // We just need to make sure the timeline entries are scheduled correctly.
             baseDate = calendar.date(byAdding: .day, value: -1, to: currentDate)!
         }
         

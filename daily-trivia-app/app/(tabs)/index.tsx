@@ -175,7 +175,10 @@ export default function HomeScreen() {
     const getEffectiveDate = () => {
         const now = new Date();
         now.setHours(now.getHours() - 2);
-        return now.toISOString().split('T')[0]; // Returns YYYY-MM-DD
+        // Return local YYYY-MM-DD
+        return now.getFullYear() + '-' +
+            String(now.getMonth() + 1).padStart(2, '0') + '-' +
+            String(now.getDate()).padStart(2, '0');
     };
 
     const saveState = async (index: number, list: TriviaItem[]) => {

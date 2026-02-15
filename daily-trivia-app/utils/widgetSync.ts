@@ -17,11 +17,17 @@ export const syncTriviaToWidget = async (trivias: any[], userId?: string) => {
 
         // 3. Format data for Swift
         // Swift expects: [{ title: string, content: string, date: string }]
-        const today = new Date().toISOString().split('T')[0];
+        // Use local date string (YYYY-MM-DD) respecting the 2:00 AM boundary
+        const now = new Date();
+        now.setHours(now.getHours() - 2);
+        const todayLocal = now.getFullYear() + '-' +
+            String(now.getMonth() + 1).padStart(2, '0') + '-' +
+            String(now.getDate()).padStart(2, '0');
+
         const widgetData = trivias.slice(0, 3).map(t => ({
             title: t.title,
             content: t.content,
-            date: today
+            date: todayLocal
         }));
 
         // 4. Save to UserDefaults
