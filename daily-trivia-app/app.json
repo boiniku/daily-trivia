@@ -28,9 +28,10 @@
             "SKAdNetworkIdentifier": "cstr6suwn9.skadnetwork"
           }
         ],
-        "ITSAppUsesNonExemptEncryption": false,
-        "googleServicesFile": "./GoogleService-Info.plist"
-      }
+        "ITSAppUsesNonExemptEncryption": false
+      },
+      "googleServicesFile": "./GoogleService-Info.plist",
+      "appleTeamId": "86V3PV77T6"
     },
     "android": {
       "adaptiveIcon": {
@@ -38,12 +39,18 @@
         "backgroundColor": "#ffffff"
       },
       "edgeToEdgeEnabled": true,
-      "package": "com.dailytrivia.app"
+      "package": "com.dailytrivia.app",
+      "permissions": [
+        "android.permission.RECEIVE_BOOT_COMPLETED",
+        "android.permission.WAKE_LOCK"
+      ]
     },
     "web": {
       "favicon": "./assets/favicon.png"
     },
     "plugins": [
+      "./plugins/withPodfileFix",
+      "expo-background-fetch",
       "expo-router",
       [
         "expo-build-properties",
@@ -55,6 +62,7 @@
         }
       ],
       "expo-font",
+      "expo-apple-authentication",
       [
         "@bacons/apple-targets",
         {
@@ -95,12 +103,30 @@
                       "group.com.dailytrivia.app"
                     ]
                   }
+                },
+                {
+                  "bundleIdentifier": "com.dailytrivia.app.TriviaWidgetExtension",
+                  "targetName": "TriviaWidget",
+                  "entitlements": {
+                    "com.apple.security.application-groups": [
+                      "group.com.dailytrivia.app"
+                    ]
+                  }
+                },
+                {
+                  "bundleIdentifier": "com.dailytrivia.app.TriviaWidgetExtension",
+                  "targetName": "TriviaWidget",
+                  "entitlements": {
+                    "com.apple.security.application-groups": [
+                      "group.com.dailytrivia.app"
+                    ]
+                  }
                 }
               ]
             }
           }
         },
-        "projectId": "b04d25e1-4a71-43dc-92e8-8aff88cddc1b"
+        "projectId": "36d60f1c-778f-453a-8260-fa712a7fe652"
       }
     }
   }

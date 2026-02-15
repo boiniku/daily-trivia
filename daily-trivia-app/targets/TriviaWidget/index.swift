@@ -54,6 +54,7 @@ struct Provider: TimelineProvider {
         
         // 3. If invalid, try to fetch from API
         if !isValidData {
+            triviaList = [] // Clear old data to prevent showing stale content
             let userId = userDefaults?.string(forKey: "user_id") ?? "widget_guest"
             let urlString = "https://daily-trivia-e7ge.onrender.com/trivia/today?user_id=\(userId)"
             

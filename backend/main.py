@@ -17,6 +17,10 @@ app.add_middleware(
     allow_headers=["*"],  # Allows all headers
 )
 
+# Include Routers
+from routers import user
+app.include_router(user.router)
+
 # Pydantic Schemas
 from pydantic import BaseModel
 

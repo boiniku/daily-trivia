@@ -15,12 +15,10 @@ export default function LoginModal({ visible, onClose }: LoginModalProps) {
     const { signInWithApple, loading } = useAuth();
 
     const handleAppleLogin = async () => {
-        try {
-            await signInWithApple();
+        const success = await signInWithApple();
+        if (success) {
             onClose();
             Alert.alert("成功", "ログインしました。データは自動的に引き継がれます。");
-        } catch (e) {
-            // Error handled in context
         }
     };
 

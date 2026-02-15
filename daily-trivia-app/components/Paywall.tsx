@@ -35,15 +35,11 @@ export default function Paywall() {
                 {currentOffering.current?.availablePackages?.map((pack) => {
                     let priceDisplay = pack.product.priceString;
 
-                    // Custom pricing display
-                    const isMonthly = (pack.packageType as any) === 'MONTHLY' || pack.product.identifier.toLowerCase().includes('month');
-                    const isLifetime = (pack.packageType as any) === 'LIFETIME' || pack.product.identifier.toLowerCase().includes('lifetime');
 
-                    if (isMonthly) {
-                        priceDisplay = "¥190 / 月";
-                    } else if (isLifetime) {
-                        priceDisplay = "¥590 / 一回払い";
-                    }
+                    // Use price from RevenueCat (App Store / Play Store)
+                    // This automatically handles currency and formatting
+                    // priceDisplay is already set to pack.product.priceString above.
+
 
                     return (
                         <Pressable

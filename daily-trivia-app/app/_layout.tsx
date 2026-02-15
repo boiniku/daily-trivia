@@ -9,9 +9,14 @@ import { AuthProvider } from '../contexts/AuthContext';
 // TEMP: Disabled for minimal build test
 import mobileAds from 'react-native-google-mobile-ads';
 
+import { registerBackgroundFetchAsync } from '../tasks/backgroundFetch';
+
 export default function RootLayout() {
 
   useEffect(() => {
+    // Register background fetch
+    registerBackgroundFetchAsync().catch(err => console.error("BG Register Error:", err));
+
     // TEMP: Disabled for minimal build test
     mobileAds()
       .initialize()

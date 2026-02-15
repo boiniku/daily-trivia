@@ -9,7 +9,7 @@ import LoginModal from '../../components/LoginModal';
 
 export default function SettingsScreen() {
     const { isPro, currentOffering, purchasePackage, restorePurchases, retryLoadOfferings, loading } = useRevenueCat();
-    const { userId, isGuest, signOut } = useAuth();
+    const { userId, isGuest, signOut, deleteAccount } = useAuth();
     const [loginVisible, setLoginVisible] = useState(false);
 
     const handlePurchase = async (pack: any) => {
@@ -35,6 +35,24 @@ export default function SettingsScreen() {
                     style: "destructive",
                     onPress: async () => {
                         await signOut();
+                    }
+                }
+            ]
+        );
+    };
+
+    const handleDeleteAccount = async () => {
+        Alert.alert(
+            "アカウント削除",
+            "本当にアカウントを削除しますか？\nこの操作は取り消せません。\n\n・お気に入り、閲覧履歴はすべて削除されます\n・サブスクリプションは別途解約が必要です",
+            [
+                { text: "キャンセル", style: "cancel" },
+                {
+                    text: "削除する",
+                    style: "destructive", // Red button
+                    onPress: async () => {
+                        console.log("Delete confirmed by user in UI");
+                        await deleteAccount();
                     }
                 }
             ]
@@ -95,10 +113,8 @@ export default function SettingsScreen() {
                                     const isLifetime = (pack.packageType as any) === 'LIFETIME' || pack.product.identifier.toLowerCase().includes('lifetime');
 
                                     if (isMonthly) {
-                                        priceDisplay = "¥300";
                                         suffix = " / 月";
                                     } else if (isLifetime) {
-                                        priceDisplay = "¥900";
                                         suffix = " (買い切り)";
                                     } else {
                                         suffix = isLifetime ? ' (買い切り)' : ' / 月';
@@ -174,6 +190,19 @@ export default function SettingsScreen() {
                         <Text style={styles.infoLabel}>バージョン</Text>
                         <Text style={styles.infoValue}>1.0.0</Text>
                     </View>
+
+
+                </View>
+
+                {/* Danger Zone */}
+                <View style={[styles.section, { borderColor: '#FFEBEE', backgroundColor: '#FFEBEE' }]}>
+                    <Text style={[styles.sectionHeader, { color: '#D32F2F' }]}>危険な操作</Text>
+                    <Pressable style={styles.deleteButton} onPress={handleDeleteAccount}>
+                        <Text style={styles.deleteButtonText}>アカウントを削除する</Text>
+                    </Pressable>
+                    <Text style={styles.deleteNote}>
+                        ※ 退会するとこれまでのデータはすべて消去されます。復元はできません。
+                    </Text>
                 </View>
             </ScrollView >
 
@@ -346,5 +375,23 @@ const styles = StyleSheet.create({
     logoutButtonText: {
         color: Colors.light.subtext,
         fontSize: 14,
+    },
+    deleteButton: {
+        backgroundColor: '#D32F2F',
+        padding: 16,
+        borderRadius: Theme.borderRadius.m,
+        alignItems: 'center',
+        marginTop: 8,
+    },
+    deleteButtonText: {
+        color: 'white',
+        fontWeight: 'bold',
+        fontSize: 16,
+    },
+    deleteNote: {
+        marginTop: 8,
+        fontSize: 12,
+        color: '#D32F2F',
+        textAlign: 'center',
     }
 });

@@ -1,5 +1,5 @@
-import { useState, useEffect, useCallback } from 'react';
-import { View, Text, StyleSheet, Pressable, ActivityIndicator, Alert, Platform } from 'react-native';
+import { useState, useEffect, useCallback, useRef } from 'react';
+import { View, Text, StyleSheet, Pressable, ActivityIndicator, Alert, Platform, AppState, AppStateStatus } from 'react-native';
 import { Link, useRouter, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Constants from 'expo-constants';
@@ -37,6 +37,8 @@ export default function HomeScreen() {
     const DAILY_LIMIT = 3;
     const { isPro, currentOffering, purchasePackage } = useRevenueCat();
     const { userId } = useAuth(); // Use AuthContext
+
+    const appState = useRef(AppState.currentState);
 
     const checkTutorial = async () => {
         try {
@@ -95,10 +97,6 @@ export default function HomeScreen() {
         try {
             if (!userId) return;
             console.log('User ID from Context:', userId);
-
-            // Sync with App Group for Widget (AuthContext does this, but keeping it here as backup/redundancy is fine or remove it)
-            // AuthContext syncs on change, so we can probably remove this block or keep for safety.
-            // Let's keep it minimal.
 
             // --- Resume Logic ---
             const savedStateJson = await AsyncStorage.getItem('triviaState');
@@ -171,7 +169,6 @@ export default function HomeScreen() {
             }
         }
     };
-
 
 
     // Helper to get effective date (changes at 2:00 AM)
@@ -284,6 +281,57 @@ export default function HomeScreen() {
 
     const isLimitReached = !isPro && currentIndex >= DAILY_LIMIT;
     const currentItem = triviaList[currentIndex];
+
+    // --- New Refresh Logic ---
+    const checkDateAndRefresh = async () => {
+        try {
+            const today = getEffectiveDate();
+            const savedStateJson = await AsyncStorage.getItem('triviaState');
+
+            let shouldRefresh = false;
+            if (savedStateJson) {
+                const savedState = JSON.parse(savedStateJson);
+                if (savedState.date !== today) {
+                    console.log(`Date changed (State: ${savedState.date}, Today: ${today}). Refreshing...`);
+                    shouldRefresh = true;
+                }
+            } else if (triviaList.length === 0 && !loading) {
+                // No state and no list? Refresh.
+                shouldRefresh = true;
+            }
+
+            if (shouldRefresh) {
+                setLoading(true);
+                await initializeUserAndFetch();
+            }
+        } catch (e) {
+            console.error("Check date error:", e);
+        }
+    };
+
+    useFocusEffect(
+        useCallback(() => {
+            checkDateAndRefresh();
+        }, [userId])
+    );
+
+    useEffect(() => {
+        const subscription = AppState.addEventListener('change', nextAppState => {
+            if (
+                appState.current.match(/inactive|background/) &&
+                nextAppState === 'active'
+            ) {
+                console.log('App has come to the foreground!');
+                checkDateAndRefresh();
+            }
+            appState.current = nextAppState;
+        });
+
+        return () => {
+            subscription.remove();
+        };
+    }, [userId]);
+    // -------------------------
 
     if (loading) {
         return (

@@ -1,7 +1,7 @@
 
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import auth, { FirebaseAuthTypes } from '@react-native-firebase/auth';
-import { appleAuth } from '@expo/apple-authentication';
+import * as AppleAuthentication from 'expo-apple-authentication';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import DefaultPreference from 'react-native-default-preference';
 import * as Crypto from 'expo-crypto';
@@ -13,8 +13,9 @@ interface AuthContextType {
     user: FirebaseAuthTypes.User | null;
     userId: string | null; // Current effective user ID (Guest or Auth)
     loading: boolean;
-    signInWithApple: () => Promise<void>;
+    signInWithApple: () => Promise<boolean>;
     signOut: () => Promise<void>;
+    deleteAccount: () => Promise<void>;
     isGuest: boolean;
 }
 
@@ -65,12 +66,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             // Guest mode
             let guestId = await AsyncStorage.getItem('user_id');
 
-            // Check if existing ID is valid guest ID (UUID)
-            // Firebase UIDs are usually 28 chars alphanumeric. UUIDs are 36 chars with hyphens.
-            const isGuestUuid = guestId && guestId.includes('-');
-
-            if (!guestId || !isGuestUuid) {
-                // If missing or it looks like an old Auth ID (after logout), generate new guest ID
+            // Relaxed check: Just ensure it exists
+            if (!guestId) {
+                // If missing, generate new guest ID
                 const newGuestId = Crypto.randomUUID();
                 await syncUserIdToStorage(newGuestId);
                 setUserId(newGuestId);
@@ -91,34 +89,47 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
     };
 
-    const signInWithApple = async () => {
+    const signInWithApple = async (): Promise<boolean> => {
         try {
-            // start a login request
-            const appleAuthRequestResponse = await appleAuth.performRequest({
-                requestedOperation: appleAuth.Operation.LOGIN,
-                requestedScopes: [appleAuth.Scope.FULL_NAME, appleAuth.Scope.EMAIL],
+            const rawNonce = Crypto.randomUUID();
+            const state = Crypto.randomUUID();
+
+            const hashedNonce = await Crypto.digestStringAsync(
+                Crypto.CryptoDigestAlgorithm.SHA256,
+                rawNonce
+            );
+
+            const credential = await AppleAuthentication.signInAsync({
+                requestedScopes: [
+                    AppleAuthentication.AppleAuthenticationScope.FULL_NAME,
+                    AppleAuthentication.AppleAuthenticationScope.EMAIL,
+                ],
+                state,
+                nonce: hashedNonce,
             });
 
-            const { identityToken, nonce } = appleAuthRequestResponse;
+            const { identityToken } = credential;
 
             if (!identityToken) {
                 throw new Error('Apple Sign-In failed - no identify token returned');
             }
 
-            // create a Firebase credential with the token
-            const credential = auth.AppleAuthProvider.credential(identityToken, nonce);
+            // Create a Firebase credential with the token
+            // Pass the RAW nonce to Firebase (it will verify against the hash in the token)
+            const firebaseCredential = auth.AppleAuthProvider.credential(identityToken, rawNonce);
 
             // Save guest ID before signing in
             const guestUserId = await AsyncStorage.getItem('user_id');
 
             // sign the node in with the credential
-            const userCredential = await auth().signInWithCredential(credential);
+            const userCredential = await auth().signInWithCredential(firebaseCredential);
             const authUser = userCredential.user;
 
             console.log("Apple Sign-In success:", authUser.uid);
 
             // Merge Data if coming from a valid guest session
-            if (guestUserId && guestUserId !== authUser.uid && guestUserId.includes('-')) {
+            // Relaxed check: Allow any non-empty guest ID
+            if (guestUserId && guestUserId !== authUser.uid) {
                 await mergeData(guestUserId, authUser.uid);
             }
 
@@ -129,13 +140,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             // Sync with RevenueCat (Transfer subscription)
             await logIn(authUser.uid);
 
+            return true;
         } catch (error: any) {
-            if (error.code === appleAuth.Error.CANCELED) {
+            if (error.code === 'ERR_CANCELED') {
                 console.log("User canceled Apple Sign-In");
-                return;
+                return false;
             }
             console.error(error);
-            Alert.alert("Error", "Failed to sign in with Apple.");
+            Alert.alert("Error", `Failed to sign in with Apple.\n${error.message}`);
+            return false;
         }
     };
 
@@ -155,12 +168,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
             if (response.ok) {
                 console.log("Merge successful");
+                // Optional: Alert success for debugging, or kept silent for smooth UX
+                // Alert.alert("データ連携", "過去のデータを引き継ぎました。");
             } else {
                 const text = await response.text();
                 console.error("Merge failed", text);
+                Alert.alert("データ連携エラー", "過去のデータの引き継ぎに失敗しました。\n開発者に連絡してください。");
             }
         } catch (e) {
             console.error("Merge network error", e);
+            Alert.alert("データ連携エラー", "通信エラーが発生しました。");
         }
     };
 
@@ -174,6 +191,58 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
     };
 
+    const deleteAccount = async () => {
+        try {
+            console.log("Attempting to delete account for userId:", userId);
+            if (!userId) {
+                console.error("Delete failed: No userId found");
+                Alert.alert("エラー", "ユーザーIDが見つかりません。再ログインしてください。");
+                return;
+            }
+
+            // 1. Delete user data on backend
+            console.log("Sending DELETE request to backend...");
+            const response = await fetch(`${Config.BACKEND_URL}/auth/user`, {
+                method: 'DELETE',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ user_id: userId })
+            });
+
+            if (!response.ok) {
+                const text = await response.text();
+                console.error("Backend delete failed:", response.status, text);
+                throw new Error(`Backend Error: ${text}`);
+            }
+
+            console.log("Backend delete success. Cleaning up local data...");
+
+            // 2. Sign out & Cleanup
+            await AsyncStorage.removeItem('user_id');
+            await AsyncStorage.removeItem('hasSeenTutorial');
+            await AsyncStorage.removeItem('triviaState');
+
+            try {
+                await DefaultPreference.setName('group.com.dailytrivia.app');
+                await DefaultPreference.set('user_id', '');
+                await DefaultPreference.set('daily_trivia', '[]');
+            } catch (e) {
+                console.error("Widget cleanup warning:", e);
+            }
+
+            await signOut();
+
+            setUserId(null);
+            console.log("Account deletion complete.");
+            Alert.alert("完了", "アカウントを削除しました。初期状態に戻ります。");
+
+        } catch (e: any) {
+            console.error("Delete account exception:", e);
+            Alert.alert("エラー", "アカウントの削除に失敗しました。\n" + e.message);
+        }
+    };
+
     const isGuest = !user;
 
     return (
@@ -183,6 +252,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             loading,
             signInWithApple,
             signOut,
+            deleteAccount,
             isGuest
         }}>
             {children}
