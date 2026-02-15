@@ -252,6 +252,44 @@ def get_collections(user_id: str, db: Session = Depends(get_db)):
             db.commit()
             # Refresh to get IDs
             collections = db.query(Collection).filter(Collection.user_id == user_id).all()
+        
+        # Self-healing: Check for duplicates (same title) and merge them
+        # This fixes issues where race conditions caused double default folders
+        title_map = {}
+        for col in collections:
+            if col.title not in title_map:
+                title_map[col.title] = []
+            title_map[col.title].append(col)
+            
+        has_duplicates = False
+        for title, cols in title_map.items():
+            if len(cols) > 1:
+                has_duplicates = True
+                # Sort by ID (keep oldest)
+                cols.sort(key=lambda x: x.id)
+                master = cols[0]
+                duplicates = cols[1:]
+                
+                print(f"Self-healing: Deduplicating '{title}' for user {user_id}")
+                
+                for dup in duplicates:
+                    # Move items to master
+                    dup_items = db.query(CollectionItem).filter(CollectionItem.collection_id == dup.id).all()
+                    for item in dup_items:
+                        exists = db.query(CollectionItem).filter(
+                             CollectionItem.collection_id == master.id,
+                             CollectionItem.trivia_id == item.trivia_id
+                        ).first()
+                        if not exists:
+                            item.collection_id = master.id
+                        else:
+                            db.delete(item)
+                    db.delete(dup)
+        
+        if has_duplicates:
+            db.commit()
+            # Fetch again after cleanup
+            collections = db.query(Collection).filter(Collection.user_id == user_id).all()
 
         # Manually map to schema to include count
         result = []
@@ -269,6 +307,29 @@ def get_collections(user_id: str, db: Session = Depends(get_db)):
     except Exception as e:
         print(f"Error in get_collections: {e}")
         raise HTTPException(status_code=500, detail="Failed to fetch collections")
+
+@app.delete("/collections/{collection_id}")
+def delete_collection(collection_id: int, user_id: str, db: Session = Depends(get_db)):
+    # Verify ownership
+    col = db.query(Collection).filter(Collection.id == collection_id, Collection.user_id == user_id).first()
+    if not col:
+        raise HTTPException(status_code=404, detail="Collection not found")
+    
+    # Prevent deleting default folders
+    if col.title in ["過去に見た雑学", "お気に入り"]:
+         raise HTTPException(status_code=400, detail="Default collections cannot be deleted")
+
+    try:
+        # Delete items first
+        db.query(CollectionItem).filter(CollectionItem.collection_id == collection_id).delete()
+        # Delete collection
+        db.delete(col)
+        db.commit()
+        return {"message": "Collection deleted"}
+    except Exception as e:
+        db.rollback()
+        print(f"Error deleting collection: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to delete collection: {str(e)}")
 
 class CreateCollectionRequest(BaseModel):
     user_id: str

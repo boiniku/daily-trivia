@@ -110,14 +110,17 @@ export default function SettingsScreen() {
 
                                     // Custom pricing display
                                     const isMonthly = (pack.packageType as any) === 'MONTHLY' || pack.product.identifier.toLowerCase().includes('month');
+                                    const isAnnual = (pack.packageType as any) === 'ANNUAL' || pack.product.identifier.toLowerCase().includes('year') || pack.product.identifier.toLowerCase().includes('annual');
                                     const isLifetime = (pack.packageType as any) === 'LIFETIME' || pack.product.identifier.toLowerCase().includes('lifetime');
 
                                     if (isMonthly) {
                                         suffix = " / 月";
+                                    } else if (isAnnual) {
+                                        suffix = " / 年";
                                     } else if (isLifetime) {
                                         suffix = " (買い切り)";
                                     } else {
-                                        suffix = isLifetime ? ' (買い切り)' : ' / 月';
+                                        suffix = ''; // Default or unknown
                                     }
 
                                     return (
@@ -134,7 +137,9 @@ export default function SettingsScreen() {
                                                     {priceDisplay}{suffix}
                                                 </Text>
                                             </View>
-                                            <Text style={styles.premiumDesc}>広告なし、閲覧数無制限</Text>
+                                            <Text style={styles.premiumDesc}>
+                                                {isAnnual ? "12ヶ月分お得に！広告なし、閲覧数無制限" : "広告なし、閲覧数無制限"}
+                                            </Text>
                                         </Pressable>
                                     );
                                 })

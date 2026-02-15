@@ -148,6 +148,33 @@ export default function CollectionsScreen() {
         }
     };
 
+    const handleDeleteCollection = async (item: Collection) => {
+        Alert.alert(
+            "フォルダを削除",
+            `「${item.title}」を削除しますか？\n中の雑学は保存されなくなります。`,
+            [
+                { text: "キャンセル", style: "cancel" },
+                {
+                    text: "削除",
+                    style: "destructive",
+                    onPress: async () => {
+                        try {
+                            const response = await fetch(`${getBackendUrl()}/collections/${item.id}?user_id=${userId}`, {
+                                method: 'DELETE',
+                            });
+                            if (!response.ok) {
+                                throw new Error("Delete failed");
+                            }
+                            await fetchCollections();
+                        } catch (e) {
+                            Alert.alert("エラー", "削除に失敗しました");
+                        }
+                    }
+                }
+            ]
+        );
+    };
+
     const renderItem = ({ item }: { item: Collection }) => (
         <Pressable
             style={[styles.folderItem, item.is_locked && styles.folderLocked]}
@@ -168,6 +195,13 @@ export default function CollectionsScreen() {
                     Alert.alert('制限', 'このフォルダを利用するにはサブスクリプションが必要です');
                 }
             }}
+            onLongPress={() => {
+                // Allow deletion only for custom folders (not default ones)
+                if (item.title !== "過去に見た雑学" && item.title !== "お気に入り") {
+                    handleDeleteCollection(item);
+                }
+            }}
+            delayLongPress={500}
         >
             <View style={styles.iconContainer}>
                 <Ionicons name={item.icon as any} size={32} color={(item.is_locked && !isPro) ? '#ccc' : Colors.light.primary} />
