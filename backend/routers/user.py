@@ -117,6 +117,47 @@ def merge_guest_data(request: MergeRequest, db: Session = Depends(get_db)):
             else:
                 g_assign.user_id = auth_id
 
+        # 4. Deduplicate Collections (Fix for Race Condition)
+        # If get_collections created defaults while we were merging, we might have duplicates now.
+        # Strategy: Group by Title. Keep one, merge items from others, delete others.
+        
+        # Refresh to see all collections for auth_user (including just moved ones)
+        db.flush() 
+        all_cols = db.query(Collection).filter(Collection.user_id == auth_id).all()
+        
+        title_map = {}
+        for col in all_cols:
+            if col.title not in title_map:
+                title_map[col.title] = []
+            title_map[col.title].append(col)
+            
+        for title, cols in title_map.items():
+            if len(cols) > 1:
+                # prefer the one that was already "auth" or just the first one
+                # sort by ID (keep oldest)
+                cols.sort(key=lambda x: x.id)
+                master = cols[0]
+                duplicates = cols[1:]
+                
+                print(f"Deduplicating '{title}': Keeping {master.id}, merging {len(duplicates)} dups")
+
+                for dup in duplicates:
+                    dup_items = db.query(CollectionItem).filter(CollectionItem.collection_id == dup.id).all()
+                    for item in dup_items:
+                        # Check existence in master
+                        exists = db.query(CollectionItem).filter(
+                            CollectionItem.collection_id == master.id,
+                            CollectionItem.trivia_id == item.trivia_id
+                        ).first()
+                        
+                        if not exists:
+                            item.collection_id = master.id
+                        else:
+                            db.delete(item)
+                    
+                    # Delete duplicate collection
+                    db.delete(dup)
+
         db.commit()
         return {"message": "Merge successful"}
 
