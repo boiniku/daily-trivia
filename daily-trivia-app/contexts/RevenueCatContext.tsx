@@ -131,15 +131,6 @@ export const RevenueCatProvider: React.FC<{ children: React.ReactNode }> = ({ ch
             const { customerInfo } = await Purchases.logIn(userId);
             updateCustomerStatus(customerInfo);
             console.log("RevenueCat logged in as:", userId);
-
-            // Safety check: If not pro after login, try to restore
-            // This handles cases where transfer might have been missed or user expects previous purchase
-            const isProActive = customerInfo.entitlements.active['pro'] !== undefined;
-            if (!isProActive) {
-                console.log("User not Pro after login, attempting restore...");
-                const restoreInfo = await Purchases.restorePurchases();
-                updateCustomerStatus(restoreInfo);
-            }
         } catch (e: any) {
             console.error("RevenueCat login error:", e);
         }
