@@ -16,7 +16,7 @@
     "ios": {
       "supportsTablet": false,
       "bundleIdentifier": "com.dailytrivia.app",
-      "buildNumber": "87",
+      "buildNumber": "90",
       "entitlements": {
         "com.apple.security.application-groups": [
           "group.com.dailytrivia.app"
