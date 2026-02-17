@@ -25,6 +25,7 @@ export const syncTriviaToWidget = async (trivias: any[], userId?: string) => {
             String(now.getDate()).padStart(2, '0');
 
         const widgetData = trivias.slice(0, 3).map(t => ({
+            id: t.id ?? 0,
             title: t.title,
             content: t.content,
             date: todayLocal

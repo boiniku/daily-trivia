@@ -3,12 +3,10 @@ import React, { createContext, useContext, useEffect, useState } from 'react';
 import auth, { FirebaseAuthTypes } from '@react-native-firebase/auth';
 import * as AppleAuthentication from 'expo-apple-authentication';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import DefaultPreference from 'react-native-default-preference';
 import * as Crypto from 'expo-crypto';
 import { Alert } from 'react-native';
 import { Config } from '../constants/Config';
 import { useRevenueCat } from './RevenueCatContext';
-import { reloadAllTimelines } from '../modules/widget-control';
 
 interface AuthContextType {
     user: FirebaseAuthTypes.User | null;
@@ -82,24 +80,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
 
     const syncUserIdToStorage = async (id: string) => {
-        await AsyncStorage.setItem('user_id', id);
-        // Sync with Widget
         try {
-            await DefaultPreference.setName('group.com.dailytrivia.app');
-            await DefaultPreference.set('user_id', id);
-
-            // Force Widget Reload immediately
-            console.log("Triggering widget timeline reload...");
-            try {
-                reloadAllTimelines();
-                console.log("Widget reload triggered successfully.");
-            } catch (wError) {
-                console.warn("Failed to trigger widget reload:", wError);
-            }
-
+            await AsyncStorage.setItem('user_id', id);
         } catch (e) {
-            console.error('Failed to sync widget:', e);
+            console.error('Failed to save user_id to AsyncStorage:', e);
         }
+        // Widget sync is handled by syncTriviaToWidget() in index.tsx (after trivia fetch)
+        // and by backgroundFetch.ts — no direct DefaultPreference calls here to avoid crash
     };
 
     const signInWithApple = async (): Promise<boolean> => {
@@ -236,7 +223,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             await AsyncStorage.removeItem('hasSeenTutorial');
             await AsyncStorage.removeItem('triviaState');
 
+            // Clean up widget data (lazy import to avoid loading native module at startup)
             try {
+                const DefaultPreference = require('react-native-default-preference').default;
                 await DefaultPreference.setName('group.com.dailytrivia.app');
                 await DefaultPreference.set('user_id', '');
                 await DefaultPreference.set('daily_trivia', '[]');

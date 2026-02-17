@@ -1,8 +1,8 @@
-import { requireNativeModule } from 'expo-modules-core';
+import { requireOptionalNativeModule } from 'expo-modules-core';
 
-// It loads the native module object from the JSI or falls back to
-// the bridge module (from NativeModulesProxy) if the remote debugger is on.
-const WidgetControl = requireNativeModule('WidgetControl');
+// Use requireOptionalNativeModule to avoid crash if native module is not available
+// (e.g., on Android or when the native module fails to initialize)
+const WidgetControl = requireOptionalNativeModule('WidgetControl');
 
 export function reloadAllTimelines() {
     if (WidgetControl && WidgetControl.reloadAllTimelines) {

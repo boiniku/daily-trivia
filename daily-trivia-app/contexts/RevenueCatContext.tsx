@@ -26,6 +26,9 @@ export const RevenueCatProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     const [loading, setLoading] = useState(true);
 
     useEffect(() => {
+        let customerInfoUpdated: ((info: CustomerInfo) => void) | null = null;
+        let listenerRegistered = false;
+
         const init = async () => {
             try {
                 // Enable debug logs before setup
@@ -40,12 +43,18 @@ export const RevenueCatProvider: React.FC<{ children: React.ReactNode }> = ({ ch
 
                 if (!apiKey) {
                     console.warn('RevenueCat API key not found for platform:', Platform.OS);
-                    // Alert.alert('設定エラー', 'RevenueCatのAPIキーが設定されていません。'); // Silent fail
                     setLoading(false);
                     return;
                 }
 
                 await Purchases.configure({ apiKey });
+
+                // Register listener AFTER configure() to avoid native crash
+                customerInfoUpdated = (info: CustomerInfo) => {
+                    updateCustomerStatus(info);
+                };
+                Purchases.addCustomerInfoUpdateListener(customerInfoUpdated);
+                listenerRegistered = true;
 
                 const customerInfo = await Purchases.getCustomerInfo();
                 updateCustomerStatus(customerInfo);
@@ -63,14 +72,10 @@ export const RevenueCatProvider: React.FC<{ children: React.ReactNode }> = ({ ch
             init();
         }, 1000);
 
-        // Listen for updates (cancellations, renewals, restoration)
-        const customerInfoUpdated = (info: CustomerInfo) => {
-            updateCustomerStatus(info);
-        };
-        Purchases.addCustomerInfoUpdateListener(customerInfoUpdated);
-
         return () => {
-            Purchases.removeCustomerInfoUpdateListener(customerInfoUpdated);
+            if (listenerRegistered && customerInfoUpdated) {
+                Purchases.removeCustomerInfoUpdateListener(customerInfoUpdated);
+            }
         };
     }, []);
 

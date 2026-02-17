@@ -6,49 +6,53 @@ import { syncTriviaToWidget } from '../utils/widgetSync';
 
 const BACKGROUND_FETCH_TASK = 'BACKGROUND_TRIVIA_FETCH';
 
-// Define the task
-TaskManager.defineTask(BACKGROUND_FETCH_TASK, async () => {
-    try {
-        const now = new Date();
-        console.log(`[BackgroundFetch] Task running at: ${now.toISOString()}`);
+// Define the task — wrapped in try-catch to prevent crash at import time
+// if native TaskManager module isn't ready
+try {
+    TaskManager.defineTask(BACKGROUND_FETCH_TASK, async () => {
+        try {
+            const now = new Date();
+            console.log(`[BackgroundFetch] Task running at: ${now.toISOString()}`);
 
-        // Maximum 30 seconds to execute
-        // 1. Get User ID from Storage
-        const userId = await AsyncStorage.getItem('user_id');
-        if (!userId) {
-            console.log('[BackgroundFetch] No user ID, skipping fetch.');
-            return BackgroundFetch.BackgroundFetchResult.NoData;
-        }
+            // Maximum 30 seconds to execute
+            // 1. Get User ID from Storage
+            const userId = await AsyncStorage.getItem('user_id');
+            if (!userId) {
+                console.log('[BackgroundFetch] No user ID, skipping fetch.');
+                return BackgroundFetch.BackgroundFetchResult.NoData;
+            }
 
-        // 2. Fetch Today's Trivia
-        // Pro limit doesn't matter much for widget, so use standard 3 (or 14 if we want to be safe but 3 is enough for widget)
-        const limit = 3;
-        const apiUrl = `${Config.BACKEND_URL}/trivia/today?user_id=${userId}&limit=${limit}`;
+            // 2. Fetch Today's Trivia
+            const limit = 3;
+            const apiUrl = `${Config.BACKEND_URL}/trivia/today?user_id=${userId}&limit=${limit}`;
 
-        console.log(`[BackgroundFetch] Fetching: ${apiUrl}`);
-        const response = await fetch(apiUrl);
+            console.log(`[BackgroundFetch] Fetching: ${apiUrl}`);
+            const response = await fetch(apiUrl);
 
-        if (!response.ok) {
-            console.error('[BackgroundFetch] API Error:', response.status);
+            if (!response.ok) {
+                console.error('[BackgroundFetch] API Error:', response.status);
+                return BackgroundFetch.BackgroundFetchResult.Failed;
+            }
+
+            const data = await response.json();
+            if (!Array.isArray(data) || data.length === 0) {
+                console.log('[BackgroundFetch] No data returned.');
+                return BackgroundFetch.BackgroundFetchResult.NoData;
+            }
+
+            // 3. Sync to Widget
+            await syncTriviaToWidget(data, userId);
+            console.log('[BackgroundFetch] Widget synced successfully.');
+
+            return BackgroundFetch.BackgroundFetchResult.NewData;
+        } catch (error) {
+            console.error('[BackgroundFetch] Error:', error);
             return BackgroundFetch.BackgroundFetchResult.Failed;
         }
-
-        const data = await response.json();
-        if (!Array.isArray(data) || data.length === 0) {
-            console.log('[BackgroundFetch] No data returned.');
-            return BackgroundFetch.BackgroundFetchResult.NoData;
-        }
-
-        // 3. Sync to Widget
-        await syncTriviaToWidget(data, userId);
-        console.log('[BackgroundFetch] Widget synced successfully.');
-
-        return BackgroundFetch.BackgroundFetchResult.NewData;
-    } catch (error) {
-        console.error('[BackgroundFetch] Error:', error);
-        return BackgroundFetch.BackgroundFetchResult.Failed;
-    }
-});
+    });
+} catch (e) {
+    console.warn('[BackgroundFetch] Failed to define task (native module may not be ready):', e);
+}
 
 // Register the task
 export async function registerBackgroundFetchAsync() {

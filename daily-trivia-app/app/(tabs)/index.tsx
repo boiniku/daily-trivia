@@ -11,7 +11,6 @@ import { BannerAd, BannerAdSize, TestIds } from 'react-native-google-mobile-ads'
 import { useRevenueCat } from '../../contexts/RevenueCatContext';
 import { Theme, Colors } from '../../constants/Colors';
 import { Config } from '../../constants/Config';
-import DefaultPreference from 'react-native-default-preference';
 
 // Helper to determine backend URL
 const getBackendUrl = () => {
