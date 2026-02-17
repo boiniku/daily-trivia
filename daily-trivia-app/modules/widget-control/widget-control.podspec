@@ -14,6 +14,7 @@ Pod::Spec.new do |s|
   s.swift_version  = '5.4'
   s.source         = { git: '' }
   s.static_framework = true
+  s.frameworks     = 'WidgetKit'
 
   s.dependency 'ExpoModulesCore'
 
