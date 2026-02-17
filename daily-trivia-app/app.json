@@ -16,7 +16,7 @@
     "ios": {
       "supportsTablet": false,
       "bundleIdentifier": "com.dailytrivia.app",
-      "buildNumber": "83",
+      "buildNumber": "85",
       "entitlements": {
         "com.apple.security.application-groups": [
           "group.com.dailytrivia.app"
@@ -56,7 +56,7 @@
         "expo-build-properties",
         {
           "ios": {
-            "deploymentTarget": "15.1",
+            "deploymentTarget": "16.0",
             "useFrameworks": "static"
           }
         }
