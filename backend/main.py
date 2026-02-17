@@ -1,15 +1,15 @@
 
 
 from fastapi import FastAPI, Depends, HTTPException
-from typing import List
+from typing import List, Optional
 from sqlalchemy.orm import Session
 from database import get_db
 from models import Trivia, Collection, CollectionItem, DailyAssignment, TriviaHee
 import random
-from datetime import date, datetime, timedelta, timezone
+import datetime
 
 app = FastAPI()
-# Force redeploy
+# Force redeploy 2
 
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -36,14 +36,14 @@ class TriviaSchema(BaseModel):
     source: str
     category: str
     hee_count: int = 0
-    date: date | None = None
+    date: Optional[datetime.date] = None
     
     class Config:
         from_attributes = True
 
 class CollectionSchema(BaseModel):
     id: int
-    user_id: str | None = None
+    user_id: Optional[str] = None
     title: str
     icon: str
     is_locked: bool
@@ -68,15 +68,15 @@ def get_todays_trivia(
     def log(message):
         try:
             with open("backend.log", "a", encoding="utf-8") as f:
-                f.write(f"{datetime.now()}: {message}\n")
+                f.write(f"{datetime.datetime.now()}: {message}\n")
         except:
             pass
 
     try:
         # Custom "Day" starts at 2:00 AM JST
-        JST = timezone(timedelta(hours=9))
-        current_time = datetime.now(JST)
-        effective_date = (current_time - timedelta(hours=2)).date()
+        JST = datetime.timezone(datetime.timedelta(hours=9))
+        current_time = datetime.datetime.now(JST)
+        effective_date = (current_time - datetime.timedelta(hours=2)).date()
         
         log(f"DEBUG: Requesting trivia for user_id={user_id}, category={category}, limit={limit}")
         
@@ -212,7 +212,7 @@ def add_to_history(request: HistoryRequest, db: Session = Depends(get_db)):
             db.add(new_item)
             db.commit()
             try:
-                msg = f"{datetime.now()}: ADDED: User {request.user_id}, Trivia {request.trivia_id}"
+                msg = f"{datetime.datetime.now()}: ADDED: User {request.user_id}, Trivia {request.trivia_id}"
                 print(msg)
                 with open("history_debug.log", "a", encoding="utf-8") as f:
                     f.write(msg + "\n")
@@ -221,7 +221,7 @@ def add_to_history(request: HistoryRequest, db: Session = Depends(get_db)):
             return {"message": "Added to history"}
         else:
             try:
-                msg = f"{datetime.now()}: DUPLICATE: User {request.user_id}, Trivia {request.trivia_id}"
+                msg = f"{datetime.datetime.now()}: DUPLICATE: User {request.user_id}, Trivia {request.trivia_id}"
                 print(msg)
                 with open("history_debug.log", "a", encoding="utf-8") as f:
                     f.write(msg + "\n")
@@ -234,7 +234,7 @@ def add_to_history(request: HistoryRequest, db: Session = Depends(get_db)):
         error_msg = traceback.format_exc()
         try:
             with open("history_debug.log", "a", encoding="utf-8") as f:
-                f.write(f"{datetime.now()}: ERROR: {error_msg}\n")
+                f.write(f"{datetime.datetime.now()}: ERROR: {error_msg}\n")
         except:
             pass
         print(f"Error adding to history: {e}")
