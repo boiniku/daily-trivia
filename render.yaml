@@ -9,4 +9,4 @@ services:
       - key: DATABASE_URL
         sync: false
       - key: PYTHON_VERSION
-        value: 3.9.0
+        value: 3.13.0

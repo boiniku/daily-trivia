@@ -4,7 +4,9 @@ from fastapi import FastAPI, Depends, HTTPException
 from typing import List
 from sqlalchemy.orm import Session
 from database import get_db
-from models import Trivia, Collection, CollectionItem
+from models import Trivia, Collection, CollectionItem, DailyAssignment, TriviaHee
+import random
+from datetime import date, datetime, timedelta, timezone
 
 app = FastAPI()
 # Force redeploy
@@ -54,10 +56,6 @@ class CollectionSchema(BaseModel):
 def read_root():
     return {"message": "Hello from Daily Trivia Backend with Neon DB!"}
 
-import random
-from datetime import date, datetime
-from models import Trivia, Collection, CollectionItem, DailyAssignment
-
 @app.get("/trivia/today", response_model=List[TriviaSchema])
 def get_todays_trivia(
     user_id: str, 
@@ -76,7 +74,6 @@ def get_todays_trivia(
 
     try:
         # Custom "Day" starts at 2:00 AM JST
-        from datetime import timedelta, timezone
         JST = timezone(timedelta(hours=9))
         current_time = datetime.now(JST)
         effective_date = (current_time - timedelta(hours=2)).date()
