@@ -38,31 +38,52 @@ struct Provider: TimelineProvider {
             }
         }
         
-        // 2. Check if data is valid (today's data)
-        // Calculate "Effective Today" (Current Time - 2 hours)
-        let effectiveDate = calendar.date(byAdding: .hour, value: -2, to: currentDate)!
-        
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy-MM-dd"
-        formatter.locale = Locale(identifier: "en_US_POSIX") // Ensure consistent formatting
-        formatter.timeZone = TimeZone.current // Use device local timezone
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone.current
         
+        // Calculate "Effective Today" (Current Time - 2 hours)
+        let effectiveDate = calendar.date(byAdding: .hour, value: -2, to: currentDate)!
         let todayStr = formatter.string(from: effectiveDate)
         
+        // 2. Check if data is valid (today's data)
         var isValidData = false
         if !triviaList.isEmpty {
             if let firstItemDate = triviaList[0].date {
                 isValidData = (firstItemDate == todayStr)
             } else {
-                isValidData = true // Fallback for legacy data
+                isValidData = true // Fallback for legacy data without date
             }
         }
         
-        // 3. If invalid, try to fetch from API
+        // 3. Strict User ID Check & Fetch
+        let userId = userDefaults?.string(forKey: "user_id")
+        
         if !isValidData {
-            triviaList = [] // Clear old data to prevent showing stale content
-            let userId = userDefaults?.string(forKey: "user_id") ?? "widget_guest"
-            let urlString = "https://daily-trivia-e7ge.onrender.com/trivia/today?user_id=\(userId)"
+            // Strict Mode: If no valid User ID, DO NOT fetch. Wait for App.
+            if userId == nil || userId == "" || userId == "widget_guest" {
+                 // Return "Loading..." state and retry in 5 minutes
+                 print("Widget: No valid User ID found. Waiting for App...")
+                 
+                 let loadingEntry = TriviaEntry(
+                    date: currentDate,
+                    id: 0,
+                    title: "読み込み中...",
+                    content: "アプリと同期しています。\n少々お待ちください。",
+                    theme: .morning // Default theme
+                 )
+                 
+                 // Retry in 5 minutes
+                 let nextUpdate = calendar.date(byAdding: .minute, value: 5, to: currentDate)!
+                 let timeline = Timeline(entries: [loadingEntry], policy: .after(nextUpdate))
+                 completion(timeline)
+                 return
+            }
+            
+            // Valid User ID exists, proceed to fetch
+            triviaList = [] // Clear old data
+            let urlString = "https://daily-trivia-e7ge.onrender.com/trivia/today?user_id=\(userId!)"
             
             if let url = URL(string: urlString) {
                 print("Fetching widget data from: \(urlString)")
@@ -75,14 +96,20 @@ struct Provider: TimelineProvider {
                     
                     if let data = data {
                         do {
-                            // Decode API response
+                            // Decode API response validation
                             struct APITriviaItem: Codable {
                                 let id: Int
                                 let title: String
                                 let content: String
+                                // Optional date for validation if backend sends it
+                                let date: String?
                             }
                             
                             let apiItems = try JSONDecoder().decode([APITriviaItem].self, from: data)
+                            
+                            // Validate Date if available (Optional but recommended)
+                            // For now, we trust the API returned today's data for this user
+                            // But strict checking effectively happens because we request 'today'
                             
                             // Map to Widget Data Format
                             let newTriviaList = apiItems.prefix(3).map { item in
@@ -115,15 +142,26 @@ struct Provider: TimelineProvider {
             }
         }
         
-        // 4. Fallback if still empty
+        // 4. Update Fallback for empty list (Network failure or timeouts)
         if triviaList.isEmpty {
-            triviaList = [
-                TriviaData(id: 0, title: "データ取得中...", content: "通信環境の良い場所で\nお待ちください。", date: todayStr),
-                TriviaData(id: 0, title: "データ取得中...", content: "通信環境の良い場所で\nお待ちください。", date: todayStr),
-                TriviaData(id: 0, title: "データ取得中...", content: "通信環境の良い場所で\nお待ちください。", date: todayStr)
-            ]
+             // If we have a User ID but fetch failed, we retry soon
+             // If we don't have User ID, we already returned above
+             
+             let errorEntry = TriviaEntry(
+                date: currentDate,
+                id: 0,
+                title: "読み込み失敗",
+                content: "通信環境を確認して\nもう一度お待ちください。",
+                theme: .morning
+             )
+             // Retry in 15 mins for network errors
+             let nextUpdate = calendar.date(byAdding: .minute, value: 15, to: currentDate)!
+             let timeline = Timeline(entries: [errorEntry], policy: .after(nextUpdate))
+             completion(timeline)
+             return
         }
-        // Fill up to 3 items
+        
+        // Fill up to 3 items if needed (shouldn't happen with valid API)
         while triviaList.count < 3 {
              triviaList.append(triviaList.last ?? TriviaData(id: 0, title: "No Data", content: "No Data", date: todayStr))
         }

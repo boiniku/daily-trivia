@@ -34,6 +34,7 @@ class TriviaSchema(BaseModel):
     source: str
     category: str
     hee_count: int = 0
+    date: date | None = None
     
     class Config:
         from_attributes = True
@@ -93,6 +94,8 @@ def get_todays_trivia(
                 log(f"DEBUG: Found {len(assignments)} assignments.")
                 trivia_ids = [a.trivia_id for a in assignments]
                 trivias = db.query(Trivia).filter(Trivia.id.in_(trivia_ids)).all()
+                for t in trivias:
+                    t.date = effective_date
                 return trivias
 
         # 2. Build Subqueries for Exclusion
@@ -144,7 +147,6 @@ def get_todays_trivia(
             fillers = fallback_query.order_by(func.random()).limit(needed).all()
             selected_trivias.extend(fillers)
 
-        # 6. Save assignments ONLY if it's the standard daily fetch
         if limit == 3 and not category:
              for t in selected_trivias:
                 # Check if already assigned today (race condition check)
@@ -162,6 +164,10 @@ def get_todays_trivia(
                     db.add(new_assignment)
              db.commit()
         
+        # Inject date into response
+        for t in selected_trivias:
+            t.date = effective_date
+
         return selected_trivias
 
     except Exception as e:

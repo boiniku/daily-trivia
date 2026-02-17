@@ -8,6 +8,7 @@ import * as Crypto from 'expo-crypto';
 import { Alert } from 'react-native';
 import { Config } from '../constants/Config';
 import { useRevenueCat } from './RevenueCatContext';
+import { reloadAllTimelines } from '../modules/widget-control';
 
 interface AuthContextType {
     user: FirebaseAuthTypes.User | null;
@@ -78,12 +79,24 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
     };
 
+
+
     const syncUserIdToStorage = async (id: string) => {
         await AsyncStorage.setItem('user_id', id);
         // Sync with Widget
         try {
             await DefaultPreference.setName('group.com.dailytrivia.app');
             await DefaultPreference.set('user_id', id);
+
+            // Force Widget Reload immediately
+            console.log("Triggering widget timeline reload...");
+            try {
+                reloadAllTimelines();
+                console.log("Widget reload triggered successfully.");
+            } catch (wError) {
+                console.warn("Failed to trigger widget reload:", wError);
+            }
+
         } catch (e) {
             console.error('Failed to sync widget:', e);
         }
