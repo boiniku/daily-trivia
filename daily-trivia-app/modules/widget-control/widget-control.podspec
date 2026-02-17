@@ -13,8 +13,7 @@ Pod::Spec.new do |s|
   s.platform       = :ios, '13.0'
   s.swift_version  = '5.4'
   s.source         = { git: '' }
-  s.static_framework = true
-  s.frameworks     = 'WidgetKit'
+  s.weak_frameworks = 'WidgetKit'
 
   s.dependency 'ExpoModulesCore'
 
