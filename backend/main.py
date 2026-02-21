@@ -145,6 +145,21 @@ def get_todays_trivia(
             selected_trivias.extend(fillers)
 
         if limit == 3 and not category:
+             history_collection = db.query(Collection).filter(
+                 Collection.user_id == user_id,
+                 Collection.title == "過去に見た雑学"
+             ).first()
+             if not history_collection:
+                 history_collection = Collection(
+                     user_id=user_id,
+                     title="過去に見た雑学",
+                     icon="time-outline",
+                     is_locked=False
+                 )
+                 db.add(history_collection)
+                 db.commit()
+                 db.refresh(history_collection)
+
              for t in selected_trivias:
                 # Check if already assigned today (race condition check)
                 exists = db.query(DailyAssignment).filter(
@@ -159,6 +174,17 @@ def get_todays_trivia(
                         trivia_id=t.id
                     )
                     db.add(new_assignment)
+
+                    # Also add to history since it's displayed on widget/today screen
+                    history_exists = db.query(CollectionItem).filter(
+                        CollectionItem.collection_id == history_collection.id,
+                        CollectionItem.trivia_id == t.id
+                    ).first()
+                    if not history_exists:
+                         db.add(CollectionItem(
+                             collection_id=history_collection.id,
+                             trivia_id=t.id
+                         ))
              db.commit()
         
         # Inject date into response
@@ -176,6 +202,14 @@ def get_todays_trivia(
 class HistoryRequest(BaseModel):
     user_id: str
     trivia_id: int
+
+@app.get("/trivia/{trivia_id}", response_model=TriviaSchema)
+def get_trivia_by_id(trivia_id: int, db: Session = Depends(get_db)):
+    trivia = db.query(Trivia).filter(Trivia.id == trivia_id).first()
+    if not trivia:
+        raise HTTPException(status_code=404, detail="Trivia not found")
+    return trivia
+
 
 @app.post("/history")
 def add_to_history(request: HistoryRequest, db: Session = Depends(get_db)):

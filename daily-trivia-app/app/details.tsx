@@ -31,11 +31,43 @@ export default function DetailsScreen() {
 
     // Data passed from index.tsx
     const id = params.id as string;
-    const title = params.title as string || 'タイトルなし';
-    const explanation = params.explanation as string || '解説データがありません';
-    const source = params.source as string || '';
-    const category = params.category as string || '未分類';
-    const content = params.content as string || '';
+
+    // State to hold potentially fetched full data
+    const [fullData, setFullData] = useState({
+        title: params.title as string || 'タイトルなし',
+        explanation: params.explanation as string || '解説データがありません',
+        source: params.source as string || '',
+        category: params.category as string || '未分類',
+        content: params.content as string || ''
+    });
+    const [loadingDetails, setLoadingDetails] = useState(false);
+
+    // Fetch full data if explanation is missing (e.g. from Widget deep link)
+    useEffect(() => {
+        const fetchFullDetails = async () => {
+            if ((!params.explanation || params.explanation === '解説データがありません') && id) {
+                setLoadingDetails(true);
+                try {
+                    const response = await fetch(`${getBackendUrl()}/trivia/${id}`);
+                    if (response.ok) {
+                        const data = await response.json();
+                        setFullData({
+                            title: data.title || fullData.title,
+                            explanation: data.explanation || '解説データがありません',
+                            source: data.source || fullData.source,
+                            category: data.category || fullData.category,
+                            content: data.content || fullData.content
+                        });
+                    }
+                } catch (e) {
+                    console.error("Failed to fetch full trivia details", e);
+                } finally {
+                    setLoadingDetails(false);
+                }
+            }
+        };
+        fetchFullDetails();
+    }, [id, params.explanation]);
 
     // Add to Folder State
     const [isModalVisible, setIsModalVisible] = useState(false);
@@ -132,14 +164,14 @@ export default function DetailsScreen() {
                     <View style={styles.badgeContainer}>
                         <View style={styles.categoryBadge}>
                             <Ionicons name="library" size={12} color="white" style={{ marginRight: 4 }} />
-                            <Text style={styles.categoryText}>{category}</Text>
+                            <Text style={styles.categoryText}>{fullData.category}</Text>
                         </View>
                     </View>
 
-                    <Text style={styles.title}>{title}</Text>
+                    <Text style={styles.title}>{fullData.title}</Text>
 
                     <View style={styles.cardSection}>
-                        <Text style={styles.mainContent}>{content}</Text>
+                        <Text style={styles.mainContent}>{fullData.content}</Text>
                     </View>
 
                     {/* Action Buttons Row */}
@@ -147,7 +179,7 @@ export default function DetailsScreen() {
                         <HeeButton triviaId={parseInt(id, 10)} />
 
                         <Pressable style={styles.shareButton} onPress={() => {
-                            const shareText = `【${title}】\n${content}\n\n#毎日雑学`;
+                            const shareText = `【${fullData.title}】\n${fullData.content}\n\n#毎日雑学`;
                             // Use Universal Link for better handling
                             const shareUrl = `https://twitter.com/intent/tweet?text=${encodeURIComponent(shareText)}`;
                             Linking.openURL(shareUrl).catch((err) => console.error('An error occurred', err));
@@ -162,7 +194,11 @@ export default function DetailsScreen() {
                             <Ionicons name="information-circle" size={20} color={Colors.light.primary} style={{ marginRight: 8 }} />
                             <Text style={styles.sectionTitle}>詳細解説</Text>
                         </View>
-                        <Text style={styles.text}>{explanation}</Text>
+                        {loadingDetails ? (
+                            <ActivityIndicator size="small" color={Colors.light.primary} style={{ marginTop: 10, alignSelf: 'flex-start' }} />
+                        ) : (
+                            <Text style={styles.text}>{fullData.explanation}</Text>
+                        )}
                     </View>
 
                     {/* source ? (
