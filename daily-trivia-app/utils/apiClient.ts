@@ -14,20 +14,34 @@ export async function fetchWithToken(url: string, options: RequestInit = {}) {
     };
 
     // 2. Try to get token from Firebase Auth
-    const currentUser = auth().currentUser;
+    let currentUser = auth().currentUser;
+
+    // If there's no current user, it might be a fresh install that hasn't finished anon auth
+    // Let's force an anonymous sign-in here just in case, to ensure we have a token
+    if (!currentUser) {
+        try {
+            console.log("fetchWithToken: No currentUser found, attempting anonymous sign-in...");
+            const userCred = await auth().signInAnonymously();
+            currentUser = userCred.user;
+        } catch (error) {
+            console.error("fetchWithToken: Failed to sign in anonymously:", error);
+        }
+    }
+
     if (currentUser) {
         try {
             // Force refresh is false (fetches from cache if valid)
             const idToken = await currentUser.getIdToken(false);
-            headers['Authorization'] = `Bearer ${idToken}`;
+            if (idToken) {
+                headers['Authorization'] = `Bearer ${idToken}`;
+            } else {
+                console.warn("fetchWithToken: getIdToken returned empty.");
+            }
         } catch (error) {
-            console.error("Failed to fetch Firebase ID token:", error);
+            console.error("fetchWithToken: Failed to fetch Firebase ID token:", error);
         }
     } else {
-        // Guest users don't have a firebase token, but backend still needs a user_id
-        // Wait, backend requires token now? 
-        // Ah, if the backend requires token validation, Guest users will fail!
-        // Let's add the token if we have one, otherwise fallback to sending what we have.
+        console.warn("fetchWithToken: Still no currentUser, sending request without Authorization header.");
     }
 
     // 3. Execute fetch
