@@ -1,4 +1,5 @@
 import os
+import json
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 import firebase_admin
@@ -8,16 +9,23 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Initialize Firebase Admin SKD (Requires GOOGLE_APPLICATION_CREDENTIALS in .env or initialized with cert)
-# For now, we will assume the environment variable or service account json is provided.
 try:
-    # If a service account path is in .env, use it. Otherwise, init app will look for GOOGLE_APPLICATION_CREDENTIALS
-    service_acc_path = os.getenv("FIREBASE_SERVICE_ACCOUNT_PATH")
-    if service_acc_path and os.path.exists(service_acc_path):
-        cred = credentials.Certificate(service_acc_path)
+    # 1. Try to load from a raw JSON string in environment variable (Render setup)
+    service_acc_json_str = os.getenv("FIREBASE_SERVICE_ACCOUNT_JSON")
+    if service_acc_json_str:
+        # Load string into python dict
+        service_acc_info = json.loads(service_acc_json_str)
+        cred = credentials.Certificate(service_acc_info)
         firebase_admin.initialize_app(cred)
     else:
-        # Default initialization (relies on GOOGLE_APPLICATION_CREDENTIALS var being set)
-        firebase_admin.initialize_app()
+        # 2. Try file path
+        service_acc_path = os.getenv("FIREBASE_SERVICE_ACCOUNT_PATH")
+        if service_acc_path and os.path.exists(service_acc_path):
+            cred = credentials.Certificate(service_acc_path)
+            firebase_admin.initialize_app(cred)
+        else:
+            # 3. Default initialization (relies on GOOGLE_APPLICATION_CREDENTIALS)
+            firebase_admin.initialize_app()
 except ValueError:
     # App already initialized
     pass
