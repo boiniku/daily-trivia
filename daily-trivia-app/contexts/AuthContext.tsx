@@ -7,6 +7,7 @@ import * as Crypto from 'expo-crypto';
 import { Alert } from 'react-native';
 import { Config } from '../constants/Config';
 import { useRevenueCat } from './RevenueCatContext';
+import { fetchWithToken } from '../utils/apiClient';
 
 interface AuthContextType {
     user: FirebaseAuthTypes.User | null;
@@ -168,14 +169,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const mergeData = async (guestId: string, authId: string) => {
         try {
             console.log(`Merging guest ${guestId} to auth ${authId}...`);
-            const response = await fetch(`${Config.BACKEND_URL}/auth/merge`, {
+            const response = await fetchWithToken(`${Config.BACKEND_URL}/auth/merge`, {
                 method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
                 body: JSON.stringify({
-                    guest_user_id: guestId,
-                    auth_user_id: authId
+                    guest_user_id: guestId
                 })
             });
 
@@ -215,12 +212,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
             // 1. Delete user data on backend
             console.log("Sending DELETE request to backend...");
-            const response = await fetch(`${Config.BACKEND_URL}/auth/user`, {
-                method: 'DELETE',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({ user_id: userId })
+            const response = await fetchWithToken(`${Config.BACKEND_URL}/auth/user`, {
+                method: 'DELETE'
             });
 
             if (!response.ok) {
