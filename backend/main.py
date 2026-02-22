@@ -7,6 +7,7 @@ from database import get_db
 from models import Trivia, Collection, CollectionItem, DailyAssignment, TriviaHee
 import random
 import datetime
+from auth import get_current_user_id  # Added for token verification
 
 app = FastAPI()
 # Force redeploy 2
@@ -58,9 +59,9 @@ def read_root():
 
 @app.get("/trivia/today", response_model=List[TriviaSchema])
 def get_todays_trivia(
-    user_id: str, 
     limit: int = 3, 
     category: str | None = None,
+    user_id: str = Depends(get_current_user_id),
     db: Session = Depends(get_db)
 ):
     from sqlalchemy.sql import func
@@ -200,7 +201,6 @@ def get_todays_trivia(
         raise HTTPException(status_code=500, detail=str(e))
 
 class HistoryRequest(BaseModel):
-    user_id: str
     trivia_id: int
 
 @app.get("/trivia/{trivia_id}", response_model=TriviaSchema)
@@ -212,18 +212,18 @@ def get_trivia_by_id(trivia_id: int, db: Session = Depends(get_db)):
 
 
 @app.post("/history")
-def add_to_history(request: HistoryRequest, db: Session = Depends(get_db)):
+def add_to_history(request: HistoryRequest, user_id: str = Depends(get_current_user_id), db: Session = Depends(get_db)):
     try:
         # Find "History" collection for this user
         history_collection = db.query(Collection).filter(
-            Collection.user_id == request.user_id,
+            Collection.user_id == user_id,
             Collection.title == "過去に見た雑学"
         ).first()
 
         if not history_collection:
             # Should exist from get_collections, but just in case
             history_collection = Collection(
-                user_id=request.user_id, 
+                user_id=user_id, 
                 title="過去に見た雑学", 
                 icon="time-outline", 
                 is_locked=False
@@ -246,7 +246,7 @@ def add_to_history(request: HistoryRequest, db: Session = Depends(get_db)):
             db.add(new_item)
             db.commit()
             try:
-                msg = f"{datetime.datetime.now()}: ADDED: User {request.user_id}, Trivia {request.trivia_id}"
+                msg = f"{datetime.datetime.now()}: ADDED: User {user_id}, Trivia {request.trivia_id}"
                 print(msg)
                 with open("history_debug.log", "a", encoding="utf-8") as f:
                     f.write(msg + "\n")
@@ -255,7 +255,7 @@ def add_to_history(request: HistoryRequest, db: Session = Depends(get_db)):
             return {"message": "Added to history"}
         else:
             try:
-                msg = f"{datetime.datetime.now()}: DUPLICATE: User {request.user_id}, Trivia {request.trivia_id}"
+                msg = f"{datetime.datetime.now()}: DUPLICATE: User {user_id}, Trivia {request.trivia_id}"
                 print(msg)
                 with open("history_debug.log", "a", encoding="utf-8") as f:
                     f.write(msg + "\n")
@@ -275,7 +275,7 @@ def add_to_history(request: HistoryRequest, db: Session = Depends(get_db)):
         raise HTTPException(status_code=500, detail=f"Failed to add to history: {str(e)}")
 
 @app.get("/collections", response_model=List[CollectionSchema])
-def get_collections(user_id: str, db: Session = Depends(get_db)):
+def get_collections(user_id: str = Depends(get_current_user_id), db: Session = Depends(get_db)):
     try:
         # Fetch collections for this user
         collections = db.query(Collection).filter(Collection.user_id == user_id).all()
@@ -347,7 +347,7 @@ def get_collections(user_id: str, db: Session = Depends(get_db)):
         raise HTTPException(status_code=500, detail="Failed to fetch collections")
 
 @app.delete("/collections/{collection_id}")
-def delete_collection(collection_id: int, user_id: str, db: Session = Depends(get_db)):
+def delete_collection(collection_id: int, user_id: str = Depends(get_current_user_id), db: Session = Depends(get_db)):
     # Verify ownership
     col = db.query(Collection).filter(Collection.id == collection_id, Collection.user_id == user_id).first()
     if not col:
@@ -370,15 +370,14 @@ def delete_collection(collection_id: int, user_id: str, db: Session = Depends(ge
         raise HTTPException(status_code=500, detail=f"Failed to delete collection: {str(e)}")
 
 class CreateCollectionRequest(BaseModel):
-    user_id: str
     title: str
     icon: str = "folder-outline"
 
 @app.post("/collections", response_model=CollectionSchema)
-def create_collection(request: CreateCollectionRequest, db: Session = Depends(get_db)):
+def create_collection(request: CreateCollectionRequest, user_id: str = Depends(get_current_user_id), db: Session = Depends(get_db)):
     try:
         new_collection = Collection(
-            user_id=request.user_id,
+            user_id=user_id,
             title=request.title,
             icon=request.icon,
             is_locked=False # Custom collections are unlocked
@@ -401,8 +400,13 @@ def create_collection(request: CreateCollectionRequest, db: Session = Depends(ge
         raise HTTPException(status_code=500, detail=f"Failed to create collection: {str(e)}")
 
 @app.get("/collections/{collection_id}/items", response_model=List[TriviaSchema])
-def get_collection_items(collection_id: int, db: Session = Depends(get_db)):
+def get_collection_items(collection_id: int, user_id: str = Depends(get_current_user_id), db: Session = Depends(get_db)):
     # Join Trivia and CollectionItem to get trivias in the collection
+    # Also verify collection belongs to user
+    col = db.query(Collection).filter(Collection.id == collection_id, Collection.user_id == user_id).first()
+    if not col:
+        raise HTTPException(status_code=404, detail="Collection not found")
+        
     trivias = db.query(Trivia).join(CollectionItem).filter(CollectionItem.collection_id == collection_id).all()
     return trivias
 
@@ -410,10 +414,10 @@ class AddCollectionItemRequest(BaseModel):
     trivia_id: int
 
 @app.post("/collections/{collection_id}/items")
-def add_collection_item(collection_id: int, request: AddCollectionItemRequest, db: Session = Depends(get_db)):
+def add_collection_item(collection_id: int, request: AddCollectionItemRequest, user_id: str = Depends(get_current_user_id), db: Session = Depends(get_db)):
     try:
-        # Check if collection exists
-        collection = db.query(Collection).filter(Collection.id == collection_id).first()
+        # Check if collection exists and belongs to user
+        collection = db.query(Collection).filter(Collection.id == collection_id, Collection.user_id == user_id).first()
         if not collection:
             raise HTTPException(status_code=404, detail="Collection not found")
 
@@ -443,15 +447,14 @@ def add_collection_item(collection_id: int, request: AddCollectionItemRequest, d
 # --- Hee Button Endpoints ---
 
 class HeeRequest(BaseModel):
-    user_id: str
     count: int = 1 # Number of times pressed in this batch
 
 @app.post("/trivia/{trivia_id}/hee")
-def add_hee(trivia_id: int, request: HeeRequest, db: Session = Depends(get_db)):
+def add_hee(trivia_id: int, request: HeeRequest, user_id: str = Depends(get_current_user_id), db: Session = Depends(get_db)):
     try:
         # 1. Check if user has already hit limit for this trivia
         existing_hee = db.query(TriviaHee).filter(
-            TriviaHee.user_id == request.user_id,
+            TriviaHee.user_id == user_id,
             TriviaHee.trivia_id == trivia_id
         ).first()
 
@@ -472,7 +475,7 @@ def add_hee(trivia_id: int, request: HeeRequest, db: Session = Depends(get_db)):
             existing_hee.count += to_add
         else:
             new_hee = TriviaHee(
-                user_id=request.user_id,
+                user_id=user_id,
                 trivia_id=trivia_id,
                 count=to_add
             )
@@ -499,7 +502,7 @@ def add_hee(trivia_id: int, request: HeeRequest, db: Session = Depends(get_db)):
         raise HTTPException(status_code=500, detail="Failed to add Hee")
 
 @app.get("/trivia/{trivia_id}/hee")
-def get_hee_status(trivia_id: int, user_id: str, db: Session = Depends(get_db)):
+def get_hee_status(trivia_id: int, user_id: str = Depends(get_current_user_id), db: Session = Depends(get_db)):
     try:
         # Get total count
         trivia = db.query(Trivia).filter(Trivia.id == trivia_id).first()

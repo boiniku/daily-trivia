@@ -11,6 +11,7 @@ import { Config } from '../constants/Config';
 import * as Crypto from 'expo-crypto';
 import { useAuth } from '../contexts/AuthContext';
 import HeeButton from '../components/HeeButton';
+import { fetchWithToken } from '../utils/apiClient';
 
 const getBackendUrl = () => {
     return Config.BACKEND_URL;
@@ -48,7 +49,7 @@ export default function DetailsScreen() {
             if ((!params.explanation || params.explanation === '解説データがありません') && id) {
                 setLoadingDetails(true);
                 try {
-                    const response = await fetch(`${getBackendUrl()}/trivia/${id}`);
+                    const response = await fetchWithToken(`${getBackendUrl()}/trivia/${id}`);
                     if (response.ok) {
                         const data = await response.json();
                         setFullData({
@@ -79,8 +80,8 @@ export default function DetailsScreen() {
         setLoadingCollections(true);
         try {
             if (!userId) return;
-            const apiUrl = `${getBackendUrl()}/collections?user_id=${userId}`;
-            const response = await fetch(apiUrl);
+            const apiUrl = `${getBackendUrl()}/collections`;
+            const response = await fetchWithToken(apiUrl);
             if (!response.ok) throw new Error('Fetch failed');
             const data = await response.json();
             // Filter out locked collections or "Past Trivia" if needed?
@@ -109,9 +110,8 @@ export default function DetailsScreen() {
         setAdding(true);
         try {
             if (!userId) return;
-            const response = await fetch(`${getBackendUrl()}/collections/${collectionId}/items`, {
+            const response = await fetchWithToken(`${getBackendUrl()}/collections/${collectionId}/items`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     trivia_id: id, // Assuming we have the ID, wait. params.id might be undefined if not passed?
                     // We need to ensure we have the trivia ID or content to save.

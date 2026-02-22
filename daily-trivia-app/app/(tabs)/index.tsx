@@ -9,8 +9,9 @@ import * as Crypto from 'expo-crypto';
 import { syncTriviaToWidget } from '../../utils/widgetSync';
 import { BannerAd, BannerAdSize, TestIds } from 'react-native-google-mobile-ads';
 import { useRevenueCat } from '../../contexts/RevenueCatContext';
-import { Theme, Colors } from '../../constants/Colors';
 import { Config } from '../../constants/Config';
+import { fetchWithToken } from '../../utils/apiClient';
+import { Theme, Colors } from '../../constants/Colors';
 
 // Helper to determine backend URL
 const getBackendUrl = () => {
@@ -127,9 +128,9 @@ export default function HomeScreen() {
     const fetchTrivia = async (userId: string, retryCount = 0) => {
         try {
             const limit = isPro ? 14 : DAILY_LIMIT; // Pro gets 14 initially to support infinite scroll start
-            const apiUrl = `${getBackendUrl()}/trivia/today?user_id=${userId}&limit=${limit}`;
+            const apiUrl = `${getBackendUrl()}/trivia/today?limit=${limit}`;
             console.log(`Fetching from: ${apiUrl} (Attempt: ${retryCount + 1})`);
-            const response = await fetch(apiUrl);
+            const response = await fetchWithToken(apiUrl);
 
             if (!response.ok) {
                 const errorText = await response.text();
@@ -197,8 +198,8 @@ export default function HomeScreen() {
         try {
             if (!userId) return;
             // Fetch 7 more items
-            const apiUrl = `${getBackendUrl()}/trivia/today?user_id=${userId}&limit=7`;
-            const response = await fetch(apiUrl);
+            const apiUrl = `${getBackendUrl()}/trivia/today?limit=7`;
+            const response = await fetchWithToken(apiUrl);
             if (response.ok) {
                 const data = await response.json();
                 if (Array.isArray(data) && data.length > 0) {
@@ -223,13 +224,9 @@ export default function HomeScreen() {
             }
 
             const apiUrl = `${getBackendUrl()}/history`;
-            await fetch(apiUrl, {
+            await fetchWithToken(apiUrl, {
                 method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
                 body: JSON.stringify({
-                    user_id: userId,
                     trivia_id: triviaId
                 }),
             });

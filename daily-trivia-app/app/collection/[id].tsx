@@ -9,6 +9,7 @@ import { Theme, Colors } from '../../constants/Colors';
 import { useRevenueCat } from '../../contexts/RevenueCatContext';
 import { InterstitialAd, AdEventType, TestIds } from 'react-native-google-mobile-ads';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { fetchWithToken } from '../../utils/apiClient';
 
 const getBackendUrl = () => {
     return Config.BACKEND_URL;
@@ -100,7 +101,7 @@ export default function CollectionDetailsScreen() {
     const fetchCollectionItems = async () => {
         try {
             const apiUrl = `${getBackendUrl()}/collections/${id}/items`;
-            const response = await fetch(apiUrl);
+            const response = await fetchWithToken(apiUrl);
             if (!response.ok) throw new Error('Network error');
             const data: TriviaItem[] = await response.json();
             setItems(data);

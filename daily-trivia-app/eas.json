@@ -6,15 +6,18 @@
   "build": {
     "development": {
       "developmentClient": true,
-      "distribution": "internal"
+      "distribution": "internal",
+      "channel": "development"
     },
     "preview": {
-      "distribution": "internal"
+      "distribution": "internal",
+      "channel": "preview"
     },
     "production": {
       "ios": {
         "image": "macos-sequoia-15.3-xcode-16.2"
-      }
+      },
+      "channel": "production"
     }
   },
   "submit": {

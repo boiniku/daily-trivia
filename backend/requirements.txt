@@ -8,3 +8,4 @@ google-generativeai
 supabase
 gunicorn
 openai
+firebase-admin

@@ -12,6 +12,7 @@ import { useRevenueCat } from '../../contexts/RevenueCatContext';
 import { BannerAd, BannerAdSize, TestIds, useRewardedAd } from 'react-native-google-mobile-ads';
 import { Theme, Colors } from '../../constants/Colors';
 import { useAuth } from '../../contexts/AuthContext';
+import { fetchWithToken } from '../../utils/apiClient';
 
 // Helper to determine backend URL
 const getBackendUrl = () => {
@@ -82,8 +83,8 @@ export default function CollectionsScreen() {
         try {
             if (!userId) return;
 
-            const apiUrl = `${getBackendUrl()}/collections?user_id=${userId}`;
-            const response = await fetch(apiUrl);
+            const apiUrl = `${getBackendUrl()}/collections`;
+            const response = await fetchWithToken(apiUrl);
 
             if (!response.ok) {
                 // Try to parse error
@@ -123,11 +124,9 @@ export default function CollectionsScreen() {
             setCreating(true);
             if (!userId) return;
 
-            const response = await fetch(`${getBackendUrl()}/collections`, {
+            const response = await fetchWithToken(`${getBackendUrl()}/collections`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    user_id: userId,
                     title: newFolderName,
                     icon: 'folder-outline' // Default icon
                 })
@@ -159,7 +158,7 @@ export default function CollectionsScreen() {
                     style: "destructive",
                     onPress: async () => {
                         try {
-                            const response = await fetch(`${getBackendUrl()}/collections/${item.id}?user_id=${userId}`, {
+                            const response = await fetchWithToken(`${getBackendUrl()}/collections/${item.id}`, {
                                 method: 'DELETE',
                             });
                             if (!response.ok) {

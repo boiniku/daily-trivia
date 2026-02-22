@@ -11,20 +11,20 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from database import get_db
 from models import TriviaHee, Collection, CollectionItem, DailyAssignment
+from auth import get_current_user_id
 
 router = APIRouter()
 
 class MergeRequest(BaseModel):
     guest_user_id: str
-    auth_user_id: str
 
 @router.post("/auth/merge")
-def merge_guest_data(request: MergeRequest, db: Session = Depends(get_db)):
+def merge_guest_data(request: MergeRequest, auth_user_id: str = Depends(get_current_user_id), db: Session = Depends(get_db)):
     """
     Merge guest data into authenticated user account.
     """
     guest_id = request.guest_user_id
-    auth_id = request.auth_user_id
+    auth_id = auth_user_id
     
     if not guest_id or not auth_id:
         raise HTTPException(status_code=400, detail="Both guest_user_id and auth_user_id are required")
@@ -166,15 +166,11 @@ def merge_guest_data(request: MergeRequest, db: Session = Depends(get_db)):
         print(f"Merge error: {e}")
         raise HTTPException(status_code=500, detail=f"Merge failed: {str(e)}")
 
-class DeleteUserRequest(BaseModel):
-    user_id: str
-
 @router.delete("/auth/user")
-def delete_user(request: DeleteUserRequest, db: Session = Depends(get_db)):
+def delete_user(user_id: str = Depends(get_current_user_id), db: Session = Depends(get_db)):
     """
     Delete all data associated with a user.
     """
-    user_id = request.user_id
     if not user_id:
         raise HTTPException(status_code=400, detail="user_id is required")
 

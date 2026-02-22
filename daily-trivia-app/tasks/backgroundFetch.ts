@@ -3,6 +3,7 @@ import * as TaskManager from 'expo-task-manager';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Config } from '../constants/Config';
 import { syncTriviaToWidget } from '../utils/widgetSync';
+import { fetchWithToken } from '../utils/apiClient';
 
 const BACKGROUND_FETCH_TASK = 'BACKGROUND_TRIVIA_FETCH';
 
@@ -24,10 +25,10 @@ try {
 
             // 2. Fetch Today's Trivia
             const limit = 3;
-            const apiUrl = `${Config.BACKEND_URL}/trivia/today?user_id=${userId}&limit=${limit}`;
+            const apiUrl = `${Config.BACKEND_URL}/trivia/today?limit=${limit}`;
 
             console.log(`[BackgroundFetch] Fetching: ${apiUrl}`);
-            const response = await fetch(apiUrl);
+            const response = await fetchWithToken(apiUrl);
 
             if (!response.ok) {
                 console.error('[BackgroundFetch] API Error:', response.status);

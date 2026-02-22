@@ -1,4 +1,4 @@
-import { View, Text, StyleSheet, Pressable, Alert, ScrollView, ActivityIndicator } from 'react-native';
+import { View, Text, StyleSheet, Pressable, Alert, ScrollView, ActivityIndicator, Linking } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useState } from 'react';
@@ -195,8 +195,14 @@ export default function SettingsScreen() {
                         <Text style={styles.infoLabel}>バージョン</Text>
                         <Text style={styles.infoValue}>1.0.0</Text>
                     </View>
-
-
+                    <Pressable style={styles.infoRow} onPress={() => Linking.openURL('https://docs.google.com/document/d/1_K7priRhIk6OSG3c_YQBngnW4uVpTcCOdIEHVN7jFnw/edit?usp=sharing')}>
+                        <Text style={styles.infoLabel}>利用規約</Text>
+                        <Ionicons name="chevron-forward" size={20} color={Colors.light.subtext} />
+                    </Pressable>
+                    <Pressable style={styles.infoRow} onPress={() => Linking.openURL('https://docs.google.com/document/d/1lCV52E8lkax9EUt8jD1wsvE2wajtwL1XjTclhOqxz3A/edit?usp=sharing')}>
+                        <Text style={styles.infoLabel}>プライバシーポリシー</Text>
+                        <Ionicons name="chevron-forward" size={20} color={Colors.light.subtext} />
+                    </Pressable>
                 </View>
 
                 {/* Danger Zone */}

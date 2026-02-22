@@ -62,17 +62,28 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             setUserId(user.uid);
             await syncUserIdToStorage(user.uid);
         } else {
-            // Guest mode
-            let guestId = await AsyncStorage.getItem('user_id');
-
-            // Relaxed check: Just ensure it exists
-            if (!guestId) {
-                // If missing, generate new guest ID
-                const newGuestId = Crypto.randomUUID();
-                await syncUserIdToStorage(newGuestId);
-                setUserId(newGuestId);
+            // Guest mode: We need a Firebase Token for the backend, so use Anonymous Auth
+            if (!auth().currentUser) {
+                try {
+                    const anonCred = await auth().signInAnonymously();
+                    setUserId(anonCred.user.uid);
+                    await syncUserIdToStorage(anonCred.user.uid);
+                } catch (e) {
+                    console.error("Failed to sign in anonymously:", e);
+                    // Fallback to locally generated id if anonymous auth fails
+                    let guestId = await AsyncStorage.getItem('user_id');
+                    if (!guestId) {
+                        const newGuestId = Crypto.randomUUID();
+                        await syncUserIdToStorage(newGuestId);
+                        setUserId(newGuestId);
+                    } else {
+                        setUserId(guestId);
+                    }
+                }
             } else {
-                setUserId(guestId);
+                // If currentUser exists but `user` state was null (race condition or weird state),
+                // just use the current anonymous user's uid
+                setUserId(auth().currentUser!.uid);
             }
         }
     };
@@ -142,6 +153,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
             return true;
         } catch (error: any) {
+            // Note: If linking fails because the Apple account is already tied to another Firebase
+            // account, you might want to handle `auth/credential-already-in-use` specifically.
             if (error.code === 'ERR_CANCELED') {
                 console.log("User canceled Apple Sign-In");
                 return false;
@@ -245,7 +258,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
     };
 
-    const isGuest = !user;
+    // A user is a "Guest" if they are only signed in anonymously
+    const isGuest = !user || user.isAnonymous;
 
     return (
         <AuthContext.Provider value={{

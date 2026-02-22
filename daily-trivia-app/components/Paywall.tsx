@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, StyleSheet, Pressable, ScrollView, ActivityIndicator } from 'react-native';
+import { View, Text, StyleSheet, Pressable, ScrollView, ActivityIndicator, Linking } from 'react-native';
 import { useRevenueCat } from '../contexts/RevenueCatContext';
 import { Colors, Theme } from '../constants/Colors';
 import { Ionicons } from '@expo/vector-icons';
@@ -62,6 +62,16 @@ export default function Paywall() {
             <Text style={styles.disclaimer}>
                 ※ サブスクリプションはApple IDの設定からいつでも解約可能です。
             </Text>
+
+            <View style={styles.legalContainer}>
+                <Pressable onPress={() => Linking.openURL('https://docs.google.com/document/d/1_K7priRhIk6OSG3c_YQBngnW4uVpTcCOdIEHVN7jFnw/edit?usp=sharing')}>
+                    <Text style={styles.legalLink}>利用規約</Text>
+                </Pressable>
+                <Text style={styles.legalDivider}>|</Text>
+                <Pressable onPress={() => Linking.openURL('https://docs.google.com/document/d/1lCV52E8lkax9EUt8jD1wsvE2wajtwL1XjTclhOqxz3A/edit?usp=sharing')}>
+                    <Text style={styles.legalLink}>プライバシーポリシー</Text>
+                </Pressable>
+            </View>
         </ScrollView>
     );
 }
@@ -162,5 +172,21 @@ const styles = StyleSheet.create({
         fontSize: 12,
         color: Colors.light.subtext,
         textAlign: 'center',
+    },
+    legalContainer: {
+        flexDirection: 'row',
+        justifyContent: 'center',
+        marginTop: 20,
+        marginBottom: 40,
+    },
+    legalLink: {
+        fontSize: 12,
+        color: Colors.light.subtext,
+        textDecorationLine: 'underline',
+    },
+    legalDivider: {
+        fontSize: 12,
+        color: Colors.light.subtext,
+        marginHorizontal: 10,
     },
 });

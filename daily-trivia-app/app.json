@@ -16,14 +16,18 @@
     "ios": {
       "supportsTablet": false,
       "bundleIdentifier": "com.dailytrivia.app",
-      "buildNumber": "90",
+      "buildNumber": "95",
       "entitlements": {
         "com.apple.security.application-groups": [
+          "group.com.dailytrivia.app",
           "group.com.dailytrivia.app"
         ]
       },
       "infoPlist": {
         "SKAdNetworkItems": [
+          {
+            "SKAdNetworkIdentifier": "cstr6suwn9.skadnetwork"
+          },
           {
             "SKAdNetworkIdentifier": "cstr6suwn9.skadnetwork"
           }
@@ -41,6 +45,8 @@
       "edgeToEdgeEnabled": true,
       "package": "com.dailytrivia.app",
       "permissions": [
+        "android.permission.RECEIVE_BOOT_COMPLETED",
+        "android.permission.WAKE_LOCK",
         "android.permission.RECEIVE_BOOT_COMPLETED",
         "android.permission.WAKE_LOCK"
       ]
@@ -94,13 +100,28 @@
                       "group.com.dailytrivia.app"
                     ]
                   }
+                },
+                {
+                  "bundleIdentifier": "com.dailytrivia.app.TriviaWidgetExtension",
+                  "targetName": "TriviaWidget",
+                  "entitlements": {
+                    "com.apple.security.application-groups": [
+                      "group.com.dailytrivia.app"
+                    ]
+                  }
                 }
               ]
             }
           }
         },
-        "projectId": "460851e1-2c6b-423a-ad28-6635b244b4fe"
+        "projectId": "dc1668f6-d213-4b7f-92d0-8bf25a7d4902"
       }
+    },
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/dc1668f6-d213-4b7f-92d0-8bf25a7d4902"
     }
   }
 }
