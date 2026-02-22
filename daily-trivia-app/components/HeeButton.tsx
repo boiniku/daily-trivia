@@ -5,6 +5,7 @@ import { Colors, Theme } from '../constants/Colors';
 import { Config } from '../constants/Config';
 import { useAuth } from '../contexts/AuthContext';
 import * as Haptics from 'expo-haptics';
+import { fetchWithToken } from '../utils/apiClient';
 
 interface HeeButtonProps {
     triviaId: number;
@@ -32,7 +33,7 @@ export default function HeeButton({ triviaId, initialTotalCount = 0 }: HeeButton
         try {
             if (!userId) return;
 
-            const response = await fetch(`${Config.BACKEND_URL}/trivia/${triviaId}/hee?user_id=${userId}`);
+            const response = await fetchWithToken(`${Config.BACKEND_URL}/trivia/${triviaId}/hee`);
             if (response.ok) {
                 const data = await response.json();
                 setTotalCount(data.total_count);
@@ -89,10 +90,9 @@ export default function HeeButton({ triviaId, initialTotalCount = 0 }: HeeButton
         try {
             if (!userId) return;
 
-            const response = await fetch(`${Config.BACKEND_URL}/trivia/${triviaId}/hee`, {
+            const response = await fetchWithToken(`${Config.BACKEND_URL}/trivia/${triviaId}/hee`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ user_id: userId, count: count })
+                body: JSON.stringify({ count: count })
             });
 
             if (response.ok) {

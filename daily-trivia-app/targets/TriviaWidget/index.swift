@@ -59,6 +59,7 @@ struct Provider: TimelineProvider {
         
         // 3. Strict User ID Check & Fetch
         let userId = userDefaults?.string(forKey: "user_id")
+        let firebaseToken = userDefaults?.string(forKey: "firebase_token")
         
         if !isValidData {
             // Strict Mode: If no valid User ID, DO NOT fetch. Wait for App.
@@ -83,15 +84,25 @@ struct Provider: TimelineProvider {
             
             // Valid User ID exists, proceed to fetch
             triviaList = [] // Clear old data
-            let urlString = "https://daily-trivia-e7ge.onrender.com/trivia/today?user_id=\(userId!)"
+            let urlString = "https://daily-trivia-e7ge.onrender.com/trivia/today"
             
             if let url = URL(string: urlString) {
                 print("Fetching widget data from: \(urlString)")
                 
+                var request = URLRequest(url: url)
+                request.httpMethod = "GET"
+                request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+                
+                if let token = firebaseToken, !token.isEmpty {
+                    request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+                } else {
+                    print("Widget: Missing Firebase token. Request will likely fail if backend requires it.")
+                }
+                
                 let dispatchGroup = DispatchGroup()
                 dispatchGroup.enter()
                 
-                let task = URLSession.shared.dataTask(with: url) { data, response, error in
+                let task = URLSession.shared.dataTask(with: request) { data, response, error in
                     defer { dispatchGroup.leave() }
                     
                     if let data = data {
