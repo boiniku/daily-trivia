@@ -28,6 +28,7 @@ struct Provider: TimelineProvider {
         let triviaJson = userDefaults?.string(forKey: "daily_trivia")
         
         var triviaList: [TriviaData] = []
+        var staleFallbackList: [TriviaData] = [] // Keep stale data as fallback
         
         // 1. Try to load local data
         if let jsonString = triviaJson, let data = jsonString.data(using: .utf8) {
@@ -55,6 +56,8 @@ struct Provider: TimelineProvider {
             } else {
                 isValidData = true // Fallback for legacy data without date
             }
+            // Keep old data as fallback (show yesterday's trivia instead of "loading")
+            staleFallbackList = triviaList
         }
         
         // 3. Strict User ID Check & Fetch
@@ -62,20 +65,18 @@ struct Provider: TimelineProvider {
         let firebaseToken = userDefaults?.string(forKey: "firebase_token")
         
         if !isValidData {
-            // Strict Mode: If no valid User ID, DO NOT fetch. Wait for App.
-            if userId == nil || userId == "" || userId == "widget_guest" {
-                 // Return "Loading..." state and retry in 5 minutes
-                 print("Widget: No valid User ID found. Waiting for App...")
+            // If no valid User ID and no stale data, show loading
+            if (userId == nil || userId == "" || userId == "widget_guest") && staleFallbackList.isEmpty {
+                 print("Widget: No valid User ID and no cached data. Waiting for App...")
                  
                  let loadingEntry = TriviaEntry(
                     date: currentDate,
                     id: 0,
                     title: "読み込み中...",
-                    content: "アプリと同期しています。\n少々お待ちください。",
-                    theme: .morning // Default theme
+                    content: "アプリを一度開いてください。",
+                    theme: .morning
                  )
                  
-                 // Retry in 5 minutes
                  let nextUpdate = calendar.date(byAdding: .minute, value: 5, to: currentDate)!
                  let timeline = Timeline(entries: [loadingEntry], policy: .after(nextUpdate))
                  completion(timeline)
@@ -84,7 +85,10 @@ struct Provider: TimelineProvider {
             
             // Valid User ID exists, proceed to fetch
             triviaList = [] // Clear old data
-            let urlString = "https://daily-trivia-e7ge.onrender.com/trivia/today"
+            var urlString = "https://daily-trivia-e7ge.onrender.com/trivia/widget"
+            if let uid = userId, !uid.isEmpty {
+                urlString += "?user_id=\(uid)"
+            }
             
             if let url = URL(string: urlString) {
                 print("Fetching widget data from: \(urlString)")
@@ -92,11 +96,12 @@ struct Provider: TimelineProvider {
                 var request = URLRequest(url: url)
                 request.httpMethod = "GET"
                 request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+                request.timeoutInterval = 15 // Increased from default for Render cold start
                 
                 if let token = firebaseToken, !token.isEmpty {
                     request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
                 } else {
-                    print("Widget: Missing Firebase token. Request will likely fail if backend requires it.")
+                    print("Widget: No Firebase token available, attempting request without auth.")
                 }
                 
                 let dispatchGroup = DispatchGroup()
@@ -145,31 +150,36 @@ struct Provider: TimelineProvider {
                 }
                 task.resume()
                 
-                // Wait for up to 3 seconds for network
-                let result = dispatchGroup.wait(timeout: .now() + 3)
+                // Wait for up to 15 seconds for network (Render cold start can be slow)
+                let result = dispatchGroup.wait(timeout: .now() + 15)
                 if result == .timedOut {
                     print("Widget fetch timed out")
                 }
             }
         }
         
-        // 4. Update Fallback for empty list (Network failure or timeouts)
+        // 4. Fallback: use stale cached data if fetch failed
         if triviaList.isEmpty {
-             // If we have a User ID but fetch failed, we retry soon
-             // If we don't have User ID, we already returned above
-             
-             let errorEntry = TriviaEntry(
-                date: currentDate,
-                id: 0,
-                title: "読み込み失敗",
-                content: "通信環境を確認して\nもう一度お待ちください。",
-                theme: .morning
-             )
-             // Retry in 15 mins for network errors
-             let nextUpdate = calendar.date(byAdding: .minute, value: 15, to: currentDate)!
-             let timeline = Timeline(entries: [errorEntry], policy: .after(nextUpdate))
-             completion(timeline)
-             return
+             if !staleFallbackList.isEmpty {
+                 // Show yesterday's data instead of error - much better UX
+                 print("Widget: Using stale cached data as fallback")
+                 triviaList = staleFallbackList
+                 // Retry sooner to get fresh data
+                 // (will fall through to timeline building below)
+             } else {
+                 // No cached data at all - show error
+                 let errorEntry = TriviaEntry(
+                    date: currentDate,
+                    id: 0,
+                    title: "読み込み失敗",
+                    content: "アプリを一度開いて\nデータを更新してください。",
+                    theme: .morning
+                 )
+                 let nextUpdate = calendar.date(byAdding: .minute, value: 15, to: currentDate)!
+                 let timeline = Timeline(entries: [errorEntry], policy: .after(nextUpdate))
+                 completion(timeline)
+                 return
+             }
         }
         
         // Fill up to 3 items if needed (shouldn't happen with valid API)

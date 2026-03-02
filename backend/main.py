@@ -1,6 +1,5 @@
 
-
-from fastapi import FastAPI, Depends, HTTPException
+from fastapi import FastAPI, Depends, HTTPException, status
 from typing import List, Optional
 from sqlalchemy.orm import Session
 from database import get_db
@@ -8,6 +7,8 @@ from models import Trivia, Collection, CollectionItem, DailyAssignment, TriviaHe
 import random
 import datetime
 from auth import get_current_user_id  # Added for token verification
+from fastapi.responses import JSONResponse
+import firebase_admin
 
 app = FastAPI()
 # Force redeploy 2
@@ -198,6 +199,121 @@ def get_todays_trivia(
         import traceback
         error_msg = traceback.format_exc()
         log(f"ERROR: {error_msg}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/trivia/widget", response_model=List[TriviaSchema])
+def get_widget_trivia(
+    user_id: str = None,
+    limit: int = 3,
+    db: Session = Depends(get_db)
+):
+    """
+    Endpoint for iOS Widget.
+    Uses user_id as query parameter instead of Firebase token.
+    Same personalization logic as /trivia/today.
+    """
+    from sqlalchemy.sql import func
+    
+    try:
+        JST = datetime.timezone(datetime.timedelta(hours=9))
+        current_time = datetime.datetime.now(JST)
+        effective_date = (current_time - datetime.timedelta(hours=2)).date()
+        
+        # If no user_id provided, return random trivia
+        if not user_id:
+            selected_trivias = db.query(Trivia).order_by(func.random()).limit(limit).all()
+            for t in selected_trivias:
+                t.date = effective_date
+            return selected_trivias
+        
+        # 1. Check if daily assignment exists for this user and date
+        assignments = db.query(DailyAssignment).filter(
+            DailyAssignment.user_id == user_id,
+            DailyAssignment.date == effective_date
+        ).all()
+        
+        if assignments:
+            trivia_ids = [a.trivia_id for a in assignments]
+            trivias = db.query(Trivia).filter(Trivia.id.in_(trivia_ids)).all()
+            for t in trivias:
+                t.date = effective_date
+            return trivias
+
+        # 2. Build exclusion subqueries (same as /trivia/today)
+        history_subquery = db.query(CollectionItem.trivia_id).join(Collection).filter(
+            Collection.user_id == user_id,
+            Collection.title == "過去に見た雑学",
+            CollectionItem.collection_id == Collection.id
+        )
+        
+        assignments_subquery = db.query(DailyAssignment.trivia_id).filter(
+            DailyAssignment.user_id == user_id
+        )
+
+        # 3. Query excluding seen trivia
+        query = db.query(Trivia)
+        query = query.filter(~Trivia.id.in_(history_subquery))
+        query = query.filter(~Trivia.id.in_(assignments_subquery))
+        
+        selected_trivias = query.order_by(func.random()).limit(limit).all()
+        
+        # 4. Fallback if not enough unseen
+        if len(selected_trivias) < limit:
+            needed = limit - len(selected_trivias)
+            fallback_query = db.query(Trivia)
+            if selected_trivias:
+                picked_ids = [t.id for t in selected_trivias]
+                fallback_query = fallback_query.filter(~Trivia.id.in_(picked_ids))
+            fillers = fallback_query.order_by(func.random()).limit(needed).all()
+            selected_trivias.extend(fillers)
+
+        # 5. Create daily assignments (same as /trivia/today)
+        history_collection = db.query(Collection).filter(
+            Collection.user_id == user_id,
+            Collection.title == "過去に見た雑学"
+        ).first()
+        if not history_collection:
+            history_collection = Collection(
+                user_id=user_id,
+                title="過去に見た雑学",
+                icon="time-outline",
+                is_locked=False
+            )
+            db.add(history_collection)
+            db.commit()
+            db.refresh(history_collection)
+
+        for t in selected_trivias:
+            exists = db.query(DailyAssignment).filter(
+                DailyAssignment.user_id == user_id,
+                DailyAssignment.date == effective_date,
+                DailyAssignment.trivia_id == t.id
+            ).first()
+            if not exists:
+                db.add(DailyAssignment(
+                    user_id=user_id,
+                    date=effective_date,
+                    trivia_id=t.id
+                ))
+                history_exists = db.query(CollectionItem).filter(
+                    CollectionItem.collection_id == history_collection.id,
+                    CollectionItem.trivia_id == t.id
+                ).first()
+                if not history_exists:
+                    db.add(CollectionItem(
+                        collection_id=history_collection.id,
+                        trivia_id=t.id
+                    ))
+        db.commit()
+        
+        for t in selected_trivias:
+            t.date = effective_date
+
+        return selected_trivias
+
+    except Exception as e:
+        import traceback
+        print(f"Widget endpoint error: {traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=str(e))
 
 class HistoryRequest(BaseModel):

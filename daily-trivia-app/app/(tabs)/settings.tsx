@@ -2,12 +2,15 @@ import { View, Text, StyleSheet, Pressable, Alert, ScrollView, ActivityIndicator
 import { Ionicons } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useState } from 'react';
+import { useRouter } from 'expo-router';
 import { Colors, Theme } from '../../constants/Colors';
 import { useRevenueCat } from '../../contexts/RevenueCatContext';
 import { useAuth } from '../../contexts/AuthContext';
 import LoginModal from '../../components/LoginModal';
+import { resetReviewStateForTesting, forceTriggerReviewForTesting } from '../../utils/reviewHandler';
 
 export default function SettingsScreen() {
+    const router = useRouter();
     const { isPro, currentOffering, purchasePackage, restorePurchases, retryLoadOfferings, loading } = useRevenueCat();
     const { userId, isGuest, signOut, deleteAccount } = useAuth();
     const [loginVisible, setLoginVisible] = useState(false);
@@ -52,11 +55,26 @@ export default function SettingsScreen() {
                     style: "destructive", // Red button
                     onPress: async () => {
                         console.log("Delete confirmed by user in UI");
-                        await deleteAccount();
+                        try {
+                            await deleteAccount();
+                            // Force navigation exactly to the tutorial
+                            router.replace('/tutorial');
+                        } catch (e) {
+                            console.error("Delete account error in component:", e);
+                        }
                     }
                 }
             ]
         );
+    };
+
+    const handleResetReview = async () => {
+        await resetReviewStateForTesting();
+        Alert.alert("リセット完了", "レビューのカウントとフラグをリセットしました。\nアプリを再起動するか、「強制表示」を試してください。");
+    };
+
+    const handleForceReview = async () => {
+        await forceTriggerReviewForTesting();
     };
 
     return (
