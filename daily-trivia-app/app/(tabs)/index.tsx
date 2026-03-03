@@ -315,8 +315,8 @@ export default function HomeScreen() {
         try {
             isFetchingMoreRef.current = true;
             if (!userId) return;
-            // Fetch 7 more items, but ensure they match the logical date of our current batch
-            const apiUrl = `${getBackendUrl()}/trivia/today?limit=7&date=${dataDateRef.current}`;
+            // Fetch 7 more items, ensure they match the logical date, AND disable daily assignment prepending
+            const apiUrl = `${getBackendUrl()}/trivia/today?limit=7&date=${dataDateRef.current}&include_assignments=false`;
             const response = await fetchWithToken(apiUrl);
             if (response.ok) {
                 const data = await response.json();

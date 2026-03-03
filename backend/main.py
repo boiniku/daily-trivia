@@ -60,11 +60,18 @@ def read_root():
 
 @app.get("/trivia/today", response_model=List[TriviaSchema])
 def get_todays_trivia(
-    limit: int = 3, 
-    category: str | None = None,
-    user_id: str = Depends(get_current_user_id),
+    user_id: str = None, 
+    category: str = None, 
+    limit: int = 3,
+    date: str = None,
+    include_assignments: bool = True,
     db: Session = Depends(get_db)
 ):
+    """
+    1. Returns a tailored list of trivia based on user_id to avoid repeats.
+    2. Allows 'date' to dynamically override server time.
+    3. include_assignments=False prevents prepending DailyAssignments during infinite scrolling.
+    """
     from sqlalchemy.sql import func
     
     def log(message):
@@ -75,16 +82,32 @@ def get_todays_trivia(
             pass
 
     try:
-        # Custom "Day" starts at 2:00 AM JST
+        # Default to Server's Effective Date if no date provided
         JST = datetime.timezone(datetime.timedelta(hours=9))
         current_time = datetime.datetime.now(JST)
-        effective_date = (current_time - datetime.timedelta(hours=2)).date()
+        default_effective_date = (current_time - datetime.timedelta(hours=2)).date()
         
-        log(f"DEBUG: Requesting trivia for user_id={user_id}, category={category}, limit={limit}")
+        # Parse client-provided date if available
+        if date:
+            try:
+                effective_date = datetime.datetime.strptime(date, "%Y-%m-%d").date()
+            except ValueError:
+                effective_date = default_effective_date
+        else:
+            effective_date = default_effective_date
         
+        log(f"DEBUG: Requesting trivia for user_id={user_id}, category={category}, limit={limit}, include_assignments={include_assignments}")
+        
+        # If no user_id provided, return random trivia
+        if not user_id:
+            selected_trivias = db.query(Trivia).order_by(func.random()).limit(limit).all()
+            for t in selected_trivias:
+                t.date = effective_date
+            return selected_trivias
+
         # 1. Check if daily assignment exists for this user and date
         assigned_trivias = []
-        if not category:
+        if not category and include_assignments:
             assignments = db.query(DailyAssignment).filter(
                 DailyAssignment.user_id == user_id,
                 DailyAssignment.date == effective_date
@@ -147,7 +170,7 @@ def get_todays_trivia(
             final_trivias.extend(fillers)
 
         # 6. Save first 3 generic items as Daily Assignments for widget sync
-        if not category:
+        if not category and include_assignments:
              history_collection = db.query(Collection).filter(
                  Collection.user_id == user_id,
                  Collection.title == "過去に見た雑学"
