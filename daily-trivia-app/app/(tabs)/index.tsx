@@ -48,6 +48,18 @@ export default function HomeScreen() {
     const isFetchingMoreRef = useRef(false); // Prevents infinite swiping API flood
     const currentIndexRef = useRef(currentIndex); // Ensures saveState uses exact latest index during async fetch
 
+    // Helper to get effective date (changes at 2:00 AM)
+    const getEffectiveDate = useCallback(() => {
+        const now = new Date();
+        now.setHours(now.getHours() - 2);
+        // Return local YYYY-MM-DD
+        return now.getFullYear() + '-' +
+            String(now.getMonth() + 1).padStart(2, '0') + '-' +
+            String(now.getDate()).padStart(2, '0');
+    }, []);
+
+    const dataDateRef = useRef(getEffectiveDate()); // Tracks the logical date of the currently rendered trivia list
+
     useEffect(() => {
         currentIndexRef.current = currentIndex;
     }, [currentIndex]);
@@ -206,6 +218,8 @@ export default function HomeScreen() {
 
                 if (savedState.date === today && Array.isArray(savedState.list) && savedState.list.length > 0) {
                     console.log('Restoring state for date:', today);
+                    // Set the dataDateRef to match the cached date we are restoring
+                    dataDateRef.current = today;
                     setTriviaList(savedState.list);
                     setCurrentIndex(savedState.currentIndex || 0);
                     setLoading(false);
@@ -250,6 +264,9 @@ export default function HomeScreen() {
                 throw new Error('Invalid data format: expected an array');
             }
 
+            // Successfully fetched new data, lock the logical date for this batch
+            dataDateRef.current = today;
+
             setTriviaList(data);
             setCurrentIndex(0); // FIX: Ensure swipe index is reset to 0 when loading a new batch
             setLoading(false);
@@ -278,20 +295,12 @@ export default function HomeScreen() {
     };
 
 
-    // Helper to get effective date (changes at 2:00 AM)
-    const getEffectiveDate = () => {
-        const now = new Date();
-        now.setHours(now.getHours() - 2);
-        // Return local YYYY-MM-DD
-        return now.getFullYear() + '-' +
-            String(now.getMonth() + 1).padStart(2, '0') + '-' +
-            String(now.getDate()).padStart(2, '0');
-    };
+    // getEffectiveDate was moved up to be near refs
 
     const saveState = async (index: number, list: TriviaItem[]) => {
         try {
             const state = {
-                date: getEffectiveDate(),
+                date: dataDateRef.current, // FIX: Use the logical date of the batch, not the wall-clock time
                 currentIndex: index,
                 list: list
             };
@@ -306,8 +315,8 @@ export default function HomeScreen() {
         try {
             isFetchingMoreRef.current = true;
             if (!userId) return;
-            // Fetch 7 more items
-            const apiUrl = `${getBackendUrl()}/trivia/today?limit=7`;
+            // Fetch 7 more items, but ensure they match the logical date of our current batch
+            const apiUrl = `${getBackendUrl()}/trivia/today?limit=7&date=${dataDateRef.current}`;
             const response = await fetchWithToken(apiUrl);
             if (response.ok) {
                 const data = await response.json();
