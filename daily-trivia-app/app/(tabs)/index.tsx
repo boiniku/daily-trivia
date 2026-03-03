@@ -461,6 +461,16 @@ export default function HomeScreen() {
     }, [userId]);
     // -------------------------
 
+    // --- Rescue Logic for Pro User Subscription Validation Race Condition ---
+    useEffect(() => {
+        // If the user's subscription validation returns late (after the initial Free-tier 3 items were fetched)
+        // Ensure we automatically pull in the rest of the 14 items without requiring a impossible swipe
+        if (isPro && !loading && triviaList.length > 0 && triviaList.length <= DAILY_LIMIT) {
+            console.log("Pro subscription validated late. Automatically fetching additional Pro items...");
+            fetchMoreTrivia();
+        }
+    }, [isPro, loading, triviaList.length]);
+
     if (loading) {
         return (
             <SafeAreaView style={[styles.container, styles.center]}>
