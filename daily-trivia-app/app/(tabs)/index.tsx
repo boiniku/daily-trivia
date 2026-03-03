@@ -45,6 +45,12 @@ export default function HomeScreen() {
 
     const appState = useRef(AppState.currentState);
     const isFetchingRef = useRef(false);
+    const isFetchingMoreRef = useRef(false); // Prevents infinite swiping API flood
+    const currentIndexRef = useRef(currentIndex); // Ensures saveState uses exact latest index during async fetch
+
+    useEffect(() => {
+        currentIndexRef.current = currentIndex;
+    }, [currentIndex]);
 
     const checkTutorial = async () => {
         try {
@@ -224,7 +230,8 @@ export default function HomeScreen() {
     const fetchTrivia = async (userId: string, retryCount = 0) => {
         try {
             const limit = isPro ? 14 : DAILY_LIMIT; // Pro gets 14 initially to support infinite scroll start
-            const apiUrl = `${getBackendUrl()}/trivia/today?limit=${limit}`;
+            const today = getEffectiveDate();
+            const apiUrl = `${getBackendUrl()}/trivia/today?limit=${limit}&date=${today}`;
             console.log(`Fetching from: ${apiUrl} (Attempt: ${retryCount + 1})`);
             const response = await fetchWithToken(apiUrl);
 
@@ -244,8 +251,10 @@ export default function HomeScreen() {
             }
 
             setTriviaList(data);
+            setCurrentIndex(0); // FIX: Ensure swipe index is reset to 0 when loading a new batch
             setLoading(false);
             isFetchingRef.current = false;
+            saveState(0, data); // FIX: Ensure date state is saved immediately to track day changes
 
             // Sync to widget in background (don't block UI)
             syncTriviaToWidget(data, userId).catch(err => console.error('Background widget sync failed:', err));
@@ -293,7 +302,9 @@ export default function HomeScreen() {
     };
 
     const fetchMoreTrivia = async () => {
+        if (isFetchingMoreRef.current) return;
         try {
+            isFetchingMoreRef.current = true;
             if (!userId) return;
             // Fetch 7 more items
             const apiUrl = `${getBackendUrl()}/trivia/today?limit=7`;
@@ -304,13 +315,15 @@ export default function HomeScreen() {
                     // Append new items (allowing duplicates for infinite scroll)
                     setTriviaList(prev => {
                         const newList = [...prev, ...data];
-                        saveState(currentIndex, newList); // Save state with new list
+                        saveState(currentIndexRef.current, newList); // Use accurate current index, not the stale one from closure
                         return newList;
                     });
                 }
             }
         } catch (e) {
             console.log("Failed to fetch more trivia", e);
+        } finally {
+            isFetchingMoreRef.current = false;
         }
     };
 
@@ -401,8 +414,8 @@ export default function HomeScreen() {
                     console.log(`Date changed (State: ${savedState.date}, Today: ${today}). Refreshing...`);
                     shouldRefresh = true;
                 }
-            } else if (triviaList.length === 0 && !loading) {
-                // No state and no list? Refresh.
+            } else if (!loading) {
+                // If there is no saved state at all but we are not loading, refresh to be safe so we establish a date state
                 shouldRefresh = true;
             }
 
@@ -442,7 +455,7 @@ export default function HomeScreen() {
     if (loading) {
         return (
             <SafeAreaView style={[styles.container, styles.center]}>
-                <ActivityIndicator size="large" color="#007AFF" />
+                <ActivityIndicator size="large" color={Colors.light.primary} />
                 <Text style={{ marginTop: 10, color: Colors.light.subtext }}>雑学を読み込み中...</Text>
                 <Text style={{ fontSize: 10, color: '#CCC', marginTop: 4 }}>v1.0.1</Text>
             </SafeAreaView>
@@ -498,7 +511,7 @@ export default function HomeScreen() {
                         )}
 
                         {/* Current Card (Foreground) */}
-                        {currentItem && (
+                        {currentItem ? (
                             <TriviaCard
                                 key={`current-${currentItem.id}`}
                                 item={currentItem}
@@ -506,6 +519,12 @@ export default function HomeScreen() {
                                 onPressDetails={handlePressDetails}
                                 style={{ zIndex: 1 }}
                             />
+                        ) : (
+                            // When waiting for fetchMoreTrivia to load next block in Pro plan
+                            <View style={[styles.finishedContainer, { paddingVertical: 60, zIndex: 1 }]}>
+                                <ActivityIndicator size="large" color={Colors.light.primary} />
+                                <Text style={[styles.subText, { marginTop: 16 }]}>新しい雑学を準備中...</Text>
+                            </View>
                         )}
 
                         {/* Swipe Guide Overlay */}
