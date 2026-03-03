@@ -6,7 +6,7 @@ from database import get_db
 from models import Trivia, Collection, CollectionItem, DailyAssignment, TriviaHee
 import random
 import datetime
-from auth import get_current_user_id  # Added for token verification
+from auth import get_current_user_id, get_optional_user_id  # Added for token verification
 from fastapi.responses import JSONResponse
 import firebase_admin
 
@@ -65,6 +65,7 @@ def get_todays_trivia(
     limit: int = 3,
     date: str = None,
     include_assignments: bool = True,
+    token_user_id: str = Depends(get_optional_user_id),
     db: Session = Depends(get_db)
 ):
     """
@@ -72,6 +73,9 @@ def get_todays_trivia(
     2. Allows 'date' to dynamically override server time.
     3. include_assignments=False prevents prepending DailyAssignments during infinite scrolling.
     """
+    # Hybrid auth: prefer token-based uid, fallback to query param
+    if token_user_id:
+        user_id = token_user_id
     from sqlalchemy.sql import func
     
     def log(message):
@@ -125,21 +129,25 @@ def get_todays_trivia(
                         t.date = effective_date
                     return assigned_trivias[:limit]
 
-        # 2. Build Subqueries for Exclusion
-        history_subquery = db.query(CollectionItem.trivia_id).join(Collection).filter(
+        # 2. Build Subqueries for Exclusion (using NOT EXISTS for performance)
+        from sqlalchemy import exists
+        
+        history_exists = db.query(CollectionItem.id).join(Collection).filter(
             Collection.user_id == user_id,
             Collection.title == "過去に見た雑学",
-            CollectionItem.collection_id == Collection.id
-        )
+            CollectionItem.collection_id == Collection.id,
+            CollectionItem.trivia_id == Trivia.id
+        ).correlate(Trivia)
         
-        assignments_subquery = db.query(DailyAssignment.trivia_id).filter(
-            DailyAssignment.user_id == user_id
-        )
+        assignments_exists = db.query(DailyAssignment.id).filter(
+            DailyAssignment.user_id == user_id,
+            DailyAssignment.trivia_id == Trivia.id
+        ).correlate(Trivia)
 
         # 3. Build Main Query
         query = db.query(Trivia)
-        query = query.filter(~Trivia.id.in_(history_subquery))
-        query = query.filter(~Trivia.id.in_(assignments_subquery))
+        query = query.filter(~exists(history_exists))
+        query = query.filter(~exists(assignments_exists))
         
         if category:
             query = query.filter(Trivia.category == category)
@@ -434,16 +442,25 @@ def get_collections(user_id: str = Depends(get_current_user_id), db: Session = D
         # Fetch collections for this user
         collections = db.query(Collection).filter(Collection.user_id == user_id).all()
         
-        # If no collections found for this user, create defaults
-        if not collections:
-            default_collections = [
-                Collection(user_id=user_id, title="過去に見た雑学", icon="time-outline", is_locked=False),
-                Collection(user_id=user_id, title="お気に入り", icon="heart-outline", is_locked=True) 
-            ]
-            db.add_all(default_collections)
+        # Ensure default folders exist (check each individually)
+        existing_titles = {c.title for c in collections}
+        defaults_to_create = []
+        if "過去に見た雑学" not in existing_titles:
+            defaults_to_create.append(Collection(user_id=user_id, title="過去に見た雑学", icon="time-outline", is_locked=False))
+        if "お気に入り" not in existing_titles:
+            defaults_to_create.append(Collection(user_id=user_id, title="お気に入り", icon="heart-outline", is_locked=True))
+        
+        if defaults_to_create:
+            db.add_all(defaults_to_create)
             db.commit()
             # Refresh to get IDs
             collections = db.query(Collection).filter(Collection.user_id == user_id).all()
+        
+        # Self-healing: Ensure "お気に入り" always has is_locked=True
+        for col in collections:
+            if col.title == "お気に入り" and not col.is_locked:
+                col.is_locked = True
+                db.commit()
         
         # Self-healing: Check for duplicates (same title) and merge them
         # This fixes issues where race conditions caused double default folders
@@ -691,3 +708,23 @@ def get_hee_status(trivia_id: int, user_id: str = Depends(get_current_user_id), 
         print(f"Error getting Hee status: {e}")
         raise HTTPException(status_code=500, detail="Failed to get Hee status")
 
+# --- Cleanup Endpoint ---
+@app.delete("/admin/cleanup-assignments")
+def cleanup_old_assignments(
+    days: int = 30,
+    db: Session = Depends(get_db)
+):
+    """
+    Delete DailyAssignments older than N days to prevent table bloat.
+    Call periodically (e.g. weekly via external cron).
+    """
+    try:
+        cutoff = datetime.date.today() - datetime.timedelta(days=days)
+        deleted = db.query(DailyAssignment).filter(
+            DailyAssignment.date < cutoff
+        ).delete()
+        db.commit()
+        return {"message": f"Deleted {deleted} old assignments (before {cutoff})"}
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))

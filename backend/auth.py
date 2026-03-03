@@ -83,3 +83,23 @@ def get_current_user_id(decoded_token: dict = Depends(verify_token)) -> str:
             detail="Token does not contain user ID",
         )
     return uid
+
+from fastapi import Request
+
+def get_optional_user_id(request: Request) -> str | None:
+    """
+    Optional token verification. Returns uid if valid token present, None otherwise.
+    Used for endpoints that support both token auth and query param fallback.
+    """
+    auth_header = request.headers.get("authorization")
+    if not auth_header or not auth_header.startswith("Bearer "):
+        return None
+    token = auth_header[7:]  # Remove "Bearer "
+    if not token:
+        return None
+    try:
+        decoded_token = auth.verify_id_token(token)
+        return decoded_token.get("uid")
+    except Exception:
+        return None
+
