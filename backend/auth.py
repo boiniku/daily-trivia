@@ -85,8 +85,9 @@ def get_current_user_id(decoded_token: dict = Depends(verify_token)) -> str:
     return uid
 
 from fastapi import Request
+from typing import Optional as OptionalType
 
-def get_optional_user_id(request: Request) -> str | None:
+def get_optional_user_id(request: Request) -> OptionalType[str]:
     """
     Optional token verification. Returns uid if valid token present, None otherwise.
     Used for endpoints that support both token auth and query param fallback.
