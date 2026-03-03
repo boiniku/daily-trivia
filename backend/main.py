@@ -82,8 +82,9 @@ def get_todays_trivia(
         
         log(f"DEBUG: Requesting trivia for user_id={user_id}, category={category}, limit={limit}")
         
-        # 1. Check if daily assignment exists for this user and date (ONLY if default limit=3 and no category)
-        if limit == 3 and not category:
+        # 1. Check if daily assignment exists for this user and date
+        assigned_trivias = []
+        if not category:
             assignments = db.query(DailyAssignment).filter(
                 DailyAssignment.user_id == user_id,
                 DailyAssignment.date == effective_date
@@ -91,62 +92,62 @@ def get_todays_trivia(
             
             if assignments:
                 log(f"DEBUG: Found {len(assignments)} assignments.")
+                # We want to maintain assignment creation order or ID order, but IN_ often loses order.
+                # Since assignments is a list of objects, we can sort them, though random is fine.
                 trivia_ids = [a.trivia_id for a in assignments]
-                trivias = db.query(Trivia).filter(Trivia.id.in_(trivia_ids)).all()
-                for t in trivias:
-                    t.date = effective_date
-                return trivias
+                assigned_trivias = db.query(Trivia).filter(Trivia.id.in_(trivia_ids)).all()
+                
+                if len(assigned_trivias) >= limit:
+                    for t in assigned_trivias[:limit]:
+                        t.date = effective_date
+                    return assigned_trivias[:limit]
 
         # 2. Build Subqueries for Exclusion
-        # Use subqueries instead of fetching all IDs to memory
-        
-        # Subquery for history collection items
         history_subquery = db.query(CollectionItem.trivia_id).join(Collection).filter(
             Collection.user_id == user_id,
             Collection.title == "過去に見た雑学",
             CollectionItem.collection_id == Collection.id
         )
         
-        # Subquery for daily assignments
         assignments_subquery = db.query(DailyAssignment.trivia_id).filter(
             DailyAssignment.user_id == user_id
         )
 
         # 3. Build Main Query
         query = db.query(Trivia)
-        
-        # Exclude seen items using NOT IN subquery
         query = query.filter(~Trivia.id.in_(history_subquery))
         query = query.filter(~Trivia.id.in_(assignments_subquery))
         
         if category:
             query = query.filter(Trivia.category == category)
             
-        # 4. Fetch Random Samples using Database Random
-        # order_by(func.random()) is standard for SQLite/PostgreSQL/MySQL
-        # efficient enough for < 100k rows
-        selected_trivias = query.order_by(func.random()).limit(limit).all()
+        # 4. Fetch Random Samples
+        needed_random = limit - len(assigned_trivias)
+        selected_trivias = []
+        if needed_random > 0:
+            selected_trivias = query.order_by(func.random()).limit(needed_random).all()
+        
+        # Combine assigned and newly selected
+        final_trivias = assigned_trivias + selected_trivias
         
         # 5. Fallback if not enough unseen
-        if len(selected_trivias) < limit:
-            needed = limit - len(selected_trivias)
+        if len(final_trivias) < limit:
+            needed = limit - len(final_trivias)
             log(f"DEBUG: Not enough unseen trivia. Need {needed} more.")
             
-            # Fallback query: Seen trivias
             fallback_query = db.query(Trivia)
             if category:
                 fallback_query = fallback_query.filter(Trivia.category == category)
             
-            # Exclude what we just picked
-            if selected_trivias:
-                picked_ids = [t.id for t in selected_trivias]
+            if final_trivias:
+                picked_ids = [t.id for t in final_trivias]
                 fallback_query = fallback_query.filter(~Trivia.id.in_(picked_ids))
             
-            # Randomly pick from fallback
             fillers = fallback_query.order_by(func.random()).limit(needed).all()
-            selected_trivias.extend(fillers)
+            final_trivias.extend(fillers)
 
-        if limit == 3 and not category:
+        # 6. Save first 3 generic items as Daily Assignments for widget sync
+        if not category:
              history_collection = db.query(Collection).filter(
                  Collection.user_id == user_id,
                  Collection.title == "過去に見た雑学"
@@ -162,7 +163,9 @@ def get_todays_trivia(
                  db.commit()
                  db.refresh(history_collection)
 
-             for t in selected_trivias:
+             # We only create DailyAssignments for up to the first 3 items
+             assignable_trivias = final_trivias[:3]
+             for t in assignable_trivias:
                 # Check if already assigned today (race condition check)
                 exists = db.query(DailyAssignment).filter(
                     DailyAssignment.user_id == user_id,
@@ -190,10 +193,10 @@ def get_todays_trivia(
              db.commit()
         
         # Inject date into response
-        for t in selected_trivias:
+        for t in final_trivias:
             t.date = effective_date
 
-        return selected_trivias
+        return final_trivias
 
     except Exception as e:
         import traceback
