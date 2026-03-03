@@ -129,25 +129,21 @@ def get_todays_trivia(
                         t.date = effective_date
                     return assigned_trivias[:limit]
 
-        # 2. Build Subqueries for Exclusion (using NOT EXISTS for performance)
-        from sqlalchemy import exists
-        
-        history_exists = db.query(CollectionItem.id).join(Collection).filter(
+        # 2. Build Subqueries for Exclusion
+        history_subquery = db.query(CollectionItem.trivia_id).join(Collection).filter(
             Collection.user_id == user_id,
             Collection.title == "過去に見た雑学",
-            CollectionItem.collection_id == Collection.id,
-            CollectionItem.trivia_id == Trivia.id
-        ).correlate(Trivia)
+            CollectionItem.collection_id == Collection.id
+        ).subquery()
         
-        assignments_exists = db.query(DailyAssignment.id).filter(
-            DailyAssignment.user_id == user_id,
-            DailyAssignment.trivia_id == Trivia.id
-        ).correlate(Trivia)
+        assignments_subquery = db.query(DailyAssignment.trivia_id).filter(
+            DailyAssignment.user_id == user_id
+        ).subquery()
 
         # 3. Build Main Query
         query = db.query(Trivia)
-        query = query.filter(~exists(history_exists))
-        query = query.filter(~exists(assignments_exists))
+        query = query.filter(~Trivia.id.in_(db.query(history_subquery)))
+        query = query.filter(~Trivia.id.in_(db.query(assignments_subquery)))
         
         if category:
             query = query.filter(Trivia.category == category)
