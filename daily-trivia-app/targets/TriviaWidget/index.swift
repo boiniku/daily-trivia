@@ -54,7 +54,7 @@ struct Provider: TimelineProvider {
             if let firstItemDate = triviaList[0].date {
                 isValidData = (firstItemDate == todayStr)
             } else {
-                isValidData = true // Fallback for legacy data without date
+                isValidData = false // FIX: Never treat legacy dataless trivia as current today data
             }
             // Keep old data as fallback (show yesterday's trivia instead of "loading")
             staleFallbackList = triviaList
@@ -85,9 +85,9 @@ struct Provider: TimelineProvider {
             
             // Valid User ID exists, proceed to fetch
             triviaList = [] // Clear old data
-            var urlString = "https://daily-trivia-e7ge.onrender.com/trivia/widget"
+            var urlString = "https://daily-trivia-e7ge.onrender.com/trivia/widget?date=\(todayStr)"
             if let uid = userId, !uid.isEmpty {
-                urlString += "?user_id=\(uid)"
+                urlString += "&user_id=\(uid)"
             }
             
             if let url = URL(string: urlString) {
@@ -159,11 +159,13 @@ struct Provider: TimelineProvider {
         }
         
         // 4. Fallback: use stale cached data if fetch failed
+        var usedStaleData = false
         if triviaList.isEmpty {
              if !staleFallbackList.isEmpty {
                  // Show yesterday's data instead of error - much better UX
                  print("Widget: Using stale cached data as fallback")
                  triviaList = staleFallbackList
+                 usedStaleData = true
                  // Retry sooner to get fresh data
                  // (will fall through to timeline building below)
              } else {
@@ -193,46 +195,112 @@ struct Provider: TimelineProvider {
         let currentHour = calendar.component(.hour, from: currentDate)
         if currentHour < 2 {
             // If it's 0:00 or 1:00, we are still showing "yesterday's" trivia until 2:00 AM
-            // However, our `todayStr` logic above already handled the date string.
-            // We just need to make sure the timeline entries are scheduled correctly.
             baseDate = calendar.date(byAdding: .day, value: -1, to: currentDate)!
         }
         
-        // Morning (2:00)
         let morningDate = calendar.date(bySettingHour: 2, minute: 0, second: 0, of: baseDate)!
-        let morningEntry = TriviaEntry(
-            date: morningDate,
-            id: triviaList[0].id,
-            title: triviaList[0].title,
-            content: triviaList[0].content,
-            theme: .morning
-        )
-        entries.append(morningEntry)
-        
-        // Noon (10:00)
         let noonDate = calendar.date(bySettingHour: 10, minute: 0, second: 0, of: baseDate)!
-        let noonEntry = TriviaEntry(
-            date: noonDate,
-            id: triviaList[1].id,
-            title: triviaList[1].title,
-            content: triviaList[1].content,
-            theme: .noon
-        )
-        entries.append(noonEntry)
-        
-        // Night (18:00)
         let nightDate = calendar.date(bySettingHour: 18, minute: 0, second: 0, of: baseDate)!
-        let nightEntry = TriviaEntry(
-            date: nightDate,
-            id: triviaList[2].id,
-            title: triviaList[2].title,
-            content: triviaList[2].content,
-            theme: .night
-        )
-        entries.append(nightEntry)
 
-        // Next update: Tomorrow 2:00 AM
-        let nextUpdate = calendar.date(byAdding: .day, value: 1, to: morningDate)!
+        if usedStaleData {
+            // SAFE MODE: If using stale data, NEVER schedule for the past.
+            // Provide ONE comforting entry for "Right Now".
+            var currentTheme: TriviaTheme = .morning
+            
+            if currentHour >= 18 || currentHour < 2 {
+                currentTheme = .night
+            } else if currentHour >= 10 {
+                currentTheme = .noon
+            }
+            
+            let comfortingEntry = TriviaEntry(
+                date: currentDate, // Important: Use NOW so it isn't rejected by WidgetKit
+                id: 0,
+                title: "今日の雑学を準備中...",
+                content: "新しい雑学を探しています。\nもう少々お待ちください…！\n(アプリを開くと早く更新されることがあります)",
+                theme: currentTheme
+            )
+            entries.append(comfortingEntry)
+        } else {
+            // FRESH DATA MODE: Schedule normally, but ONLY if the scheduled time hasn't passed today.
+            // Morning
+            if currentDate <= morningDate {
+                let morningEntry = TriviaEntry(
+                    date: morningDate,
+                    id: triviaList[0].id,
+                    title: triviaList[0].title,
+                    content: triviaList[0].content,
+                    theme: .morning
+                )
+                entries.append(morningEntry)
+            } else if entries.isEmpty && currentDate < noonDate {
+                // We missed the exact 2:00 AM update, but we are still in the morning window (before 10:00).
+                // Ensure there is at least a "Right Now" entry showing the morning content.
+                 let morningNowEntry = TriviaEntry(
+                    date: currentDate,
+                    id: triviaList[0].id,
+                    title: triviaList[0].title,
+                    content: triviaList[0].content,
+                    theme: .morning
+                )
+                entries.append(morningNowEntry)
+            }
+            
+            // Noon
+            if currentDate <= noonDate {
+                let noonEntry = TriviaEntry(
+                    date: noonDate,
+                    id: triviaList[1].id,
+                    title: triviaList[1].title,
+                    content: triviaList[1].content,
+                    theme: .noon
+                )
+                entries.append(noonEntry)
+            } else if entries.isEmpty && currentDate < nightDate {
+                // Missed 10:00 AM, but still before 18:00
+                 let noonNowEntry = TriviaEntry(
+                    date: currentDate,
+                    id: triviaList[1].id,
+                    title: triviaList[1].title,
+                    content: triviaList[1].content,
+                    theme: .noon
+                )
+                entries.append(noonNowEntry)
+            }
+            
+            // Night
+            if currentDate <= nightDate {
+                let nightEntry = TriviaEntry(
+                    date: nightDate,
+                    id: triviaList[2].id,
+                    title: triviaList[2].title,
+                    content: triviaList[2].content,
+                    theme: .night
+                )
+                entries.append(nightEntry)
+            } else if entries.isEmpty {
+                 // After 18:00
+                 let nightNowEntry = TriviaEntry(
+                    date: currentDate,
+                    id: triviaList[2].id,
+                    title: triviaList[2].title,
+                    content: triviaList[2].content,
+                    theme: .night
+                )
+                entries.append(nightNowEntry)
+            }
+        }
+
+        // Next update
+        let nextUpdate: Date
+        if usedStaleData {
+            nextUpdate = calendar.date(byAdding: .minute, value: 15, to: currentDate)!
+            print("Widget: Scheduled next update in 15 minutes because stale data is used")
+        } else {
+            nextUpdate = calendar.date(byAdding: .day, value: 1, to: morningDate)!
+            print("Widget: Scheduled next update for tomorrow at 2:00 AM")
+        }
+        
         let timeline = Timeline(entries: entries, policy: .after(nextUpdate))
         completion(timeline)
     }

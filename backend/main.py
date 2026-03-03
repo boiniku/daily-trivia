@@ -205,19 +205,31 @@ def get_todays_trivia(
 def get_widget_trivia(
     user_id: str = None,
     limit: int = 3,
+    date: str = None,
     db: Session = Depends(get_db)
 ):
     """
     Endpoint for iOS Widget.
     Uses user_id as query parameter instead of Firebase token.
+    Accepts optional 'date' parameter to sync with widget's local time awareness.
     Same personalization logic as /trivia/today.
     """
     from sqlalchemy.sql import func
     
     try:
+        # Default to Server's Effective Date if no date provided
         JST = datetime.timezone(datetime.timedelta(hours=9))
         current_time = datetime.datetime.now(JST)
-        effective_date = (current_time - datetime.timedelta(hours=2)).date()
+        default_effective_date = (current_time - datetime.timedelta(hours=2)).date()
+        
+        # Parse client-provided date if available
+        if date:
+            try:
+                effective_date = datetime.datetime.strptime(date, "%Y-%m-%d").date()
+            except ValueError:
+                effective_date = default_effective_date
+        else:
+            effective_date = default_effective_date
         
         # If no user_id provided, return random trivia
         if not user_id:
@@ -445,10 +457,24 @@ def get_collections(user_id: str = Depends(get_current_user_id), db: Session = D
             # Fetch again after cleanup
             collections = db.query(Collection).filter(Collection.user_id == user_id).all()
 
+        # Fast aggregate count (Fix for slow N+1 query loading)
+        from sqlalchemy import func
+        collection_ids = [c.id for c in collections]
+        count_map = {}
+        if collection_ids:
+            counts = db.query(
+                CollectionItem.collection_id, 
+                func.count(CollectionItem.id)
+            ).filter(
+                CollectionItem.collection_id.in_(collection_ids)
+            ).group_by(CollectionItem.collection_id).all()
+            for row in counts:
+                count_map[row[0]] = row[1]
+
         # Manually map to schema to include count
         result = []
         for c in collections:
-            item_count = db.query(CollectionItem).filter(CollectionItem.collection_id == c.id).count()
+            item_count = count_map.get(c.id, 0)
             result.append(CollectionSchema(
                 id=c.id,
                 user_id=c.user_id,
