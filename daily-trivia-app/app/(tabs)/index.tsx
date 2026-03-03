@@ -46,6 +46,7 @@ export default function HomeScreen() {
     const appState = useRef(AppState.currentState);
     const isFetchingRef = useRef(false);
     const isFetchingMoreRef = useRef(false); // Prevents infinite swiping API flood
+    const [errorFetchingMore, setErrorFetchingMore] = useState(false); // New state for fetchMoreTrivia errors
     const currentIndexRef = useRef(currentIndex); // Ensures saveState uses exact latest index during async fetch
 
     // Helper to get effective date (changes at 2:00 AM)
@@ -314,6 +315,7 @@ export default function HomeScreen() {
         if (isFetchingMoreRef.current) return;
         try {
             isFetchingMoreRef.current = true;
+            setErrorFetchingMore(false); // Reset error state on new attempt
             if (!userId) return;
             // Fetch 7 more items, ensure they match the logical date, AND disable daily assignment prepending
             const apiUrl = `${getBackendUrl()}/trivia/today?limit=7&date=${dataDateRef.current}&include_assignments=false`;
@@ -327,10 +329,17 @@ export default function HomeScreen() {
                         saveState(currentIndexRef.current, newList); // Use accurate current index, not the stale one from closure
                         return newList;
                     });
+                } else {
+                    // This handles empty arrays but since our backend falls back to history, 
+                    // this typically means a server error disguised as a 200 OK empty response or true DB zero state.
+                    setErrorFetchingMore(true);
                 }
+            } else {
+                setErrorFetchingMore(true);
             }
         } catch (e) {
             console.log("Failed to fetch more trivia", e);
+            setErrorFetchingMore(true);
         } finally {
             isFetchingMoreRef.current = false;
         }
@@ -352,8 +361,8 @@ export default function HomeScreen() {
             });
             console.log('Added to history:', triviaId, 'for user:', userId);
         } catch (error: any) {
-            console.error('Failed to add to history:', error);
-            Alert.alert('エラー', `履歴への追加に失敗しました: ${error.message || error}`);
+            // Silently fail history addition to avoid UX blocking spam when offline
+            console.error('Failed to add to history (Network/Server error):', error);
         }
     };
 
@@ -541,8 +550,19 @@ export default function HomeScreen() {
                         ) : (
                             // When waiting for fetchMoreTrivia to load next block in Pro plan
                             <View style={[styles.finishedContainer, { paddingVertical: 60, zIndex: 1 }]}>
-                                <ActivityIndicator size="large" color={Colors.light.primary} />
-                                <Text style={[styles.subText, { marginTop: 16 }]}>新しい雑学を準備中...</Text>
+                                {errorFetchingMore ? (
+                                    <>
+                                        <Text style={[styles.subText, { marginTop: 16 }]}>読み込みに失敗しました。</Text>
+                                        <Pressable style={styles.upgradeButton} onPress={() => fetchMoreTrivia()}>
+                                            <Text style={styles.upgradeText}>再試行</Text>
+                                        </Pressable>
+                                    </>
+                                ) : (
+                                    <>
+                                        <ActivityIndicator size="large" color={Colors.light.primary} />
+                                        <Text style={[styles.subText, { marginTop: 16 }]}>新しい雑学を準備中...</Text>
+                                    </>
+                                )}
                             </View>
                         )}
 
