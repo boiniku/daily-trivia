@@ -66,6 +66,10 @@ class TriviaSchema(BaseModel):
     class Config:
         from_attributes = True
 
+class CollectionItemSchema(TriviaSchema):
+    user_hee_count: int = 0
+
+
 class CollectionSchema(BaseModel):
     id: int
     user_id: Optional[str] = None
@@ -634,8 +638,9 @@ def create_collection(request: CreateCollectionRequest, user_id: str = Depends(g
     finally:
         db.close()
 
-@app.get("/collections/{collection_id}/items", response_model=List[TriviaSchema])
+@app.get("/collections/{collection_id}/items", response_model=List[CollectionItemSchema])
 def get_collection_items(collection_id: int, user_id: str = Depends(get_current_user_id)):
+    from sqlalchemy import func, and_
     db = AppSessionLocal()
     db.execute(text("SET LOCAL app.current_user_id = :uid"), {"uid": user_id})
     # Join Trivia and CollectionItem to get trivias in the collection
@@ -644,9 +649,25 @@ def get_collection_items(collection_id: int, user_id: str = Depends(get_current_
     if not col:
         raise HTTPException(status_code=404, detail="Collection not found")
         
-    trivias = db.query(Trivia).join(CollectionItem).filter(CollectionItem.collection_id == collection_id).all()
+    results = db.query(
+        Trivia,
+        func.coalesce(TriviaHee.count, 0).label('user_hee_count')
+    ).join(
+        CollectionItem, Trivia.id == CollectionItem.trivia_id
+    ).outerjoin(
+        TriviaHee, and_(Trivia.id == TriviaHee.trivia_id, TriviaHee.user_id == user_id)
+    ).filter(
+        CollectionItem.collection_id == collection_id
+    ).order_by(CollectionItem.id.desc()).all()
+    
+    trivias_with_hee = []
+    for trivia, user_hee_count in results:
+        t_dict = {c.name: getattr(trivia, c.name) for c in trivia.__table__.columns}
+        t_dict['user_hee_count'] = user_hee_count
+        trivias_with_hee.append(t_dict)
+
     db.close()
-    return trivias
+    return trivias_with_hee
 
 class AddCollectionItemRequest(BaseModel):
     trivia_id: int
