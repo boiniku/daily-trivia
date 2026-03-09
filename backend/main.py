@@ -1,14 +1,37 @@
 
-from fastapi import FastAPI, Depends, HTTPException, status
+from fastapi import FastAPI, Depends, HTTPException, status, Request
 from typing import List, Optional
 from sqlalchemy.orm import Session
-from database import get_db
+from sqlalchemy import text
+from database import get_db, AppSessionLocal
 from models import Trivia, Collection, CollectionItem, DailyAssignment, TriviaHee
 import random
 import datetime
 from auth import get_current_user_id, get_optional_user_id  # Added for token verification
 from fastapi.responses import JSONResponse
 import firebase_admin
+
+# --- RLS-aware DB session dependencies ---
+def get_rls_db(user_id: str):
+    """
+    Creates a DB session that sets app.current_user_id for RLS enforcement.
+    """
+    db = AppSessionLocal()
+    try:
+        if user_id:
+            db.execute(text("SET LOCAL app.current_user_id = :uid"), {"uid": user_id})
+        yield db
+    finally:
+        db.close()
+
+def get_rls_db_for_auth_user(user_id: str = Depends(get_current_user_id)):
+    """RLS DB session for authenticated endpoints."""
+    db = AppSessionLocal()
+    try:
+        db.execute(text("SET LOCAL app.current_user_id = :uid"), {"uid": user_id})
+        yield db
+    finally:
+        db.close()
 
 app = FastAPI()
 # Force redeploy 2
@@ -66,7 +89,6 @@ def get_todays_trivia(
     date: str = None,
     include_assignments: bool = True,
     token_user_id: str = Depends(get_optional_user_id),
-    db: Session = Depends(get_db)
 ):
     """
     1. Returns a tailored list of trivia based on user_id to avoid repeats.
@@ -76,8 +98,11 @@ def get_todays_trivia(
     # Hybrid auth: prefer token-based uid, fallback to query param
     if token_user_id:
         user_id = token_user_id
-    from sqlalchemy.sql import func
     
+    # Create RLS-aware DB session with the resolved user_id
+    from sqlalchemy.sql import func
+    db = AppSessionLocal()
+
     def log(message):
         try:
             with open("backend.log", "a", encoding="utf-8") as f:
@@ -86,6 +111,9 @@ def get_todays_trivia(
             pass
 
     try:
+        if user_id:
+            db.execute(text("SET LOCAL app.current_user_id = :uid"), {"uid": user_id})
+
         # Default to Server's Effective Date if no date provided
         JST = datetime.timezone(datetime.timedelta(hours=9))
         current_time = datetime.datetime.now(JST)
@@ -119,8 +147,6 @@ def get_todays_trivia(
             
             if assignments:
                 log(f"DEBUG: Found {len(assignments)} assignments.")
-                # We want to maintain assignment creation order or ID order, but IN_ often loses order.
-                # Since assignments is a list of objects, we can sort them, though random is fine.
                 trivia_ids = [a.trivia_id for a in assignments]
                 assigned_trivias = db.query(Trivia).filter(Trivia.id.in_(trivia_ids)).all()
                 
@@ -230,13 +256,14 @@ def get_todays_trivia(
         error_msg = traceback.format_exc()
         log(f"ERROR: {error_msg}")
         raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        db.close()
 
 @app.get("/trivia/widget", response_model=List[TriviaSchema])
 def get_widget_trivia(
     user_id: str = None,
     limit: int = 3,
     date: str = None,
-    db: Session = Depends(get_db)
 ):
     """
     Endpoint for iOS Widget.
@@ -246,7 +273,12 @@ def get_widget_trivia(
     """
     from sqlalchemy.sql import func
     
+    # Create RLS-aware DB session
+    db = AppSessionLocal()
     try:
+        if user_id:
+            db.execute(text("SET LOCAL app.current_user_id = :uid"), {"uid": user_id})
+
         # Default to Server's Effective Date if no date provided
         JST = datetime.timezone(datetime.timedelta(hours=9))
         current_time = datetime.datetime.now(JST)
@@ -357,20 +389,28 @@ def get_widget_trivia(
         import traceback
         print(f"Widget endpoint error: {traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        db.close()
 
 class HistoryRequest(BaseModel):
     trivia_id: int
 
 @app.get("/trivia/{trivia_id}", response_model=TriviaSchema)
-def get_trivia_by_id(trivia_id: int, db: Session = Depends(get_db)):
-    trivia = db.query(Trivia).filter(Trivia.id == trivia_id).first()
-    if not trivia:
-        raise HTTPException(status_code=404, detail="Trivia not found")
-    return trivia
+def get_trivia_by_id(trivia_id: int):
+    db = AppSessionLocal()
+    try:
+        trivia = db.query(Trivia).filter(Trivia.id == trivia_id).first()
+        if not trivia:
+            raise HTTPException(status_code=404, detail="Trivia not found")
+        return trivia
+    finally:
+        db.close()
 
 
 @app.post("/history")
-def add_to_history(request: HistoryRequest, user_id: str = Depends(get_current_user_id), db: Session = Depends(get_db)):
+def add_to_history(request: HistoryRequest, user_id: str = Depends(get_current_user_id)):
+    db = AppSessionLocal()
+    db.execute(text("SET LOCAL app.current_user_id = :uid"), {"uid": user_id})
     try:
         # Find "History" collection for this user
         history_collection = db.query(Collection).filter(
@@ -431,9 +471,13 @@ def add_to_history(request: HistoryRequest, user_id: str = Depends(get_current_u
             pass
         print(f"Error adding to history: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to add to history: {str(e)}")
+    finally:
+        db.close()
 
 @app.get("/collections", response_model=List[CollectionSchema])
-def get_collections(user_id: str = Depends(get_current_user_id), db: Session = Depends(get_db)):
+def get_collections(user_id: str = Depends(get_current_user_id)):
+    db = AppSessionLocal()
+    db.execute(text("SET LOCAL app.current_user_id = :uid"), {"uid": user_id})
     try:
         # Fetch collections for this user
         collections = db.query(Collection).filter(Collection.user_id == user_id).all()
@@ -526,9 +570,13 @@ def get_collections(user_id: str = Depends(get_current_user_id), db: Session = D
     except Exception as e:
         print(f"Error in get_collections: {e}")
         raise HTTPException(status_code=500, detail="Failed to fetch collections")
+    finally:
+        db.close()
 
 @app.delete("/collections/{collection_id}")
-def delete_collection(collection_id: int, user_id: str = Depends(get_current_user_id), db: Session = Depends(get_db)):
+def delete_collection(collection_id: int, user_id: str = Depends(get_current_user_id)):
+    db = AppSessionLocal()
+    db.execute(text("SET LOCAL app.current_user_id = :uid"), {"uid": user_id})
     # Verify ownership
     col = db.query(Collection).filter(Collection.id == collection_id, Collection.user_id == user_id).first()
     if not col:
@@ -549,13 +597,17 @@ def delete_collection(collection_id: int, user_id: str = Depends(get_current_use
         db.rollback()
         print(f"Error deleting collection: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to delete collection: {str(e)}")
+    finally:
+        db.close()
 
 class CreateCollectionRequest(BaseModel):
     title: str
     icon: str = "folder-outline"
 
 @app.post("/collections", response_model=CollectionSchema)
-def create_collection(request: CreateCollectionRequest, user_id: str = Depends(get_current_user_id), db: Session = Depends(get_db)):
+def create_collection(request: CreateCollectionRequest, user_id: str = Depends(get_current_user_id)):
+    db = AppSessionLocal()
+    db.execute(text("SET LOCAL app.current_user_id = :uid"), {"uid": user_id})
     try:
         new_collection = Collection(
             user_id=user_id,
@@ -579,9 +631,13 @@ def create_collection(request: CreateCollectionRequest, user_id: str = Depends(g
         error_msg = traceback.format_exc()
         print(f"Error creating collection: {error_msg}")
         raise HTTPException(status_code=500, detail=f"Failed to create collection: {str(e)}")
+    finally:
+        db.close()
 
 @app.get("/collections/{collection_id}/items", response_model=List[TriviaSchema])
-def get_collection_items(collection_id: int, user_id: str = Depends(get_current_user_id), db: Session = Depends(get_db)):
+def get_collection_items(collection_id: int, user_id: str = Depends(get_current_user_id)):
+    db = AppSessionLocal()
+    db.execute(text("SET LOCAL app.current_user_id = :uid"), {"uid": user_id})
     # Join Trivia and CollectionItem to get trivias in the collection
     # Also verify collection belongs to user
     col = db.query(Collection).filter(Collection.id == collection_id, Collection.user_id == user_id).first()
@@ -589,13 +645,16 @@ def get_collection_items(collection_id: int, user_id: str = Depends(get_current_
         raise HTTPException(status_code=404, detail="Collection not found")
         
     trivias = db.query(Trivia).join(CollectionItem).filter(CollectionItem.collection_id == collection_id).all()
+    db.close()
     return trivias
 
 class AddCollectionItemRequest(BaseModel):
     trivia_id: int
 
 @app.post("/collections/{collection_id}/items")
-def add_collection_item(collection_id: int, request: AddCollectionItemRequest, user_id: str = Depends(get_current_user_id), db: Session = Depends(get_db)):
+def add_collection_item(collection_id: int, request: AddCollectionItemRequest, user_id: str = Depends(get_current_user_id)):
+    db = AppSessionLocal()
+    db.execute(text("SET LOCAL app.current_user_id = :uid"), {"uid": user_id})
     try:
         # Check if collection exists and belongs to user
         collection = db.query(Collection).filter(Collection.id == collection_id, Collection.user_id == user_id).first()
@@ -624,6 +683,8 @@ def add_collection_item(collection_id: int, request: AddCollectionItemRequest, u
     except Exception as e:
         print(f"Error adding item to collection: {e}")
         raise HTTPException(status_code=500, detail="Failed to add item")
+    finally:
+        db.close()
 
 # --- Hee Button Endpoints ---
 
@@ -631,7 +692,9 @@ class HeeRequest(BaseModel):
     count: int = 1 # Number of times pressed in this batch
 
 @app.post("/trivia/{trivia_id}/hee")
-def add_hee(trivia_id: int, request: HeeRequest, user_id: str = Depends(get_current_user_id), db: Session = Depends(get_db)):
+def add_hee(trivia_id: int, request: HeeRequest, user_id: str = Depends(get_current_user_id)):
+    db = AppSessionLocal()
+    db.execute(text("SET LOCAL app.current_user_id = :uid"), {"uid": user_id})
     try:
         # 1. Check if user has already hit limit for this trivia
         existing_hee = db.query(TriviaHee).filter(
@@ -662,13 +725,12 @@ def add_hee(trivia_id: int, request: HeeRequest, user_id: str = Depends(get_curr
             )
             db.add(new_hee)
         
-        # 3. Update total count on Trivia
-        trivia = db.query(Trivia).filter(Trivia.id == trivia_id).first()
-        if trivia:
-            trivia.hee_count = (trivia.hee_count or 0) + to_add
-            total_count = trivia.hee_count
-        else:
-            total_count = 0
+        # 3. Update total count via SECURITY DEFINER function (app_user can't UPDATE trivia directly)
+        result = db.execute(
+            text("SELECT increment_hee_count(:tid, :amt)"),
+            {"tid": trivia_id, "amt": to_add}
+        )
+        total_count = result.scalar() or 0
 
         db.commit()
 
@@ -681,9 +743,13 @@ def add_hee(trivia_id: int, request: HeeRequest, user_id: str = Depends(get_curr
     except Exception as e:
         print(f"Error adding Hee: {e}")
         raise HTTPException(status_code=500, detail="Failed to add Hee")
+    finally:
+        db.close()
 
 @app.get("/trivia/{trivia_id}/hee")
-def get_hee_status(trivia_id: int, user_id: str = Depends(get_current_user_id), db: Session = Depends(get_db)):
+def get_hee_status(trivia_id: int, user_id: str = Depends(get_current_user_id)):
+    db = AppSessionLocal()
+    db.execute(text("SET LOCAL app.current_user_id = :uid"), {"uid": user_id})
     try:
         # Get total count
         trivia = db.query(Trivia).filter(Trivia.id == trivia_id).first()
@@ -703,17 +769,21 @@ def get_hee_status(trivia_id: int, user_id: str = Depends(get_current_user_id), 
     except Exception as e:
         print(f"Error getting Hee status: {e}")
         raise HTTPException(status_code=500, detail="Failed to get Hee status")
+    finally:
+        db.close()
 
 # --- Cleanup Endpoint ---
 @app.delete("/admin/cleanup-assignments")
 def cleanup_old_assignments(
     days: int = 30,
-    db: Session = Depends(get_db)
 ):
     """
     Delete DailyAssignments older than N days to prevent table bloat.
     Call periodically (e.g. weekly via external cron).
     """
+    # Admin endpoint uses owner connection (bypasses RLS)
+    from database import SessionLocal
+    db = SessionLocal()
     try:
         cutoff = datetime.date.today() - datetime.timedelta(days=days)
         deleted = db.query(DailyAssignment).filter(
@@ -724,3 +794,5 @@ def cleanup_old_assignments(
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        db.close()

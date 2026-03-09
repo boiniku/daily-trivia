@@ -9,7 +9,8 @@ from typing import List
 # Add parent directory to path to import models and database
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from database import get_db
+from database import AppSessionLocal
+from sqlalchemy import text
 from models import TriviaHee, Collection, CollectionItem, DailyAssignment
 from auth import get_current_user_id
 
@@ -19,7 +20,7 @@ class MergeRequest(BaseModel):
     guest_user_id: str
 
 @router.post("/auth/merge")
-def merge_guest_data(request: MergeRequest, auth_user_id: str = Depends(get_current_user_id), db: Session = Depends(get_db)):
+def merge_guest_data(request: MergeRequest, auth_user_id: str = Depends(get_current_user_id)):
     """
     Merge guest data into authenticated user account.
     """
@@ -32,6 +33,9 @@ def merge_guest_data(request: MergeRequest, auth_user_id: str = Depends(get_curr
     if guest_id == auth_id:
         return {"message": "Same user ID, nothing to merge"}
 
+    # Use admin connection for merge (needs access to both guest and auth user data)
+    from database import SessionLocal
+    db = SessionLocal()
     try:
         # 1. Merge TriviaHee (Hees)
         # Get all guest hees
@@ -165,15 +169,20 @@ def merge_guest_data(request: MergeRequest, auth_user_id: str = Depends(get_curr
         db.rollback()
         print(f"Merge error: {e}")
         raise HTTPException(status_code=500, detail=f"Merge failed: {str(e)}")
+    finally:
+        db.close()
 
 @router.delete("/auth/user")
-def delete_user(user_id: str = Depends(get_current_user_id), db: Session = Depends(get_db)):
+def delete_user(user_id: str = Depends(get_current_user_id)):
     """
     Delete all data associated with a user.
     """
     if not user_id:
         raise HTTPException(status_code=400, detail="user_id is required")
 
+    # Use admin connection for delete (needs to clean up all user data)
+    from database import SessionLocal
+    db = SessionLocal()
     try:
         # 1. Delete DailyAssignments
         db.query(DailyAssignment).filter(DailyAssignment.user_id == user_id).delete()
@@ -194,3 +203,5 @@ def delete_user(user_id: str = Depends(get_current_user_id), db: Session = Depen
         db.rollback()
         print(f"Delete user error: {e}")
         raise HTTPException(status_code=500, detail=f"Delete failed: {str(e)}")
+    finally:
+        db.close()
