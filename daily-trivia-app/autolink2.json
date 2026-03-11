@@ -1,0 +1,720 @@
+{
+  "widget-control": {
+    "name": "widget-control",
+    "path": "C:\\Users\\登田京太朗\\Desktop\\programing\\python\\毎日雑学\\daily-trivia-app\\modules\\widget-control",
+    "version": "1.0.0",
+    "config": {
+      "platforms": [
+        "ios"
+      ],
+      "ios": {
+        "modules": [
+          "WidgetControlModule"
+        ]
+      }
+    },
+    "duplicates": []
+  },
+  "@bacons/apple-targets": {
+    "name": "@bacons/apple-targets",
+    "path": "C:\\Users\\登田京太朗\\Desktop\\programing\\python\\毎日雑学\\daily-trivia-app\\node_modules\\@bacons\\apple-targets",
+    "version": "4.0.0",
+    "config": {
+      "platforms": [
+        "ios"
+      ],
+      "ios": {
+        "modules": [
+          "ExtensionStorageModule"
+        ]
+      }
+    },
+    "duplicates": []
+  },
+  "expo": {
+    "name": "expo",
+    "path": "C:\\Users\\登田京太朗\\Desktop\\programing\\python\\毎日雑学\\daily-trivia-app\\node_modules\\expo",
+    "version": "54.0.33",
+    "config": {
+      "platforms": [
+        "apple",
+        "android"
+      ],
+      "apple": {
+        "modules": [
+          "ExpoFetchModule"
+        ],
+        "podspecPath": "Expo.podspec"
+      },
+      "android": {
+        "modules": [
+          "expo.modules.fetch.ExpoFetchModule"
+        ]
+      }
+    },
+    "duplicates": []
+  },
+  "expo-apple-authentication": {
+    "name": "expo-apple-authentication",
+    "path": "C:\\Users\\登田京太朗\\Desktop\\programing\\python\\毎日雑学\\daily-trivia-app\\node_modules\\expo-apple-authentication",
+    "version": "8.0.8",
+    "config": {
+      "platforms": [
+        "apple"
+      ],
+      "apple": {
+        "modules": [
+          "AppleAuthenticationModule"
+        ]
+      }
+    },
+    "duplicates": []
+  },
+  "expo-background-fetch": {
+    "name": "expo-background-fetch",
+    "path": "C:\\Users\\登田京太朗\\Desktop\\programing\\python\\毎日雑学\\daily-trivia-app\\node_modules\\expo-background-fetch",
+    "version": "14.0.9",
+    "config": {
+      "platforms": [
+        "apple",
+        "android"
+      ],
+      "apple": {
+        "modules": [
+          "BackgroundFetchModule"
+        ]
+      },
+      "android": {
+        "modules": [
+          "expo.modules.backgroundfetch.BackgroundFetchModule"
+        ],
+        "publication": {
+          "groupId": "host.exp.exponent",
+          "artifactId": "expo.modules.backgroundfetch",
+          "version": "14.0.9",
+          "repository": "local-maven-repo"
+        }
+      }
+    },
+    "duplicates": []
+  },
+  "expo-constants": {
+    "name": "expo-constants",
+    "path": "C:\\Users\\登田京太朗\\Desktop\\programing\\python\\毎日雑学\\daily-trivia-app\\node_modules\\expo-constants",
+    "version": "18.0.13",
+    "config": {
+      "platforms": [
+        "apple",
+        "android",
+        "web"
+      ],
+      "apple": {
+        "modules": [
+          "ConstantsModule"
+        ]
+      },
+      "android": {
+        "modules": [
+          "expo.modules.constants.ConstantsModule"
+        ]
+      }
+    },
+    "duplicates": []
+  },
+  "expo-crypto": {
+    "name": "expo-crypto",
+    "path": "C:\\Users\\登田京太朗\\Desktop\\programing\\python\\毎日雑学\\daily-trivia-app\\node_modules\\expo-crypto",
+    "version": "15.0.8",
+    "config": {
+      "platforms": [
+        "apple",
+        "android"
+      ],
+      "apple": {
+        "modules": [
+          "CryptoModule"
+        ]
+      },
+      "android": {
+        "modules": [
+          "expo.modules.crypto.CryptoModule"
+        ],
+        "publication": {
+          "groupId": "host.exp.exponent",
+          "artifactId": "expo.modules.crypto",
+          "version": "15.0.8",
+          "repository": "local-maven-repo"
+        }
+      }
+    },
+    "duplicates": []
+  },
+  "expo-dev-client": {
+    "name": "expo-dev-client",
+    "path": "C:\\Users\\登田京太朗\\Desktop\\programing\\python\\毎日雑学\\daily-trivia-app\\node_modules\\expo-dev-client",
+    "version": "6.0.20",
+    "config": {
+      "platforms": [
+        "apple",
+        "android"
+      ]
+    },
+    "duplicates": []
+  },
+  "expo-font": {
+    "name": "expo-font",
+    "path": "C:\\Users\\登田京太朗\\Desktop\\programing\\python\\毎日雑学\\daily-trivia-app\\node_modules\\expo-font",
+    "version": "14.0.11",
+    "config": {
+      "platforms": [
+        "apple",
+        "android",
+        "web"
+      ],
+      "apple": {
+        "modules": [
+          "FontLoaderModule",
+          "FontUtilsModule"
+        ]
+      },
+      "android": {
+        "modules": [
+          "expo.modules.font.FontLoaderModule",
+          "expo.modules.font.FontUtilsModule"
+        ],
+        "publication": {
+          "groupId": "host.exp.exponent",
+          "artifactId": "expo.modules.font",
+          "version": "14.0.11",
+          "repository": "local-maven-repo"
+        }
+      }
+    },
+    "duplicates": []
+  },
+  "expo-haptics": {
+    "name": "expo-haptics",
+    "path": "C:\\Users\\登田京太朗\\Desktop\\programing\\python\\毎日雑学\\daily-trivia-app\\node_modules\\expo-haptics",
+    "version": "15.0.8",
+    "config": {
+      "platforms": [
+        "apple",
+        "android"
+      ],
+      "apple": {
+        "modules": [
+          "HapticsModule"
+        ]
+      },
+      "android": {
+        "modules": [
+          "expo.modules.haptics.HapticsModule"
+        ],
+        "publication": {
+          "groupId": "host.exp.exponent",
+          "artifactId": "expo.modules.haptics",
+          "version": "15.0.8",
+          "repository": "local-maven-repo"
+        }
+      }
+    },
+    "duplicates": []
+  },
+  "expo-image-picker": {
+    "name": "expo-image-picker",
+    "path": "C:\\Users\\登田京太朗\\Desktop\\programing\\python\\毎日雑学\\daily-trivia-app\\node_modules\\expo-image-picker",
+    "version": "17.0.10",
+    "config": {
+      "platforms": [
+        "apple",
+        "android"
+      ],
+      "apple": {
+        "modules": [
+          "ImagePickerModule"
+        ]
+      },
+      "android": {
+        "modules": [
+          "expo.modules.imagepicker.ImagePickerModule"
+        ],
+        "publication": {
+          "groupId": "host.exp.exponent",
+          "artifactId": "expo.modules.imagepicker",
+          "version": "17.0.10",
+          "repository": "local-maven-repo"
+        }
+      }
+    },
+    "duplicates": []
+  },
+  "expo-linking": {
+    "name": "expo-linking",
+    "path": "C:\\Users\\登田京太朗\\Desktop\\programing\\python\\毎日雑学\\daily-trivia-app\\node_modules\\expo-linking",
+    "version": "8.0.11",
+    "config": {
+      "platforms": [
+        "apple",
+        "android",
+        "web"
+      ],
+      "apple": {
+        "modules": [
+          "ExpoLinkingModule"
+        ],
+        "appDelegateSubscribers": [
+          "LinkingAppDelegateSubscriber"
+        ]
+      },
+      "android": {
+        "modules": [
+          "expo.modules.linking.ExpoLinkingModule"
+        ],
+        "publication": {
+          "groupId": "host.exp.exponent",
+          "artifactId": "expo.modules.linking",
+          "version": "8.0.11",
+          "repository": "local-maven-repo"
+        }
+      }
+    },
+    "duplicates": []
+  },
+  "expo-router": {
+    "name": "expo-router",
+    "path": "C:\\Users\\登田京太朗\\Desktop\\programing\\python\\毎日雑学\\daily-trivia-app\\node_modules\\expo-router",
+    "version": "6.0.23",
+    "config": {
+      "platforms": [
+        "apple",
+        "web"
+      ],
+      "apple": {
+        "modules": [
+          "ExpoHeadModule",
+          "LinkPreviewNativeModule"
+        ],
+        "appDelegateSubscribers": [
+          "ExpoHeadAppDelegateSubscriber"
+        ]
+      }
+    },
+    "duplicates": []
+  },
+  "expo-store-review": {
+    "name": "expo-store-review",
+    "path": "C:\\Users\\登田京太朗\\Desktop\\programing\\python\\毎日雑学\\daily-trivia-app\\node_modules\\expo-store-review",
+    "version": "9.0.9",
+    "config": {
+      "platforms": [
+        "apple",
+        "android"
+      ],
+      "apple": {
+        "modules": [
+          "StoreReviewModule"
+        ]
+      },
+      "android": {
+        "modules": [
+          "expo.modules.storereview.StoreReviewModule"
+        ],
+        "publication": {
+          "groupId": "host.exp.exponent",
+          "artifactId": "expo.modules.storereview",
+          "version": "9.0.9",
+          "repository": "local-maven-repo"
+        }
+      }
+    },
+    "duplicates": []
+  },
+  "expo-system-ui": {
+    "name": "expo-system-ui",
+    "path": "C:\\Users\\登田京太朗\\Desktop\\programing\\python\\毎日雑学\\daily-trivia-app\\node_modules\\expo-system-ui",
+    "version": "6.0.9",
+    "config": {
+      "platforms": [
+        "apple",
+        "android"
+      ],
+      "apple": {
+        "modules": [
+          "ExpoSystemUIModule"
+        ]
+      },
+      "android": {
+        "modules": [
+          "expo.modules.systemui.SystemUIModule"
+        ],
+        "publication": {
+          "groupId": "host.exp.exponent",
+          "artifactId": "expo.modules.systemui",
+          "version": "6.0.9",
+          "repository": "local-maven-repo"
+        }
+      }
+    },
+    "duplicates": []
+  },
+  "expo-task-manager": {
+    "name": "expo-task-manager",
+    "path": "C:\\Users\\登田京太朗\\Desktop\\programing\\python\\毎日雑学\\daily-trivia-app\\node_modules\\expo-task-manager",
+    "version": "14.0.9",
+    "config": {
+      "platforms": [
+        "apple",
+        "android"
+      ],
+      "android": {
+        "modules": [
+          "expo.modules.taskManager.TaskManagerModule"
+        ],
+        "publication": {
+          "groupId": "host.exp.exponent",
+          "artifactId": "expo.modules.taskmanager",
+          "version": "14.0.9",
+          "repository": "local-maven-repo"
+        }
+      }
+    },
+    "duplicates": []
+  },
+  "expo-updates": {
+    "name": "expo-updates",
+    "path": "C:\\Users\\登田京太朗\\Desktop\\programing\\python\\毎日雑学\\daily-trivia-app\\node_modules\\expo-updates",
+    "version": "29.0.16",
+    "config": {
+      "platforms": [
+        "apple",
+        "android"
+      ],
+      "apple": {
+        "modules": [
+          "UpdatesModule"
+        ],
+        "reactDelegateHandlers": [
+          "ExpoUpdatesReactDelegateHandler"
+        ]
+      },
+      "android": {
+        "modules": [
+          "expo.modules.updates.UpdatesModule"
+        ],
+        "gradlePlugins": [
+          {
+            "id": "expo-updates-gradle-plugin",
+            "group": "expo.modules",
+            "sourceDir": "expo-updates-gradle-plugin"
+          }
+        ]
+      }
+    },
+    "duplicates": []
+  },
+  "expo-asset": {
+    "name": "expo-asset",
+    "path": "C:\\Users\\登田京太朗\\Desktop\\programing\\python\\毎日雑学\\daily-trivia-app\\node_modules\\expo\\node_modules\\expo-asset",
+    "version": "12.0.12",
+    "config": {
+      "platforms": [
+        "apple",
+        "android",
+        "web"
+      ],
+      "apple": {
+        "modules": [
+          "AssetModule"
+        ]
+      },
+      "android": {
+        "modules": [
+          "expo.modules.asset.AssetModule"
+        ],
+        "publication": {
+          "groupId": "expo.modules.asset",
+          "artifactId": "expo.modules.asset",
+          "version": "12.0.12",
+          "repository": "local-maven-repo"
+        }
+      }
+    },
+    "duplicates": []
+  },
+  "expo-file-system": {
+    "name": "expo-file-system",
+    "path": "C:\\Users\\登田京太朗\\Desktop\\programing\\python\\毎日雑学\\daily-trivia-app\\node_modules\\expo\\node_modules\\expo-file-system",
+    "version": "19.0.21",
+    "config": {
+      "platforms": [
+        "apple",
+        "android"
+      ],
+      "apple": {
+        "modules": [
+          "FileSystemModule",
+          "FileSystemLegacyModule"
+        ],
+        "appDelegateSubscribers": [
+          "FileSystemBackgroundSessionHandler"
+        ]
+      },
+      "android": {
+        "modules": [
+          "expo.modules.filesystem.FileSystemModule",
+          "expo.modules.filesystem.legacy.FileSystemLegacyModule"
+        ],
+        "publication": {
+          "groupId": "host.exp.exponent",
+          "artifactId": "expo.modules.filesystem",
+          "version": "19.0.21",
+          "repository": "local-maven-repo"
+        }
+      }
+    },
+    "duplicates": []
+  },
+  "expo-keep-awake": {
+    "name": "expo-keep-awake",
+    "path": "C:\\Users\\登田京太朗\\Desktop\\programing\\python\\毎日雑学\\daily-trivia-app\\node_modules\\expo\\node_modules\\expo-keep-awake",
+    "version": "15.0.8",
+    "config": {
+      "platforms": [
+        "apple",
+        "android"
+      ],
+      "apple": {
+        "modules": [
+          "KeepAwakeModule"
+        ]
+      },
+      "android": {
+        "modules": [
+          "expo.modules.keepawake.KeepAwakeModule"
+        ],
+        "publication": {
+          "groupId": "host.exp.exponent",
+          "artifactId": "expo.modules.keepawake",
+          "version": "15.0.8",
+          "repository": "local-maven-repo"
+        }
+      }
+    },
+    "duplicates": []
+  },
+  "expo-modules-core": {
+    "name": "expo-modules-core",
+    "path": "C:\\Users\\登田京太朗\\Desktop\\programing\\python\\毎日雑学\\daily-trivia-app\\node_modules\\expo-modules-core",
+    "version": "3.0.29",
+    "config": {
+      "platforms": [
+        "apple",
+        "android"
+      ],
+      "apple": {
+        "podspecPath": "./ExpoModulesCore.podspec"
+      },
+      "android": {
+        "gradlePlugins": [
+          {
+            "id": "expo-module-gradle-plugin",
+            "group": "expo.modules",
+            "sourceDir": "expo-module-gradle-plugin",
+            "applyToRootProject": false
+          }
+        ]
+      }
+    },
+    "duplicates": [
+      {
+        "name": "expo-modules-core",
+        "path": "C:\\Users\\登田京太朗\\Desktop\\programing\\python\\毎日雑学\\daily-trivia-app\\modules\\widget-control\\node_modules\\expo-modules-core",
+        "version": "2.0.6"
+      }
+    ]
+  },
+  "expo-dev-launcher": {
+    "name": "expo-dev-launcher",
+    "path": "C:\\Users\\登田京太朗\\Desktop\\programing\\python\\毎日雑学\\daily-trivia-app\\node_modules\\expo-dev-launcher",
+    "version": "6.0.20",
+    "config": {
+      "platforms": [
+        "apple",
+        "android"
+      ],
+      "apple": {
+        "podspecPath": "expo-dev-launcher.podspec",
+        "swiftModuleName": "EXDevLauncher",
+        "appDelegateSubscribers": [
+          "ExpoDevLauncherAppDelegateSubscriber"
+        ],
+        "reactDelegateHandlers": [
+          "ExpoDevLauncherReactDelegateHandler"
+        ],
+        "debugOnly": true
+      },
+      "android": {
+        "gradlePlugins": [
+          {
+            "id": "expo-dev-launcher-gradle-plugin",
+            "group": "expo.modules",
+            "sourceDir": "expo-dev-launcher-gradle-plugin"
+          }
+        ]
+      }
+    },
+    "duplicates": []
+  },
+  "expo-dev-menu": {
+    "name": "expo-dev-menu",
+    "path": "C:\\Users\\登田京太朗\\Desktop\\programing\\python\\毎日雑学\\daily-trivia-app\\node_modules\\expo-dev-menu",
+    "version": "7.0.18",
+    "config": {
+      "platforms": [
+        "apple",
+        "android"
+      ],
+      "apple": {
+        "podspecPath": "expo-dev-menu.podspec",
+        "swiftModuleName": "EXDevMenu",
+        "modules": [
+          "DevMenuModule",
+          "DevMenuInternalModule",
+          "DevMenuPreferences"
+        ],
+        "reactDelegateHandlers": [
+          "ExpoDevMenuReactDelegateHandler"
+        ],
+        "debugOnly": true
+      },
+      "android": {
+        "modules": [
+          "expo.modules.devmenu.modules.DevMenuModule"
+        ]
+      }
+    },
+    "duplicates": []
+  },
+  "expo-dev-menu-interface": {
+    "name": "expo-dev-menu-interface",
+    "path": "C:\\Users\\登田京太朗\\Desktop\\programing\\python\\毎日雑学\\daily-trivia-app\\node_modules\\expo-dev-menu-interface",
+    "version": "2.0.0",
+    "config": {
+      "platforms": [
+        "apple",
+        "android"
+      ]
+    },
+    "duplicates": []
+  },
+  "expo-manifests": {
+    "name": "expo-manifests",
+    "path": "C:\\Users\\登田京太朗\\Desktop\\programing\\python\\毎日雑学\\daily-trivia-app\\node_modules\\expo-manifests",
+    "version": "1.0.10",
+    "config": {
+      "platforms": [
+        "apple",
+        "android"
+      ]
+    },
+    "duplicates": []
+  },
+  "expo-updates-interface": {
+    "name": "expo-updates-interface",
+    "path": "C:\\Users\\登田京太朗\\Desktop\\programing\\python\\毎日雑学\\daily-trivia-app\\node_modules\\expo-updates-interface",
+    "version": "2.0.0",
+    "config": {
+      "platforms": [
+        "apple",
+        "android"
+      ]
+    },
+    "duplicates": []
+  },
+  "expo-json-utils": {
+    "name": "expo-json-utils",
+    "path": "C:\\Users\\登田京太朗\\Desktop\\programing\\python\\毎日雑学\\daily-trivia-app\\node_modules\\expo-json-utils",
+    "version": "0.15.0",
+    "config": {
+      "platforms": [
+        "apple",
+        "android"
+      ]
+    },
+    "duplicates": []
+  },
+  "expo-image-loader": {
+    "name": "expo-image-loader",
+    "path": "C:\\Users\\登田京太朗\\Desktop\\programing\\python\\毎日雑学\\daily-trivia-app\\node_modules\\expo-image-loader",
+    "version": "6.0.0",
+    "config": {
+      "platforms": [
+        "apple",
+        "android"
+      ],
+      "android": {
+        "publication": {
+          "groupId": "host.exp.exponent",
+          "artifactId": "expo.modules.imageloader",
+          "version": "6.0.0",
+          "repository": "local-maven-repo"
+        }
+      }
+    },
+    "duplicates": []
+  },
+  "unimodules-app-loader": {
+    "name": "unimodules-app-loader",
+    "path": "C:\\Users\\登田京太朗\\Desktop\\programing\\python\\毎日雑学\\daily-trivia-app\\node_modules\\unimodules-app-loader",
+    "version": "6.0.8",
+    "config": {
+      "platforms": [
+        "apple",
+        "android"
+      ],
+      "android": {
+        "publication": {
+          "groupId": "host.exp.exponent",
+          "artifactId": "org.unimodules.apploader",
+          "version": "6.0.8",
+          "repository": "local-maven-repo"
+        }
+      }
+    },
+    "duplicates": []
+  },
+  "expo-eas-client": {
+    "name": "expo-eas-client",
+    "path": "C:\\Users\\登田京太朗\\Desktop\\programing\\python\\毎日雑学\\daily-trivia-app\\node_modules\\expo-eas-client",
+    "version": "1.0.8",
+    "config": {
+      "platforms": [
+        "apple",
+        "android"
+      ],
+      "apple": {
+        "modules": [
+          "EASClientModule"
+        ]
+      },
+      "android": {
+        "modules": [
+          "expo.modules.easclient.EASClientModule"
+        ]
+      }
+    },
+    "duplicates": []
+  },
+  "expo-structured-headers": {
+    "name": "expo-structured-headers",
+    "path": "C:\\Users\\登田京太朗\\Desktop\\programing\\python\\毎日雑学\\daily-trivia-app\\node_modules\\expo-structured-headers",
+    "version": "5.0.0",
+    "config": {
+      "platforms": [
+        "apple",
+        "android"
+      ]
+    },
+    "duplicates": []
+  }
+}

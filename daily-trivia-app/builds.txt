@@ -1,0 +1,41 @@
+
+Builds for @boiniku/daily-trivia-app:
+
+ID                       fa0a471f-3215-43d2-8e66-837a5cbae191
+Platform                 iOS
+Status                   finished
+Profile                  production
+Distribution             store
+Channel                  production
+SDK Version              54.0.0
+Runtime Version          1.0.27
+Version                  1.0.27
+Build number             132
+Commit                   9d38cc5b299e90783dd595bc5efb53904e5dc653
+Logs                     https://expo.dev/accounts/boiniku/projects/daily-trivia-app/builds/fa0a471f-3215-43d2-8e66-837a5cbae191
+Application Archive URL  https://expo.dev/artifacts/eas/wSNWFwY7u2nzD2dNbGGmpc.ipa
+Build Artifacts URL      null
+Fingerprint              66a0a3f17342bfb292d1963fe93c46017c3785d6
+Started at               2026/3/11 18:24:05
+Finished at              2026/3/11 18:29:27
+Started by               boiniku
+
+窶披披・
+ID                       9b2b2657-d6bb-498d-926d-d9316e33954e
+Platform                 iOS
+Status                   finished
+Profile                  production
+Distribution             store
+Channel                  production
+SDK Version              54.0.0
+Runtime Version          1.0.26
+Version                  1.0.26
+Build number             131
+Commit                   76894ff0bb80f30933c956e0434ddf1fd836bd7f
+Logs                     https://expo.dev/accounts/boiniku/projects/daily-trivia-app/builds/9b2b2657-d6bb-498d-926d-d9316e33954e
+Application Archive URL  https://expo.dev/artifacts/eas/kakby9dd4WWhoC6jBX8HR9.ipa
+Build Artifacts URL      null
+Fingerprint              b78dccdba22d18b00ac1bff4be5c878d4532eeca
+Started at               2026/3/11 17:41:39
+Finished at              2026/3/11 17:47:00
+Started by               boiniku
