@@ -10,9 +10,10 @@ import { fetchWithToken } from '../utils/apiClient';
 interface HeeButtonProps {
     triviaId: number;
     initialTotalCount?: number;
+    onHeeAdded?: (count: number) => void;
 }
 
-export default function HeeButton({ triviaId, initialTotalCount = 0 }: HeeButtonProps) {
+export default function HeeButton({ triviaId, initialTotalCount = 0, onHeeAdded }: HeeButtonProps) {
     const [totalCount, setTotalCount] = useState(initialTotalCount);
     const [userCount, setUserCount] = useState(0);
     const [loading, setLoading] = useState(true);

@@ -10,11 +10,11 @@ struct TriviaData: Codable {
 
 struct Provider: TimelineProvider {
     func placeholder(in context: Context) -> TriviaEntry {
-        TriviaEntry(date: Date(), id: 0, title: "雑学のタイトル", content: "ここに雑学の内容が表示されます。", theme: .morning)
+        TriviaEntry(date: Date(), id: 0, title: "雑学のタイトル", content: "ここに雑学の内容が表示されます。", theme: .morning, displayTheme: "standard")
     }
 
     func getSnapshot(in context: Context, completion: @escaping (TriviaEntry) -> ()) {
-        let entry = TriviaEntry(date: Date(), id: 0, title: "富士山の高さ", content: "富士山の高さは3776メートルです。", theme: .noon)
+        let entry = TriviaEntry(date: Date(), id: 0, title: "富士山の高さ", content: "富士山の高さは3776メートルです。", theme: .noon, displayTheme: "standard")
         completion(entry)
     }
 
@@ -26,6 +26,18 @@ struct Provider: TimelineProvider {
         // App Group defaults
         let userDefaults = UserDefaults(suiteName: "group.com.dailytrivia.app")
         let triviaJson = userDefaults?.string(forKey: "daily_trivia")
+        let displayTheme = userDefaults?.string(forKey: "widget_theme") ?? "standard"
+        
+        // Load timestamp to bust image cache
+        var imageTimestamp: Double = 0
+        if displayTheme == "custom" {
+            imageTimestamp = userDefaults?.double(forKey: "widget_theme_image_custom_timestamp") ?? Date().timeIntervalSince1970
+        } else if displayTheme == "rpg" || displayTheme == "cat" {
+            // For time-variant themes, we just grab a generic timestamp. The variant timestamp can be managed during image download/save.
+            imageTimestamp = userDefaults?.double(forKey: "widget_theme_image_\(displayTheme)_timestamp") ?? Date().timeIntervalSince1970
+        } else {
+            imageTimestamp = userDefaults?.double(forKey: "widget_theme_image_\(displayTheme)_timestamp") ?? Date().timeIntervalSince1970
+        }
         
         var triviaList: [TriviaData] = []
         var staleFallbackList: [TriviaData] = [] // Keep stale data as fallback
@@ -74,7 +86,9 @@ struct Provider: TimelineProvider {
                     id: 0,
                     title: "読み込み中...",
                     content: "アプリを一度開いてください。",
-                    theme: .morning
+                    theme: .morning,
+                    displayTheme: displayTheme,
+                    imageTimestamp: imageTimestamp
                  )
                  
                  let nextUpdate = calendar.date(byAdding: .minute, value: 5, to: currentDate)!
@@ -86,7 +100,7 @@ struct Provider: TimelineProvider {
             // Valid User ID exists, proceed to fetch
             triviaList = [] // Clear old data
             var urlString = "https://daily-trivia-e7ge.onrender.com/trivia/widget?date=\(todayStr)"
-            if let uid = userId, !uid.isEmpty {
+            if let uid = userId, !uid.isEmpty, uid != "widget_guest" {
                 urlString += "&user_id=\(uid)"
             }
             
@@ -175,7 +189,9 @@ struct Provider: TimelineProvider {
                     id: 0,
                     title: "読み込み失敗",
                     content: "アプリを一度開いて\nデータを更新してください。",
-                    theme: .morning
+                    theme: .morning,
+                    displayTheme: displayTheme,
+                    imageTimestamp: imageTimestamp
                  )
                  let nextUpdate = calendar.date(byAdding: .minute, value: 15, to: currentDate)!
                  let timeline = Timeline(entries: [errorEntry], policy: .after(nextUpdate))
@@ -218,7 +234,9 @@ struct Provider: TimelineProvider {
                 id: 0,
                 title: "今日の雑学を準備中...",
                 content: "新しい雑学を探しています。\nもう少々お待ちください…！\n(アプリを開くと早く更新されることがあります)",
-                theme: currentTheme
+                theme: currentTheme,
+                displayTheme: displayTheme,
+                imageTimestamp: imageTimestamp
             )
             entries.append(comfortingEntry)
         } else {
@@ -230,7 +248,9 @@ struct Provider: TimelineProvider {
                     id: triviaList[0].id,
                     title: triviaList[0].title,
                     content: triviaList[0].content,
-                    theme: .morning
+                    theme: .morning,
+                    displayTheme: displayTheme,
+                    imageTimestamp: imageTimestamp
                 )
                 entries.append(morningEntry)
             } else if entries.isEmpty && currentDate < noonDate {
@@ -241,7 +261,9 @@ struct Provider: TimelineProvider {
                     id: triviaList[0].id,
                     title: triviaList[0].title,
                     content: triviaList[0].content,
-                    theme: .morning
+                    theme: .morning,
+                    displayTheme: displayTheme,
+                    imageTimestamp: imageTimestamp
                 )
                 entries.append(morningNowEntry)
             }
@@ -253,7 +275,9 @@ struct Provider: TimelineProvider {
                     id: triviaList[1].id,
                     title: triviaList[1].title,
                     content: triviaList[1].content,
-                    theme: .noon
+                    theme: .noon,
+                    displayTheme: displayTheme,
+                    imageTimestamp: imageTimestamp
                 )
                 entries.append(noonEntry)
             } else if entries.isEmpty && currentDate < nightDate {
@@ -263,7 +287,9 @@ struct Provider: TimelineProvider {
                     id: triviaList[1].id,
                     title: triviaList[1].title,
                     content: triviaList[1].content,
-                    theme: .noon
+                    theme: .noon,
+                    displayTheme: displayTheme,
+                    imageTimestamp: imageTimestamp
                 )
                 entries.append(noonNowEntry)
             }
@@ -275,7 +301,9 @@ struct Provider: TimelineProvider {
                     id: triviaList[2].id,
                     title: triviaList[2].title,
                     content: triviaList[2].content,
-                    theme: .night
+                    theme: .night,
+                    displayTheme: displayTheme,
+                    imageTimestamp: imageTimestamp
                 )
                 entries.append(nightEntry)
             } else if entries.isEmpty {
@@ -285,7 +313,9 @@ struct Provider: TimelineProvider {
                     id: triviaList[2].id,
                     title: triviaList[2].title,
                     content: triviaList[2].content,
-                    theme: .night
+                    theme: .night,
+                    displayTheme: displayTheme,
+                    imageTimestamp: imageTimestamp
                 )
                 entries.append(nightNowEntry)
             }
@@ -316,46 +346,70 @@ struct TriviaEntry: TimelineEntry {
     let title: String
     let content: String
     let theme: TriviaTheme
+    let displayTheme: String // "standard", "light", "dark"
+    var imageTimestamp: Double = 0 // Used to bust image cache
 }
 
 struct TriviaWidgetEntryView : View {
     var entry: Provider.Entry
 
     var body: some View {
+        let isLight = entry.displayTheme == "light"
+        let isDark = entry.displayTheme == "dark"
+        let isRpg = entry.displayTheme == "rpg"
+        let isCat = entry.displayTheme == "cat"
+        let isCustom = entry.displayTheme == "custom"
+        
+        let titleColor: Color = isLight ? Color(white: 0.1) : .white
+        let contentColor: Color = isLight ? Color(white: 0.3) : .white
+        let badgeBgColor: Color = isLight ? Color(white: 0.95) : (isDark ? Color(white: 0.17) : (isRpg ? .black : Color.black.opacity(0.2)))
+        let badgeTextColor: Color = isLight ? Color(white: 0.2) : .white.opacity(0.9)
+        let hasShadow = entry.displayTheme == "standard" || isCustom
+        let shadowRad: CGFloat = hasShadow ? 2 : 0
+        let customFontName = (isRpg) ? "DotGothic16-Regular" : ""
+        
         ZStack {
-            // 背景 (Storybook Style)
-            BackgroundView(theme: entry.theme)
+            BackgroundView(theme: entry.theme, displayTheme: entry.displayTheme, imageTimestamp: entry.imageTimestamp)
+                .id(entry.imageTimestamp) // Force SwiftUI redraw on timestamp update
             
-            // コンテンツ
             VStack(alignment: .leading, spacing: 5) {
-                Text(entry.themeTitle)
-                    .font(.caption)
-                    .fontWeight(.bold)
-                    .foregroundColor(.white.opacity(0.9))
+                Text(entry.displayTheme == "standard" ? entry.themeTitle : (isRpg ? "▼ まいにちざつがく" : (isCustom ? "✨ 毎日雑学" : "💡 毎日雑学")))
+                    .font(customFontName.isEmpty ? .caption : .custom(customFontName, size: 12))
+                    .fontWeight(customFontName.isEmpty ? .bold : .regular)
+                    .foregroundColor(badgeTextColor)
                     .padding(.horizontal, 8)
                     .padding(.vertical, 4)
-                    .background(Color.black.opacity(0.2))
-                    .cornerRadius(8)
+                    .background(badgeBgColor)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: isRpg ? 0 : 8)
+                            .stroke(isRpg ? Color.white : (Color.clear), lineWidth: isRpg ? 2 : 0)
+                    )
+                    .cornerRadius(isRpg ? 0 : 8)
                 
                 Spacer()
                 
                 Text(entry.title)
-                    .font(.system(size: 20, weight: .black, design: .rounded))
-                    .foregroundColor(.white)
-                    .shadow(radius: 2)
+                    .font(customFontName.isEmpty ? .system(size: 20, weight: .black, design: .rounded) : .custom(customFontName, size: 20))
+                    .foregroundColor(titleColor)
+                    .shadow(radius: shadowRad)
                     .minimumScaleFactor(0.8)
                 
                 Text(entry.content)
-                    .font(.system(size: 13, weight: .bold, design: .rounded))
-                    .foregroundColor(.white)
+                    .font(customFontName.isEmpty ? .system(size: 13, weight: .bold, design: .rounded) : .custom(customFontName, size: 13))
+                    .foregroundColor(contentColor)
                     .lineLimit(4)
-                    .shadow(radius: 1)
+                    .shadow(radius: hasShadow ? 1 : 0)
+                    .lineSpacing(isRpg ? 4 : 0)
                 
                 Spacer()
             }
             .padding()
         }
-        .widgetURL(URL(string: "dailytrivia://details?id=\(entry.id)&title=\(entry.title.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? "")&content=\(entry.content.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? "")"))
+        .overlay(
+            RoundedRectangle(cornerRadius: isRpg ? 0 : (22))
+                .stroke(isRpg ? Color.white : (Color.clear), lineWidth: isRpg ? 4 : (0))
+        )
+        .widgetURL(URL(string: "dailytrivia://details?id=\(entry.id)&title=\(entry.title.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? "")&content=\(entry.content.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? "")&from_widget=true"))
     }
 }
 
@@ -371,63 +425,174 @@ extension TriviaEntry {
 
 struct BackgroundView: View {
     let theme: TriviaTheme
+    let displayTheme: String
+    let imageTimestamp: Double
+    
+    /// App Group から widget_bg_{displayTheme}.jpeg を読み込み
+    private func loadThemeImage() -> UIImage? {
+        guard displayTheme != "standard" else { return nil }
+        guard let containerURL = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: "group.com.dailytrivia.app") else { return nil }
+        
+        // RPGや猫は時間帯別の画像を試す (rpg_morning, rpg_noon, rpg_night)
+        if displayTheme == "rpg" || displayTheme == "cat" {
+            let timeVariant: String
+            switch theme {
+            case .morning: timeVariant = "morning"
+            case .noon: timeVariant = "noon"
+            case .night: timeVariant = "night"
+            }
+            let variantFilename = "widget_bg_\(displayTheme)_\(timeVariant).jpeg"
+            let variantURL = containerURL.appendingPathComponent(variantFilename)
+            
+            // Bypass UIImage cache by loading as Data first
+            if let imageData = try? Data(contentsOf: variantURL), let img = UIImage(data: imageData) {
+                return img
+            }
+        }
+        
+        // 通常のファイル名
+        let filename = "widget_bg_\(displayTheme).jpeg"
+        let imageURL = containerURL.appendingPathComponent(filename)
+        
+        // Bypass UIImage cache by loading as Data first
+        if let imageData = try? Data(contentsOf: imageURL), let img = UIImage(data: imageData) {
+            return img
+        }
+        
+        return nil
+    }
     
     var body: some View {
         GeometryReader { geometry in
             ZStack {
-                // Base Gradient
-                LinearGradient(gradient: Gradient(colors: gradientColors), startPoint: .top, endPoint: .bottom)
-                
-                // Storybook Elements
-                if theme == .morning {
-                    // Soft Sunrise
-                    Circle()
-                    .fill(Color.orange.opacity(0.6))
-                    .frame(width: 100, height: 100)
-                    .position(x: geometry.size.width * 0.8, y: geometry.size.height * 0.3)
-                    .blur(radius: 20)
-                } else if theme == .noon {
-                    // Fluffy Clouds (Simple Circles)
-                    Circle()
-                        .fill(Color.white.opacity(0.6))
-                        .frame(width: 60, height: 60)
-                        .position(x: 30, y: 30)
-                    Circle()
-                        .fill(Color.white.opacity(0.7))
-                        .frame(width: 80, height: 80)
-                        .position(x: geometry.size.width - 40, y: 50)
-                    // Green Field at bottom
-                    VStack {
-                        Spacer()
-                        Rectangle()
-                            .fill(Color.green.opacity(0.6))
-                            .frame(height: 30)
-                            .cornerRadius(15)
-                            .offset(y: 15)
+                if displayTheme == "standard" {
+                    standardBackground(geometry: geometry)
+                } else if let themeImage = loadThemeImage() {
+                    Image(uiImage: themeImage)
+                        .resizable()
+                        .aspectRatio(contentMode: .fill)
+                        .frame(width: geometry.size.width, height: geometry.size.height)
+                        .clipped()
+                    if displayTheme == "custom" {
+                        Color.black.opacity(0.25)
                     }
-                } else if theme == .night {
-                    // Stars
-                    Circle().fill(Color.yellow).frame(width: 4, height: 4).position(x: 20, y: 20)
-                    Circle().fill(Color.yellow).frame(width: 3, height: 3).position(x: 100, y: 40)
-                    Circle().fill(Color.yellow).frame(width: 5, height: 5).position(x: geometry.size.width - 30, y: 30)
-                    // Moon
-                    Circle()
-                        .fill(Color.yellow.opacity(0.8))
-                        .frame(width: 40, height: 40)
-                        .position(x: 40, y: 40)
+                } else {
+                    fallbackBackground(geometry: geometry)
                 }
             }
+        }
+    }
+    
+    @ViewBuilder
+    func standardBackground(geometry: GeometryProxy) -> some View {
+        LinearGradient(gradient: Gradient(colors: gradientColors), startPoint: .top, endPoint: .bottom)
+        if theme == .morning {
+            Circle().fill(Color.orange.opacity(0.6)).frame(width: 100, height: 100)
+                .position(x: geometry.size.width * 0.8, y: geometry.size.height * 0.3).blur(radius: 20)
+        } else if theme == .noon {
+            Circle().fill(Color.white.opacity(0.6)).frame(width: 60, height: 60).position(x: 30, y: 30)
+            Circle().fill(Color.white.opacity(0.7)).frame(width: 80, height: 80).position(x: geometry.size.width - 40, y: 50)
+            VStack { Spacer(); Rectangle().fill(Color.green.opacity(0.6)).frame(height: 30).cornerRadius(15).offset(y: 15) }
+        } else if theme == .night {
+            Circle().fill(Color.yellow).frame(width: 4, height: 4).position(x: 20, y: 20)
+            Circle().fill(Color.yellow).frame(width: 3, height: 3).position(x: 100, y: 40)
+            Circle().fill(Color.yellow).frame(width: 5, height: 5).position(x: geometry.size.width - 30, y: 30)
+            Circle().fill(Color.yellow.opacity(0.8)).frame(width: 40, height: 40).position(x: 40, y: 40)
+        }
+    }
+    
+    @ViewBuilder
+    func fallbackBackground(geometry: GeometryProxy) -> some View {
+        if displayTheme == "light" {
+            Color.white
+        } else if displayTheme == "dark" {
+            Color(white: 0.11)
+        } else if displayTheme == "cat" {
+            Color(red: 255/255, green: 220/255, blue: 200/255)
+        } else if displayTheme == "rpg" || displayTheme == "cat" {
+            rpgFallbackBackground(geometry: geometry)
+        } else {
+            LinearGradient(gradient: Gradient(colors: gradientColors), startPoint: .top, endPoint: .bottom)
+        }
+    }
+    
+    @ViewBuilder
+    func rpgFallbackBackground(geometry: GeometryProxy) -> some View {
+        Color.black
+        if theme == .morning || theme == .noon {
+            VStack(spacing: 0) {
+                Color(red: 0.2, green: 0.6, blue: 1.0).opacity(theme == .noon ? 1.0 : 0.6)
+                Color(red: 0.2, green: 0.8, blue: 0.2).frame(height: 30)
+            }
+            Path { path in
+                path.addRect(CGRect(x: 20, y: 20, width: 30, height: 10))
+                path.addRect(CGRect(x: 25, y: 15, width: 20, height: 20))
+                path.addRect(CGRect(x: geometry.size.width - 50, y: 30, width: 40, height: 15))
+                path.addRect(CGRect(x: geometry.size.width - 40, y: 25, width: 20, height: 25))
+            }.fill(Color.white).opacity(0.8)
+            Path { path in
+                let baseX = geometry.size.width - 60
+                let baseY = geometry.size.height - 30
+                path.addRect(CGRect(x: baseX, y: baseY - 30, width: 40, height: 30))
+                path.addRect(CGRect(x: baseX - 10, y: baseY - 40, width: 15, height: 40))
+                path.addRect(CGRect(x: baseX + 35, y: baseY - 40, width: 15, height: 40))
+                path.addRect(CGRect(x: baseX - 10, y: baseY - 45, width: 5, height: 5))
+                path.addRect(CGRect(x: baseX, y: baseY - 45, width: 5, height: 5))
+                path.addRect(CGRect(x: baseX + 35, y: baseY - 45, width: 5, height: 5))
+                path.addRect(CGRect(x: baseX + 45, y: baseY - 45, width: 5, height: 5))
+                path.addRect(CGRect(x: baseX + 5, y: baseY - 35, width: 5, height: 5))
+                path.addRect(CGRect(x: baseX + 15, y: baseY - 35, width: 5, height: 5))
+                path.addRect(CGRect(x: baseX + 25, y: baseY - 35, width: 5, height: 5))
+            }.fill(Color(white: 0.8))
+            Path { path in
+                let baseX = geometry.size.width - 60
+                let baseY = geometry.size.height - 30
+                path.addRect(CGRect(x: baseX + 12, y: baseY - 15, width: 16, height: 15))
+            }.fill(Color.black)
+        } else if theme == .night {
+            VStack(spacing: 0) {
+                Color(red: 0.05, green: 0.05, blue: 0.2)
+                Color(red: 0.05, green: 0.2, blue: 0.05).frame(height: 30)
+            }
+            Path { path in
+                path.addRect(CGRect(x: 20, y: 20, width: 4, height: 4))
+                path.addRect(CGRect(x: 100, y: 40, width: 4, height: 4))
+                path.addRect(CGRect(x: geometry.size.width - 30, y: 30, width: 4, height: 4))
+                path.addRect(CGRect(x: 50, y: 60, width: 4, height: 4))
+            }.fill(Color.yellow)
+            Path { path in
+                let mx: CGFloat = 40; let my: CGFloat = 30
+                path.addRect(CGRect(x: mx, y: my, width: 15, height: 15))
+                path.addRect(CGRect(x: mx-2, y: my+2, width: 19, height: 11))
+                path.addRect(CGRect(x: mx+2, y: my-2, width: 11, height: 19))
+            }.fill(Color.yellow)
+            Path { path in
+                let baseX = geometry.size.width - 60
+                let baseY = geometry.size.height - 30
+                path.addRect(CGRect(x: baseX, y: baseY - 30, width: 40, height: 30))
+                path.addRect(CGRect(x: baseX - 10, y: baseY - 40, width: 15, height: 40))
+                path.addRect(CGRect(x: baseX + 35, y: baseY - 40, width: 15, height: 40))
+                path.addRect(CGRect(x: baseX - 10, y: baseY - 45, width: 5, height: 5))
+                path.addRect(CGRect(x: baseX, y: baseY - 45, width: 5, height: 5))
+                path.addRect(CGRect(x: baseX + 35, y: baseY - 45, width: 5, height: 5))
+                path.addRect(CGRect(x: baseX + 45, y: baseY - 45, width: 5, height: 5))
+            }.fill(Color.black)
+        }
+        if theme == .night {
+            Color.black.opacity(0.3)
+        } else if theme == .morning {
+            Color.orange.opacity(0.2)
         }
     }
     
     var gradientColors: [Color] {
         switch theme {
         case .morning:
-            return [Color(red: 1.0, green: 0.8, blue: 0.6), Color(red: 1.0, green: 0.6, blue: 0.6)] // Pastel Orange/Pink
+            return [Color(red: 1.0, green: 0.8, blue: 0.6), Color(red: 1.0, green: 0.6, blue: 0.6)]
         case .noon:
-            return [Color(red: 0.4, green: 0.8, blue: 1.0), Color(red: 0.6, green: 0.9, blue: 1.0)] // Sky Blue
+            return [Color(red: 0.4, green: 0.8, blue: 1.0), Color(red: 0.6, green: 0.9, blue: 1.0)]
         case .night:
-            return [Color(red: 0.1, green: 0.1, blue: 0.4), Color(red: 0.2, green: 0.2, blue: 0.6)] // Dark Blue
+            return [Color(red: 0.1, green: 0.1, blue: 0.4), Color(red: 0.2, green: 0.2, blue: 0.6)]
         }
     }
 }
@@ -444,5 +609,74 @@ struct TriviaWidget: Widget {
         .description("朝・昼・夜で変わる雑学をお届けします。")
         .supportedFamilies([.systemSmall, .systemMedium])
         .contentMarginsDisabled()
+    }
+}
+
+// ==========================================
+// Xcode Canvas Previews
+// 以下のコードブロックの隣にある「プレビュー再生ボタン」を押すか、XcodeのCanvasを開くと、
+// 全てのウィジェットデザインを一覧表示でき、ここから直接スクショを撮ることが可能です！
+// ==========================================
+struct TriviaWidget_Previews: PreviewProvider {
+    // プレビュー用のダミーデータ
+    static let dummyDate = Date()
+    static let baseEntry = TriviaEntry(
+        date: dummyDate,
+        id: 1,
+        title: "富士山の高さ",
+        content: "富士山の高さは3776メートルです。",
+        theme: .noon,
+        displayTheme: "standard"
+    )
+    
+    // Rpg用のダミーデータ（ひらがな）
+    static let rpgEntry = TriviaEntry(
+        date: dummyDate,
+        id: 1,
+        title: "富士山の高さ",
+        content: "ふじさんの たかさは\n3776メートル である！",
+        theme: .noon,
+        displayTheme: "rpg"
+    )
+
+    static var previews: some View {
+        Group {
+            // --- Standard ---
+            TriviaWidgetEntryView(entry: TriviaEntry(date: dummyDate, id: 1, title: "富士山の高さ", content: "富士山の高さは3776メートルです。", theme: .morning, displayTheme: "standard"))
+                .previewContext(WidgetPreviewContext(family: .systemMedium))
+                .previewDisplayName("Standard - Morning")
+
+            TriviaWidgetEntryView(entry: TriviaEntry(date: dummyDate, id: 1, title: "富士山の高さ", content: "富士山の高さは3776メートルです。", theme: .noon, displayTheme: "standard"))
+                .previewContext(WidgetPreviewContext(family: .systemMedium))
+                .previewDisplayName("Standard - Noon")
+
+            TriviaWidgetEntryView(entry: TriviaEntry(date: dummyDate, id: 1, title: "富士山の高さ", content: "富士山の高さは3776メートルです。", theme: .night, displayTheme: "standard"))
+                .previewContext(WidgetPreviewContext(family: .systemMedium))
+                .previewDisplayName("Standard - Night")
+
+            // --- Light & Dark ---
+            TriviaWidgetEntryView(entry: TriviaEntry(date: dummyDate, id: 1, title: "富士山の高さ", content: "富士山の高さは3776メートルです。", theme: .noon, displayTheme: "light"))
+                .previewContext(WidgetPreviewContext(family: .systemMedium))
+                .previewDisplayName("Light Theme")
+
+            TriviaWidgetEntryView(entry: TriviaEntry(date: dummyDate, id: 1, title: "富士山の高さ", content: "富士山の高さは3776メートルです。", theme: .noon, displayTheme: "dark"))
+                .previewContext(WidgetPreviewContext(family: .systemMedium))
+                .previewDisplayName("Dark Theme")
+
+            // --- Game Contexts ---
+            TriviaWidgetEntryView(entry: rpgEntry)
+                .previewContext(WidgetPreviewContext(family: .systemMedium))
+                .previewDisplayName("RPG Theme")
+
+            TriviaWidgetEntryView(entry: baseEntry.modified(displayTheme: "cat"))
+                .previewContext(WidgetPreviewContext(family: .systemMedium))
+                .previewDisplayName("Cat Theme")
+        }
+    }
+}
+
+extension TriviaEntry {
+    func modified(displayTheme: String) -> TriviaEntry {
+        return TriviaEntry(date: self.date, id: self.id, title: self.title, content: self.content, theme: self.theme, displayTheme: displayTheme)
     }
 }

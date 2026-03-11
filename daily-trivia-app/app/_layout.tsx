@@ -6,7 +6,6 @@ import { useEffect } from 'react';
 import { View } from 'react-native';
 import { RevenueCatProvider } from '../contexts/RevenueCatContext';
 import { AuthProvider } from '../contexts/AuthContext';
-// TEMP: Disabled for minimal build test
 import mobileAds from 'react-native-google-mobile-ads';
 
 import { registerBackgroundFetchAsync } from '../tasks/backgroundFetch';
@@ -17,7 +16,6 @@ export default function RootLayout() {
     // Register background fetch
     registerBackgroundFetchAsync().catch(err => console.error("BG Register Error:", err));
 
-    // TEMP: Disabled for minimal build test
     mobileAds()
       .initialize()
       .then(adapterStatuses => {
@@ -37,6 +35,7 @@ export default function RootLayout() {
               <Stack screenOptions={{ headerShown: false }}>
                 <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
                 <Stack.Screen name="details" options={{ presentation: 'modal', headerShown: false }} />
+                <Stack.Screen name="widget-setup" options={{ presentation: 'modal', headerShown: false }} />
               </Stack>
               <StatusBar style="auto" />
             </View>

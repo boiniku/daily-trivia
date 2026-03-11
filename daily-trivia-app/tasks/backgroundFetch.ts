@@ -25,7 +25,7 @@ try {
 
             // 2. Fetch Today's Trivia
             const limit = 3;
-            const apiUrl = `${Config.BACKEND_URL}/trivia/today?limit=${limit}`;
+            const apiUrl = `${Config.BACKEND_URL}/trivia/today?limit=${limit}&user_id=${encodeURIComponent(userId)}`;
 
             console.log(`[BackgroundFetch] Fetching: ${apiUrl}`);
             const response = await fetchWithToken(apiUrl);

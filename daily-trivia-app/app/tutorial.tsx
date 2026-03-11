@@ -97,7 +97,8 @@ export default function TutorialScreen() {
             // Finish
             try {
                 await AsyncStorage.setItem('hasSeenTutorial', 'true');
-                router.replace('/(tabs)?reload=true');
+                await AsyncStorage.setItem('pendingSwipeGuide', 'true');
+                router.replace('/');
             } catch (e) {
                 console.error(e);
             }

@@ -11,3 +11,37 @@ export function reloadAllTimelines() {
         console.warn("WidgetControl.reloadAllTimelines is not available");
     }
 }
+
+export async function getWidgetImageBase64(displayTheme: string, timeTheme: string): Promise<string> {
+    if (WidgetControl && WidgetControl.getWidgetImageBase64) {
+        return await WidgetControl.getWidgetImageBase64(displayTheme, timeTheme);
+    }
+    console.warn("WidgetControl.getWidgetImageBase64 is not available");
+    return "";
+}
+
+export async function saveWidgetThemeImage(theme: string, base64: string): Promise<boolean> {
+    if (WidgetControl && WidgetControl.saveWidgetThemeImage) {
+        return await WidgetControl.saveWidgetThemeImage(theme, base64);
+    }
+    console.warn("WidgetControl.saveWidgetThemeImage is not available");
+    return false;
+}
+
+export async function downloadAndSaveWidgetThemeImage(url: string, theme: string): Promise<boolean> {
+    if (WidgetControl && WidgetControl.downloadAndSaveWidgetThemeImage) {
+        return await WidgetControl.downloadAndSaveWidgetThemeImage(url, theme);
+    }
+    console.warn("WidgetControl.downloadAndSaveWidgetThemeImage is not available");
+    return false;
+}
+
+export async function saveAllWidgetImages(): Promise<number> {
+    if (WidgetControl && WidgetControl.saveAllWidgetImages) {
+        return await WidgetControl.saveAllWidgetImages();
+    }
+    console.warn("WidgetControl.saveAllWidgetImages is not available");
+    return 0;
+}
+
+export { default as WidgetPreviewView } from './WidgetPreviewView';

@@ -38,9 +38,9 @@ export default function TabLayout() {
                 options={{
                     title: 'Today',
                     tabBarIcon: ({ color, focused }) => (
-                        <View style={{ alignItems: 'center', justifyContent: 'center' }}>
+                        <View style={{ alignItems: 'center', justifyContent: 'center', height: 46 }}>
                             <Ionicons name={focused ? "sparkles" : "sparkles-outline"} size={32} color={color} />
-                            {focused && <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: color, position: 'absolute', bottom: -10 }} />}
+                            {focused && <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: color, position: 'absolute', bottom: 0 }} />}
                         </View>
                     ),
                 }}
@@ -50,9 +50,9 @@ export default function TabLayout() {
                 options={{
                     title: 'Collections',
                     tabBarIcon: ({ color, focused }) => (
-                        <View style={{ alignItems: 'center', justifyContent: 'center' }}>
+                        <View style={{ alignItems: 'center', justifyContent: 'center', height: 46 }}>
                             <Ionicons name={focused ? "library" : "library-outline"} size={32} color={color} />
-                            {focused && <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: color, position: 'absolute', bottom: -10 }} />}
+                            {focused && <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: color, position: 'absolute', bottom: 0 }} />}
                         </View>
                     ),
                 }}
@@ -62,9 +62,21 @@ export default function TabLayout() {
                 options={{
                     title: 'Settings',
                     tabBarIcon: ({ color, focused }) => (
-                        <View style={{ alignItems: 'center', justifyContent: 'center' }}>
+                        <View style={{ alignItems: 'center', justifyContent: 'center', height: 46 }}>
                             <Ionicons name={focused ? "settings" : "settings-outline"} size={32} color={color} />
-                            {focused && <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: color, position: 'absolute', bottom: -10 }} />}
+                            {focused && <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: color, position: 'absolute', bottom: 0 }} />}
+                        </View>
+                    ),
+                }}
+            />
+            <Tabs.Screen
+                name="widget"
+                options={{
+                    title: 'Widget',
+                    tabBarIcon: ({ color, focused }) => (
+                        <View style={{ alignItems: 'center', justifyContent: 'center', height: 46 }}>
+                            <Ionicons name={focused ? "cube" : "cube-outline"} size={32} color={color} />
+                            {focused && <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: color, position: 'absolute', bottom: 0 }} />}
                         </View>
                     ),
                 }}

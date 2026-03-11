@@ -15,6 +15,7 @@ export default function SettingsScreen() {
     const { userId, isGuest, signOut, deleteAccount } = useAuth();
     const [loginVisible, setLoginVisible] = useState(false);
 
+
     const handlePurchase = async (pack: any) => {
         if (isPro) {
             Alert.alert('確認', 'すでにサブスクリプションに登録済みです。');
@@ -92,9 +93,7 @@ export default function SettingsScreen() {
                         <Text style={styles.infoLabel}>現在のステータス</Text>
                         <Text style={styles.infoValue}>{isGuest ? "ゲスト" : "ログイン済み"}</Text>
                     </View>
-                    <View style={{ marginBottom: 16 }}>
-                        <Text style={{ fontSize: 10, color: Colors.light.subtext }}>ID: {userId}</Text>
-                    </View>
+
 
                     {isGuest ? (
                         <Pressable style={styles.loginButton} onPress={() => setLoginVisible(true)}>
@@ -211,7 +210,7 @@ export default function SettingsScreen() {
                     <Text style={styles.sectionHeader}>アプリについて</Text>
                     <View style={styles.infoRow}>
                         <Text style={styles.infoLabel}>バージョン</Text>
-                        <Text style={styles.infoValue}>1.0.0</Text>
+                        <Text style={styles.infoValue}>1.0.4</Text>
                     </View>
                     <Pressable style={styles.infoRow} onPress={() => Linking.openURL('https://docs.google.com/document/d/1_K7priRhIk6OSG3c_YQBngnW4uVpTcCOdIEHVN7jFnw/edit?usp=sharing')}>
                         <Text style={styles.infoLabel}>利用規約</Text>
@@ -253,6 +252,7 @@ const styles = StyleSheet.create({
     },
     content: {
         padding: 20,
+        paddingBottom: 120,
     },
     title: {
         fontSize: 32,

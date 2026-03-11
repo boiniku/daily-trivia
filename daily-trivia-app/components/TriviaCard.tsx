@@ -1,5 +1,5 @@
-import React, { useEffect } from 'react';
-import { View, Text, StyleSheet, Dimensions, Pressable, ScrollView } from 'react-native';
+import React, { useEffect, useState } from 'react';
+import { View, Text, StyleSheet, Dimensions, Pressable } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { GestureDetector, Gesture } from 'react-native-gesture-handler';
 import Animated, { useSharedValue, useAnimatedStyle, withSpring, runOnJS, withTiming, withRepeat, withSequence, Easing, withDelay } from 'react-native-reanimated';
@@ -20,6 +20,7 @@ interface TriviaCardProps {
     item: TriviaItem;
     onSwipe: ((direction: 'left' | 'right') => void) | undefined;
     onPressDetails: () => void;
+    onDoubleTap?: () => void;
     style?: any;
     enabled?: boolean;
 }
@@ -37,7 +38,7 @@ const FloatingMark = ({ delay = 0, size = 40, x = 0, y = 0, color = '#eee' }: { 
             -1,
             true
         ));
-    }, []);
+    }, [delay, translateY]);
 
     const style = useAnimatedStyle(() => ({
         transform: [{ translateY: translateY.value }],
@@ -45,7 +46,6 @@ const FloatingMark = ({ delay = 0, size = 40, x = 0, y = 0, color = '#eee' }: { 
 
     return (
         <Animated.View style={[{ position: 'absolute', left: x, top: y, padding: 10 }, style]}>
-            {/* Use Text for thicker font weight instead of Icon */}
             <Text style={{ fontSize: size, fontWeight: '900', color: color, opacity: 0.5, includeFontPadding: false }}>
                 ?
             </Text>
@@ -53,11 +53,20 @@ const FloatingMark = ({ delay = 0, size = 40, x = 0, y = 0, color = '#eee' }: { 
     );
 };
 
-export default function TriviaCard({ item, onSwipe, onPressDetails, style, enabled = true }: TriviaCardProps) {
+export default function TriviaCard({ item, onSwipe, onPressDetails, onDoubleTap, style, enabled = true }: TriviaCardProps) {
     const translationX = useSharedValue(0);
     const translationY = useSharedValue(0);
     const rotation = useSharedValue(0);
     const scale = useSharedValue(1);
+
+    // Double Tap Animation values
+    const thumbOpacity = useSharedValue(0);
+    const thumbScale = useSharedValue(0.5);
+    const thumbTranslateY = useSharedValue(0);
+    const thumbTranslateX = useSharedValue(0);
+    const thumbRotate = useSharedValue(0);
+
+    const [showThumb, setShowThumb] = useState(false);
 
     const pan = Gesture.Pan()
         .enabled(enabled)
@@ -71,7 +80,7 @@ export default function TriviaCard({ item, onSwipe, onPressDetails, style, enabl
         })
         .onEnd((event) => {
             scale.value = withSpring(1);
-            if (Math.abs(event.translationX) > 120) {
+            if (Math.abs(event.translationX) > 40) { // Changed from 60 to 40
                 const direction = event.translationX > 0 ? 'right' : 'left';
                 translationX.value = withTiming(direction === 'right' ? 500 : -500, { duration: 300 });
                 if (onSwipe) {
@@ -84,6 +93,41 @@ export default function TriviaCard({ item, onSwipe, onPressDetails, style, enabl
             }
         });
 
+    const triggerDoubleTapEvents = () => {
+        setShowThumb(true);
+        if (onDoubleTap) {
+            onDoubleTap();
+        }
+        setTimeout(() => setShowThumb(false), 900);
+    };
+
+    const doubleTap = Gesture.Tap()
+        .numberOfTaps(2)
+        .enabled(enabled)
+        .onStart(() => {
+            // Trigger the "へぇ" animation
+            const angleDirection = Math.random() > 0.5 ? 1 : -1;
+            const randomAngle = angleDirection * (Math.random() * 10 + 10); // 10 to 20 degrees
+            const randomTranslateX = angleDirection * (Math.random() * 30 + 30); // 30 to 60 px movement horizontally
+
+            thumbOpacity.value = 1;
+            thumbScale.value = 0.5;
+            thumbTranslateY.value = 0;
+            thumbTranslateX.value = 0;
+            thumbRotate.value = 0;
+            
+            thumbScale.value = withSpring(1.2, { damping: 8 });
+            thumbTranslateY.value = withTiming(-100, { duration: 800 });
+            thumbTranslateX.value = withTiming(randomTranslateX, { duration: 800 });
+            thumbRotate.value = withTiming(randomAngle, { duration: 800 });
+            
+            thumbOpacity.value = withDelay(400, withTiming(0, { duration: 400 }));
+            // Call JS functions safely
+            runOnJS(triggerDoubleTapEvents)();
+        });
+
+    const composedGesture = Gesture.Simultaneous(pan, doubleTap);
+
     const animatedStyle = useAnimatedStyle(() => {
         return {
             transform: [
@@ -91,14 +135,25 @@ export default function TriviaCard({ item, onSwipe, onPressDetails, style, enabl
                 { translateY: translationY.value },
                 { rotate: `${rotation.value}deg` },
                 { scale: scale.value }
-            ],
+            ] as any,
         };
     });
 
+    const thumbAnimatedStyle = useAnimatedStyle(() => ({
+        opacity: thumbOpacity.value,
+        transform: [
+            { translateX: thumbTranslateX.value },
+            { translateY: thumbTranslateY.value },
+            { scale: thumbScale.value },
+            { rotate: `${thumbRotate.value}deg` }
+        ] as any,
+    }));
+
     return (
-        <GestureDetector gesture={pan}>
+        <GestureDetector gesture={composedGesture}>
             <Animated.View style={[styles.cardContainer, animatedStyle, style]}>
-                {/* Background Decorations outside card? No, inside card looks cleaner */}
+                
+                {/* Background Decorations inside card */}
                 <View style={styles.card}>
                     {/* Floating Background Elements */}
                     <View style={StyleSheet.absoluteFill} pointerEvents="none">
@@ -128,6 +183,11 @@ export default function TriviaCard({ item, onSwipe, onPressDetails, style, enabl
                             {item.content}
                         </Text>
                     </View>
+                    
+                    {/* "へぇ" animation overlay for double tap */}
+                    <Animated.View style={[styles.heeAnimationContainer, thumbAnimatedStyle]} pointerEvents="none">
+                        <Text style={styles.heeAnimationText}>へぇ</Text>
+                    </Animated.View>
 
                     {/* Footer Button */}
                     <Pressable style={styles.footerButton} onPress={onPressDetails}>
@@ -252,5 +312,23 @@ const styles = StyleSheet.create({
         backgroundColor: 'white',
         alignItems: 'center',
         justifyContent: 'center',
+    },
+    heeAnimationContainer: {
+        position: 'absolute',
+        top: '20%', // Moved higher up (20% from top instead of center)
+        left: 0,
+        right: 0,
+        alignItems: 'center',
+        justifyContent: 'center',
+        elevation: 10,
+        zIndex: 100,
+    },
+    heeAnimationText: {
+        fontSize: 50, // Reduced from 100
+        fontWeight: '900',
+        color: '#FF3B30', // Red color
+        textShadowColor: 'white',
+        textShadowOffset: { width: 0, height: 0 },
+        textShadowRadius: 10,
     }
 });

@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { View, Text, StyleSheet, Pressable, ActivityIndicator, Alert, Platform, AppState, AppStateStatus } from 'react-native';
+import * as Haptics from 'expo-haptics';
 import { Link, useRouter, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -246,7 +247,7 @@ export default function HomeScreen() {
         try {
             const limit = isPro ? 14 : DAILY_LIMIT; // Pro gets 14 initially to support infinite scroll start
             const today = getEffectiveDate();
-            const apiUrl = `${getBackendUrl()}/trivia/today?limit=${limit}&date=${today}`;
+            const apiUrl = `${getBackendUrl()}/trivia/today?limit=${limit}&date=${today}&user_id=${encodeURIComponent(userId)}`;
             console.log(`Fetching from: ${apiUrl} (Attempt: ${retryCount + 1})`);
             const response = await fetchWithToken(apiUrl);
 
@@ -318,14 +319,21 @@ export default function HomeScreen() {
             setErrorFetchingMore(false); // Reset error state on new attempt
             if (!userId) return;
             // Fetch 7 more items, ensure they match the logical date, AND disable daily assignment prepending
-            const apiUrl = `${getBackendUrl()}/trivia/today?limit=7&date=${dataDateRef.current}&include_assignments=false`;
+            const apiUrl = `${getBackendUrl()}/trivia/today?limit=7&date=${dataDateRef.current}&include_assignments=false&user_id=${encodeURIComponent(userId)}`;
             const response = await fetchWithToken(apiUrl);
             if (response.ok) {
                 const data = await response.json();
                 if (Array.isArray(data) && data.length > 0) {
-                    // Append new items (allowing duplicates for infinite scroll)
+                    // Append new items (filtering out duplicates that are already in the list to prevent buffer overlap logic loop)
                     setTriviaList(prev => {
-                        const newList = [...prev, ...data];
+                        const existingIds = new Set(prev.map(item => item.id));
+                        const filteredData = data.filter(item => !existingIds.has(item.id));
+                        
+                        // If all items are filtered out, it means the DB might be exhausted, 
+                        // so we append them anyway to keep the infinite scroll alive instead of breaking it.
+                        const finalDataToAppend = filteredData.length > 0 ? filteredData : data;
+                        
+                        const newList = [...prev, ...finalDataToAppend];
                         saveState(currentIndexRef.current, newList); // Use accurate current index, not the stale one from closure
                         return newList;
                     });
@@ -414,6 +422,20 @@ export default function HomeScreen() {
                 content: item.content
             }
         });
+    };
+
+    const handleDoubleTapHee = async () => {
+        const item = triviaList[currentIndex];
+        if (!item || !userId) return;
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+        try {
+            await fetchWithToken(`${getBackendUrl()}/trivia/${item.id}/hee`, {
+                method: 'POST',
+                body: JSON.stringify({ count: 1 }),
+            });
+        } catch (e) {
+            console.error('Double-tap hee failed:', e);
+        }
     };
 
     const isLimitReached = !isPro && currentIndex >= DAILY_LIMIT;
@@ -545,6 +567,7 @@ export default function HomeScreen() {
                                 item={currentItem}
                                 onSwipe={handleSwipe}
                                 onPressDetails={handlePressDetails}
+                                onDoubleTap={handleDoubleTapHee}
                                 style={{ zIndex: 1 }}
                             />
                         ) : (

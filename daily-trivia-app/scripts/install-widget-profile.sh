@@ -2,13 +2,19 @@
 PROFILES_DIR="$HOME/Library/MobileDevice/Provisioning Profiles"
 mkdir -p "$PROFILES_DIR"
 
-# UUID previously extracted from widget.mobileprovision
-UUID="16b88775-5f67-4e25-87c9-b282302f37f1"
 SOURCE_FILE="./credentials/ios/widget.mobileprovision"
-DEST_FILE="$PROFILES_DIR/$UUID.mobileprovision"
 
 if [ -f "$SOURCE_FILE" ]; then
-  echo "Installing widget provisioning profile to $DEST_FILE"
+  # Extract UUID from the provisioning profile
+  UUID=$(grep -aA1 "UUID" "$SOURCE_FILE" | grep -ioE "[a-f0-9-]{36}" | head -n 1)
+  
+  if [ -z "$UUID" ]; then
+    echo "Error: Could not extract UUID from $SOURCE_FILE"
+    exit 1
+  fi
+
+  DEST_FILE="$PROFILES_DIR/$UUID.mobileprovision"
+  echo "Installing widget provisioning profile with UUID $UUID to $DEST_FILE"
   cp "$SOURCE_FILE" "$DEST_FILE"
 else
   echo "Warning: Widget provisioning profile not found at $SOURCE_FILE"

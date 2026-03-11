@@ -9,7 +9,7 @@ import * as Crypto from 'expo-crypto';
 
 import { Config } from '../../constants/Config';
 import { useRevenueCat } from '../../contexts/RevenueCatContext';
-import { BannerAd, BannerAdSize, TestIds, useRewardedAd } from 'react-native-google-mobile-ads';
+import { BannerAd, BannerAdSize, TestIds } from 'react-native-google-mobile-ads';
 import { Theme, Colors } from '../../constants/Colors';
 import { useAuth } from '../../contexts/AuthContext';
 import { fetchWithToken } from '../../utils/apiClient';
@@ -33,29 +33,12 @@ export default function CollectionsScreen() {
     const [loading, setLoading] = useState(true);
     const [refreshing, setRefreshing] = useState(false);
     const { isPro } = useRevenueCat();
-    const { userId } = useAuth();
-
-    const { isLoaded, isClosed, load, show } = useRewardedAd(Platform.OS === 'ios' ? Config.REWARDED_ID_IOS : Config.REWARDED_ID_ANDROID);
-    const [selectedCollection, setSelectedCollection] = useState<Collection | null>(null);
+    const { userId, loading: authLoading } = useAuth();
 
     // Create Collection State
     const [isModalVisible, setIsModalVisible] = useState(false);
     const [newFolderName, setNewFolderName] = useState('');
     const [creating, setCreating] = useState(false);
-
-    useEffect(() => {
-        load();
-    }, [load]);
-
-    useEffect(() => {
-        if (isClosed) {
-            if (selectedCollection) {
-                handleNavigate(selectedCollection);
-                setSelectedCollection(null);
-            }
-            load();
-        }
-    }, [isClosed, selectedCollection, load]);
 
     const handleNavigate = (item: Collection) => {
         router.push({
@@ -72,14 +55,17 @@ export default function CollectionsScreen() {
         }, [userId])
     );
 
-    // Watch for userId changes (login/logout)
+    // Watch for userId changes (login/logout) and auth loading completion
     useEffect(() => {
         if (userId) {
             fetchCollections();
+        } else if (!authLoading) {
+            // Auth finished but no userId (shouldn't normally happen, but handle gracefully)
+            setLoading(false);
         }
-    }, [userId]);
+    }, [userId, authLoading]);
 
-    const fetchCollections = async () => {
+    const fetchCollections = async (retryCount = 0) => {
         try {
             if (!userId) return;
 
@@ -87,24 +73,22 @@ export default function CollectionsScreen() {
             const response = await fetchWithToken(apiUrl);
 
             if (!response.ok) {
-                // Try to parse error
                 const text = await response.text();
                 console.warn("Fetch collections failed:", response.status, text);
-                // Don't throw immediately, maybe return empty?
-                // But if status is 500/400, it's an error.
                 throw new Error(`Server Error: ${response.status}`);
             }
 
             const data = await response.json();
             setCollections(data);
+            setLoading(false);
         } catch (error) {
             console.error('Fetch collections error:', error);
-            // Suppress alert on initial load if it's just a network blip, 
-            // but user complained about the error message.
-            // We'll show a more friendly message or just retry.
-            // Alert.alert('エラー', '保存場所の更新に失敗しました');
-        } finally {
-            setLoading(false);
+            if (retryCount < 2) {
+                console.log(`Retrying fetchCollections in 2s... (${retryCount + 1}/2)`);
+                setTimeout(() => fetchCollections(retryCount + 1), 2000);
+            } else {
+                setLoading(false);
+            }
         }
     };
 
@@ -183,13 +167,7 @@ export default function CollectionsScreen() {
                 const isAccessible = !item.is_locked || isPro;
 
                 if (isAccessible) {
-                    setSelectedCollection(item);
-                    // Standard navigation logic
-                    if (!isPro && isLoaded && item.title !== "過去に見た雑学") {
-                        show();
-                    } else {
-                        handleNavigate(item);
-                    }
+                    handleNavigate(item);
                 } else {
                     Alert.alert('制限', 'このフォルダを利用するにはサブスクリプションが必要です');
                 }
@@ -218,7 +196,7 @@ export default function CollectionsScreen() {
     if (loading) {
         return (
             <SafeAreaView style={[styles.container, styles.center]}>
-                <ActivityIndicator size="large" color="#007AFF" />
+                <ActivityIndicator size="large" color={Colors.light.primary} />
             </SafeAreaView>
         );
     }

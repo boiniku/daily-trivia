@@ -92,16 +92,15 @@ export const RevenueCatProvider: React.FC<{ children: React.ReactNode }> = ({ ch
             console.log('Offerings loaded:', offerings);
             if (offerings.current) {
                 if (offerings.current.availablePackages.length === 0) {
-                    Alert.alert("Debug", "Offeringは取得できましたが、パッケージが空です。\nRevenueCatのProduct IDがApp Storeと一致しているか確認してください。");
+                    console.warn('RevenueCat: Offering has no packages');
                 }
                 setCurrentOffering(offerings);
             } else {
                 console.log('No current offering configured in RevenueCat console');
-                Alert.alert("Debug", "Offeringが取得できませんでした。\nRevenueCatのダッシュボードで'Default' Offeringが設定されているか確認してください。");
+                console.warn('RevenueCat: No current offering configured');
             }
         } catch (e: any) {
             console.error('Error loading offerings:', e);
-            Alert.alert("RevenueCat Error", e.message + "\n\n詳細: App Store Connectの契約/税務情報、またはBundle IDの一致を確認してください。");
         } finally {
             setLoading(false);
         }

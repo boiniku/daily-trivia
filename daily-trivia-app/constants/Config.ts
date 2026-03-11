@@ -12,13 +12,13 @@ export const Config = {
     REVENUECAT_ANDROID_KEY: process.env.EXPO_PUBLIC_REVENUECAT_ANDROID_API_KEY || '',
 
     // AdMob Unit IDs
-    // Fallback to Test IDs if not set in env
-    // Production IDs provided by user:
-    BANNER_ID_IOS: process.env.EXPO_PUBLIC_ADMOB_BANNER_ID_IOS || 'ca-app-pub-4541342273103383/2981957640',
+    // Production IDs must be set via .env; fallback is always test IDs
+    BANNER_ID_IOS: process.env.EXPO_PUBLIC_ADMOB_BANNER_ID_IOS || 'ca-app-pub-3940256099942544/2934735716', // Test ID
     BANNER_ID_ANDROID: process.env.EXPO_PUBLIC_ADMOB_BANNER_ID_ANDROID || 'ca-app-pub-3940256099942544/6300978111', // Test ID
+    INTERSTITIAL_ID_IOS: process.env.EXPO_PUBLIC_ADMOB_INTERSTITIAL_ID_IOS || 'ca-app-pub-3940256099942544/4411468910', // Test ID
+    INTERSTITIAL_ID_ANDROID: process.env.EXPO_PUBLIC_ADMOB_INTERSTITIAL_ID_ANDROID || 'ca-app-pub-3940256099942544/1033173712', // Test ID
 
-    REWARDED_ID_IOS: process.env.EXPO_PUBLIC_ADMOB_REWARDED_ID_IOS || 'ca-app-pub-4541342273103383/2404099493',
-    REWARDED_ID_ANDROID: process.env.EXPO_PUBLIC_ADMOB_REWARDED_ID_ANDROID || 'ca-app-pub-3940256099942544/5224354917', // Test ID
+
 };
 
 // Helper function if we need dynamic logic later

@@ -35,8 +35,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     useEffect(() => {
         const subscriber = auth().onAuthStateChanged(onAuthStateChanged);
-        // Initial setup for existing user ID
-        initializeUser();
+        // We wait for Firebase's initial onAuthStateChanged event instead of manually calling initializeUser().
+        // This prevents an unnecessary anonymous signin from taking place before the cached user is parsed.
         return subscriber; // unsubscribe on unmount
     }, []);
 
@@ -193,6 +193,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     const signOut = async () => {
         try {
+            await AsyncStorage.removeItem('triviaState');
             await auth().signOut();
             await rcLogOut(); // Sync RevenueCat logout
             // User state becomes null -> useEffect triggers updateEffectiveUserId -> Generates new Guest ID
@@ -227,6 +228,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             // 2. Sign out & Cleanup
             await AsyncStorage.removeItem('user_id');
             await AsyncStorage.removeItem('hasSeenTutorial');
+            await AsyncStorage.removeItem('hasSeenWidgetGuide');
             await AsyncStorage.removeItem('triviaState');
 
             // Clean up widget data (lazy import to avoid loading native module at startup)

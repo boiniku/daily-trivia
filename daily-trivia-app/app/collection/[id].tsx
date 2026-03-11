@@ -1,6 +1,6 @@
-import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter, useFocusEffect } from 'expo-router';
 import { View, Text, StyleSheet, FlatList, Pressable, ActivityIndicator, Alert, Platform, ScrollView } from 'react-native';
-import { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import Constants from 'expo-constants';
@@ -22,9 +22,15 @@ interface TriviaItem {
     explanation: string;
     source: string;
     category: string;
+    hee_count?: number;
+    user_hee_count?: number;
 }
 
-const interstitial = InterstitialAd.createForAdRequest(TestIds.INTERSTITIAL, {
+const INTERSTITIAL_ID = Platform.OS === 'ios'
+    ? Config.INTERSTITIAL_ID_IOS
+    : Config.INTERSTITIAL_ID_ANDROID;
+
+const interstitial = InterstitialAd.createForAdRequest(INTERSTITIAL_ID, {
     requestNonPersonalizedAdsOnly: true,
 });
 
@@ -36,18 +42,27 @@ export default function CollectionDetailsScreen() {
     const [loading, setLoading] = useState(true);
     const { isPro } = useRevenueCat();
 
-    // Filtering
+    // Filtering & Sorting
     const [categories, setCategories] = useState<string[]>([]);
     const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
+    const [sortType, setSortType] = useState<'default' | 'total' | 'user'>('default');
 
     // Ads
     const [adLoaded, setAdLoaded] = useState(false);
 
-    useEffect(() => {
-        fetchCollectionItems();
+    useFocusEffect(
+        useCallback(() => {
+            fetchCollectionItems();
+        }, [id])
+    );
 
+    useEffect(() => {
         // Ad Logic
         if (!isPro) {
+            if (interstitial.loaded) {
+                setAdLoaded(true);
+            }
+
             const unsubscribe = interstitial.addAdEventListener(AdEventType.LOADED, () => {
                 setAdLoaded(true);
             });
@@ -57,55 +72,51 @@ export default function CollectionDetailsScreen() {
                 interstitial.load();
             });
 
-            interstitial.load();
+            if (!interstitial.loaded) {
+                interstitial.load();
+            }
 
             return () => {
                 unsubscribe();
                 unsubscribeClosed();
             };
         }
-    }, [id]);
+    }, [id, isPro]);
 
-    // Check Ad Cooldown when entering
+    // Reverting ad check function to fire when the folder opens (or ad loads while open)
     useEffect(() => {
-        const checkAdCooldown = async () => {
-            if (isPro) return;
-            // Only show ad if collection is "Past Trivia" (as per request) OR maybe all collections?
-            // "過去に見た雑学フォルダをみたときに出てくる広告のクールタイム"
-            if (title !== "過去に見た雑学") return;
+        const triggerAdIfReady = async () => {
+            if (isPro) return; // サブスク(Pro)に加入している場合はここで早期リターンし、広告は表示されません
+            if (title !== "過去に見た雑学") return; // 過去に見た雑学フォルダのみで表示
+            if (!adLoaded && !interstitial.loaded) return;
 
             try {
                 const lastShown = await AsyncStorage.getItem('last_interstitial_shown');
                 const now = Date.now();
-                const COOLDOWN = 5 * 60 * 1000; // 5 minutes
+                const COOLDOWN = 5 * 60 * 1000; // 5 minutes 
 
                 if (!lastShown || (now - parseInt(lastShown)) > COOLDOWN) {
-                    // Show Ad if loaded
-                    if (adLoaded) {
-                        interstitial.show();
-                        await AsyncStorage.setItem('last_interstitial_shown', now.toString());
-                    } else {
-                        // Watch for load logic if strictly required, but mostly passive here
-                    }
+                    interstitial.show();
+                    await AsyncStorage.setItem('last_interstitial_shown', now.toString());
                 }
             } catch (e) {
                 console.error("Ad cooldown error", e);
             }
         };
 
-        if (adLoaded) {
-            checkAdCooldown();
+        if (adLoaded || interstitial.loaded) {
+            triggerAdIfReady();
         }
     }, [adLoaded, isPro, title]);
 
     const fetchCollectionItems = async () => {
         try {
-            const apiUrl = `${getBackendUrl()}/collections/${id}/items`;
+            const apiUrl = `${getBackendUrl()}/collections/${id}/items?t=${Date.now()}`;
             const response = await fetchWithToken(apiUrl);
             if (!response.ok) throw new Error('Network error');
             const data: TriviaItem[] = await response.json();
             setItems(data);
-            setFilteredItems(data);
+            applySortAndFilter(selectedCategory, sortType, data);
 
             // Extract unique categories safely
             if (Array.isArray(data)) {
@@ -120,13 +131,27 @@ export default function CollectionDetailsScreen() {
         }
     };
 
+    const applySortAndFilter = (cat: string | null, sort: 'default' | 'total' | 'user', data: TriviaItem[]) => {
+        let result = data;
+        if (cat) {
+            result = result.filter(i => i.category === cat);
+        }
+        if (sort === 'total') {
+            result = [...result].sort((a, b) => (b.hee_count || 0) - (a.hee_count || 0));
+        } else if (sort === 'user') {
+            result = [...result].sort((a, b) => (b.user_hee_count || 0) - (a.user_hee_count || 0));
+        }
+        setFilteredItems(result);
+    };
+
     const handleFilter = (category: string | null) => {
         setSelectedCategory(category);
-        if (category) {
-            setFilteredItems(items.filter(i => i.category === category));
-        } else {
-            setFilteredItems(items);
-        }
+        applySortAndFilter(category, sortType, items);
+    };
+
+    const handleSort = (sort: 'default' | 'total' | 'user') => {
+        setSortType(sort);
+        applySortAndFilter(selectedCategory, sort, items);
     };
 
     const renderItem = ({ item }: { item: TriviaItem }) => (
@@ -141,7 +166,8 @@ export default function CollectionDetailsScreen() {
                         explanation: item.explanation,
                         source: item.source,
                         category: item.category,
-                        content: item.content
+                        content: item.content,
+                        user_hee_count: item.user_hee_count
                     }
                 });
             }}
@@ -152,8 +178,17 @@ export default function CollectionDetailsScreen() {
             <View style={styles.itemContent}>
                 <Text style={styles.itemTitle}>{item.title}</Text>
                 <Text style={styles.itemPreview} numberOfLines={1}>{item.content}</Text>
-                <View style={styles.tagBadge}>
-                    <Text style={styles.tagText}>{item.category || 'その他'}</Text>
+                <View style={styles.badgeRow}>
+                    <View style={styles.tagBadge}>
+                        <Text style={styles.tagText}>{item.category || 'その他'}</Text>
+                    </View>
+                    {(sortType === 'total' || sortType === 'user') && (
+                        <View style={styles.heeBadge}>
+                            <Text style={styles.heeBadgeText}>
+                                {sortType === 'total' ? `${item.hee_count || 0} へぇ` : `自分: ${item.user_hee_count || 0} へぇ`}
+                            </Text>
+                        </View>
+                    )}
                 </View>
             </View>
             <Ionicons name="chevron-forward" size={20} color="#ccc" />
@@ -193,9 +228,33 @@ export default function CollectionDetailsScreen() {
                 </View>
             )}
 
+            {/* Sort Filter */}
+            <View style={styles.filterContainer}>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 20 }}>
+                    <Pressable
+                        style={[styles.filterChip, sortType === 'default' && styles.filterChipActive]}
+                        onPress={() => handleSort('default')}
+                    >
+                        <Text style={[styles.filterText, sortType === 'default' && styles.filterTextActive]}>追加順</Text>
+                    </Pressable>
+                    <Pressable
+                        style={[styles.filterChip, sortType === 'total' && styles.filterChipActive]}
+                        onPress={() => handleSort('total')}
+                    >
+                        <Text style={[styles.filterText, sortType === 'total' && styles.filterTextActive]}>全ユーザーへぇ順</Text>
+                    </Pressable>
+                    <Pressable
+                        style={[styles.filterChip, sortType === 'user' && styles.filterChipActive]}
+                        onPress={() => handleSort('user')}
+                    >
+                        <Text style={[styles.filterText, sortType === 'user' && styles.filterTextActive]}>自分のへぇ順</Text>
+                    </Pressable>
+                </ScrollView>
+            </View>
+
             {loading ? (
                 <View style={styles.center}>
-                    <ActivityIndicator size="large" color="#007AFF" />
+                    <ActivityIndicator size="large" color={Colors.light.primary} />
                 </View>
             ) : (
                 <FlatList
@@ -330,6 +389,22 @@ const styles = StyleSheet.create({
     tagText: {
         fontSize: 10,
         color: '#1565C0',
+        fontWeight: 'bold',
+    },
+    badgeRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 8,
+    },
+    heeBadge: {
+        backgroundColor: '#FFF8E1',
+        paddingHorizontal: 8,
+        paddingVertical: 2,
+        borderRadius: 8,
+    },
+    heeBadgeText: {
+        fontSize: 10,
+        color: '#F57F17',
         fontWeight: 'bold',
     }
 });

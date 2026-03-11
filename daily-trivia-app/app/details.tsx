@@ -22,6 +22,8 @@ interface Collection {
     title: string;
     icon: string;
     is_locked: boolean;
+    hee_count?: number;
+    user_hee_count?: number;
 }
 
 export default function DetailsScreen() {
@@ -39,12 +41,37 @@ export default function DetailsScreen() {
         explanation: params.explanation as string || '解説データがありません',
         source: params.source as string || '',
         category: params.category as string || '未分類',
-        content: params.content as string || ''
+        content: params.content as string || '',
+        user_hee_count: params.user_hee_count ? parseInt(params.user_hee_count as string, 10) : 0
     });
     const [loadingDetails, setLoadingDetails] = useState(false);
 
+    // Block non-Pro users from deep-linking via Widget
+    useEffect(() => {
+        if (params.from_widget === 'true' && !isPro) {
+            Alert.alert(
+                'プレミアム限定',
+                'ウィジェットから直接過去の雑学を開く機能はプレミアム（PRO）限定です。\nアプリ内の「今日の雑学」や「過去に見た雑学」をご利用ください。',
+                [
+                    { 
+                        text: 'PROプランを見る', 
+                        onPress: () => router.replace('/paywall')
+                    },
+                    { 
+                        text: 'OK', 
+                        style: 'cancel',
+                        onPress: () => router.replace('/')
+                    }
+                ]
+            );
+        }
+    }, [params.from_widget, isPro]);
+
     // Fetch full data if explanation is missing (e.g. from Widget deep link)
     useEffect(() => {
+        // Do not fetch if non-pro widget deep link because we are kicking them out
+        if (params.from_widget === 'true' && !isPro) return;
+
         const fetchFullDetails = async () => {
             if ((!params.explanation || params.explanation === '解説データがありません') && id) {
                 setLoadingDetails(true);
@@ -57,7 +84,8 @@ export default function DetailsScreen() {
                             explanation: data.explanation || '解説データがありません',
                             source: data.source || fullData.source,
                             category: data.category || fullData.category,
-                            content: data.content || fullData.content
+                            content: data.content || fullData.content,
+                            user_hee_count: data.user_hee_count !== undefined ? data.user_hee_count : fullData.user_hee_count
                         });
                     }
                 } catch (e) {
@@ -93,7 +121,7 @@ export default function DetailsScreen() {
             // We want to allow Favorites (idk title yet, assume "お気に入り") but disallow "過去に見た雑学".
             // Actually, "Favorites" is created with is_locked=True in backend.
             // So we should filter: (NOT "過去に見た雑学")
-            setCollections(data.filter((c: Collection) => c.title !== "過去に見た雑学"));
+            setCollections(data.filter((c: Collection) => c.title !== "過去に見た雑学" && (isPro || !c.is_locked)));
         } catch (error) {
             Alert.alert('エラー', 'フォルダの取得に失敗しました');
         } finally {
@@ -176,7 +204,12 @@ export default function DetailsScreen() {
 
                     {/* Action Buttons Row */}
                     <View style={styles.actionRow}>
-                        <HeeButton triviaId={parseInt(id, 10)} />
+                        <HeeButton triviaId={parseInt(id, 10)} onHeeAdded={(count) => {
+                            setFullData(prev => ({
+                                ...prev,
+                                user_hee_count: prev.user_hee_count + count
+                            }));
+                        }} />
 
                         <Pressable style={styles.shareButton} onPress={() => {
                             const shareText = `【${fullData.title}】\n${fullData.content}\n\n#毎日雑学`;
@@ -439,7 +472,7 @@ const styles = StyleSheet.create({
     actionRow: {
         flexDirection: 'row',
         justifyContent: 'center',
-        alignItems: 'center',
+        alignItems: 'flex-end', // Align bottoms
         gap: 16,
         marginBottom: 20,
     },
@@ -453,7 +486,7 @@ const styles = StyleSheet.create({
         ...Theme.shadow.small,
         borderWidth: 2,
         borderColor: 'white',
-        height: 40, // Match visual height of HeeButton roughly (14 font + 16 padding + 4 border ~ 34-40)
+        marginBottom: 10, // Match the marginVertical: 10 in HeeButton.tsx
     },
     shareButtonText: {
         color: 'white',
