@@ -33,8 +33,14 @@ struct Provider: TimelineProvider {
         if displayTheme == "custom" {
             imageTimestamp = userDefaults?.double(forKey: "widget_theme_image_custom_timestamp") ?? Date().timeIntervalSince1970
         } else if displayTheme == "rpg" || displayTheme == "cat" {
-            // For time-variant themes, we just grab a generic timestamp. The variant timestamp can be managed during image download/save.
-            imageTimestamp = userDefaults?.double(forKey: "widget_theme_image_\(displayTheme)_timestamp") ?? Date().timeIntervalSince1970
+            // Time-variant themes: read timestamps from all 3 variants and use the most recent
+            let morningTs = userDefaults?.double(forKey: "widget_theme_image_\(displayTheme)_morning_timestamp") ?? 0
+            let noonTs = userDefaults?.double(forKey: "widget_theme_image_\(displayTheme)_noon_timestamp") ?? 0
+            let nightTs = userDefaults?.double(forKey: "widget_theme_image_\(displayTheme)_night_timestamp") ?? 0
+            imageTimestamp = max(morningTs, max(noonTs, nightTs))
+            if imageTimestamp == 0 {
+                imageTimestamp = Date().timeIntervalSince1970
+            }
         } else {
             imageTimestamp = userDefaults?.double(forKey: "widget_theme_image_\(displayTheme)_timestamp") ?? Date().timeIntervalSince1970
         }
@@ -76,7 +82,9 @@ struct Provider: TimelineProvider {
         let userId = userDefaults?.string(forKey: "user_id")
         let firebaseToken = userDefaults?.string(forKey: "firebase_token")
         
-        if !isValidData {
+        if isValidData {
+            print("Widget: Using valid cached data for today, skipping fetch.")
+        } else {
             // If no valid User ID and no stale data, show loading
             if (userId == nil || userId == "" || userId == "widget_guest") && staleFallbackList.isEmpty {
                  print("Widget: No valid User ID and no cached data. Waiting for App...")
@@ -110,7 +118,7 @@ struct Provider: TimelineProvider {
                 var request = URLRequest(url: url)
                 request.httpMethod = "GET"
                 request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-                request.timeoutInterval = 15 // Increased from default for Render cold start
+                request.timeoutInterval = 10 // Reduced timeout
                 
                 if let token = firebaseToken, !token.isEmpty {
                     request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
@@ -131,15 +139,10 @@ struct Provider: TimelineProvider {
                                 let id: Int
                                 let title: String
                                 let content: String
-                                // Optional date for validation if backend sends it
                                 let date: String?
                             }
                             
                             let apiItems = try JSONDecoder().decode([APITriviaItem].self, from: data)
-                            
-                            // Validate Date if available (Optional but recommended)
-                            // For now, we trust the API returned today's data for this user
-                            // But strict checking effectively happens because we request 'today'
                             
                             // Map to Widget Data Format
                             let newTriviaList = apiItems.prefix(3).map { item in
@@ -164,8 +167,8 @@ struct Provider: TimelineProvider {
                 }
                 task.resume()
                 
-                // Wait for up to 15 seconds for network (Render cold start can be slow)
-                let result = dispatchGroup.wait(timeout: .now() + 15)
+                // Wait for network
+                let result = dispatchGroup.wait(timeout: .now() + 10)
                 if result == .timedOut {
                     print("Widget fetch timed out")
                 }
