@@ -29,11 +29,21 @@ export async function saveWidgetThemeImage(theme: string, base64: string): Promi
 }
 
 export async function downloadAndSaveWidgetThemeImage(url: string, theme: string): Promise<boolean> {
-    if (WidgetControl && WidgetControl.downloadAndSaveWidgetThemeImage) {
-        return await WidgetControl.downloadAndSaveWidgetThemeImage(url, theme);
+    if (!WidgetControl) {
+        throw new Error("WidgetControl module itself is completely missing in native build.");
     }
-    console.warn("WidgetControl.downloadAndSaveWidgetThemeImage is not available");
-    return false;
+    if (!WidgetControl.downloadAndSaveWidgetThemeImage) {
+        throw new Error("WidgetControl.downloadAndSaveWidgetThemeImage function is not registered in the native binary.");
+    }
+    
+    // Pass to native and await
+    const result = await WidgetControl.downloadAndSaveWidgetThemeImage(url, theme);
+    
+    // We expect native to return 'true' on success
+    if (result !== true) {
+        throw new Error(`Native module resolved silently but returned: ${String(result)}`);
+    }
+    return true;
 }
 
 export async function saveAllWidgetImages(): Promise<number> {

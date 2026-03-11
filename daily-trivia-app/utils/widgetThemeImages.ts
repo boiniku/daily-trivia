@@ -25,7 +25,7 @@ export async function downloadAndSaveThemeImage(theme: string): Promise<boolean>
     if (Platform.OS !== 'ios') return false;
 
     const extensions = ['jpeg', 'png', 'jpg'];
-    let lastError = '';
+    let lastError = 'No error thrown, but loop finished.';
 
     for (const ext of extensions) {
         try {
@@ -33,7 +33,6 @@ export async function downloadAndSaveThemeImage(theme: string): Promise<boolean>
             console.log(`[WidgetDownload] Attempting native download: ${theme} from ${url}`);
             
             // ネイティブ側で直接URLからダウンロードと保存を試行する
-            // 失敗した場合は例外が投げられるかfalseが返る想定
             const saved = await downloadAndSaveWidgetThemeImage(url, theme);
             
             if (saved) {
@@ -42,15 +41,27 @@ export async function downloadAndSaveThemeImage(theme: string): Promise<boolean>
                 await AsyncStorage.setItem(`${CACHE_KEY_PREFIX}${theme}`, 'true');
                 console.log(`[WidgetDownload] Success! Natively saved: ${theme} (was .${ext})`);
                 return true;
+            } else {
+                lastError = "Native module returned false silently!";
             }
         } catch (e: any) {
-            console.log(`[WidgetDownload] Failed native download for .${ext} of ${theme}`);
-            lastError = e?.message || String(e);
+            console.log(`[WidgetDownload] Failed native download for .${ext} of ${theme}`, e);
+            if (e instanceof Error) {
+                lastError = `${e.name}: ${e.message}`;
+            } else if (typeof e === 'string') {
+                lastError = e;
+            } else {
+                try {
+                    lastError = JSON.stringify(e);
+                } catch {
+                    lastError = String(e);
+                }
+            }
         }
     }
 
     console.error(`[WidgetDownload] CRITICAL: Failed to download ${theme} with ANY extension (.jpeg, .png, .jpg)`);
-    Alert.alert('Debug Native Error', `Theme: ${theme}\nError: ${lastError}`);
+    Alert.alert('Debug Native Error', `Theme: ${theme}\nError Details:\n${lastError}`);
     return false;
 }
 
