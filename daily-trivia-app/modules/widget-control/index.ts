@@ -44,4 +44,12 @@ export async function saveAllWidgetImages(): Promise<number> {
     return 0;
 }
 
+export async function getSavedWidgetFiles(): Promise<any[]> {
+    if (WidgetControl && WidgetControl.getSavedWidgetFiles) {
+        return await WidgetControl.getSavedWidgetFiles();
+    }
+    console.warn("WidgetControl.getSavedWidgetFiles is not available");
+    return [];
+}
+
 export { default as WidgetPreviewView } from './WidgetPreviewView';

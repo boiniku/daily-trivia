@@ -510,81 +510,15 @@ struct BackgroundView: View {
             Color.white
         } else if displayTheme == "dark" {
             Color(white: 0.11)
+        } else if displayTheme == "gameboy" {
+            Color(red: 155/255, green: 188/255, blue: 15/255)
+        } else if displayTheme == "rpg" {
+            Color.black
         } else if displayTheme == "cat" {
-            Color(red: 255/255, green: 220/255, blue: 200/255)
-        } else if displayTheme == "rpg" || displayTheme == "cat" {
-            rpgFallbackBackground(geometry: geometry)
+            // Neutral grey/brown instead of skin color
+            Color(red: 0.2, green: 0.15, blue: 0.1)
         } else {
             LinearGradient(gradient: Gradient(colors: gradientColors), startPoint: .top, endPoint: .bottom)
-        }
-    }
-    
-    @ViewBuilder
-    func rpgFallbackBackground(geometry: GeometryProxy) -> some View {
-        Color.black
-        if theme == .morning || theme == .noon {
-            VStack(spacing: 0) {
-                Color(red: 0.2, green: 0.6, blue: 1.0).opacity(theme == .noon ? 1.0 : 0.6)
-                Color(red: 0.2, green: 0.8, blue: 0.2).frame(height: 30)
-            }
-            Path { path in
-                path.addRect(CGRect(x: 20, y: 20, width: 30, height: 10))
-                path.addRect(CGRect(x: 25, y: 15, width: 20, height: 20))
-                path.addRect(CGRect(x: geometry.size.width - 50, y: 30, width: 40, height: 15))
-                path.addRect(CGRect(x: geometry.size.width - 40, y: 25, width: 20, height: 25))
-            }.fill(Color.white).opacity(0.8)
-            Path { path in
-                let baseX = geometry.size.width - 60
-                let baseY = geometry.size.height - 30
-                path.addRect(CGRect(x: baseX, y: baseY - 30, width: 40, height: 30))
-                path.addRect(CGRect(x: baseX - 10, y: baseY - 40, width: 15, height: 40))
-                path.addRect(CGRect(x: baseX + 35, y: baseY - 40, width: 15, height: 40))
-                path.addRect(CGRect(x: baseX - 10, y: baseY - 45, width: 5, height: 5))
-                path.addRect(CGRect(x: baseX, y: baseY - 45, width: 5, height: 5))
-                path.addRect(CGRect(x: baseX + 35, y: baseY - 45, width: 5, height: 5))
-                path.addRect(CGRect(x: baseX + 45, y: baseY - 45, width: 5, height: 5))
-                path.addRect(CGRect(x: baseX + 5, y: baseY - 35, width: 5, height: 5))
-                path.addRect(CGRect(x: baseX + 15, y: baseY - 35, width: 5, height: 5))
-                path.addRect(CGRect(x: baseX + 25, y: baseY - 35, width: 5, height: 5))
-            }.fill(Color(white: 0.8))
-            Path { path in
-                let baseX = geometry.size.width - 60
-                let baseY = geometry.size.height - 30
-                path.addRect(CGRect(x: baseX + 12, y: baseY - 15, width: 16, height: 15))
-            }.fill(Color.black)
-        } else if theme == .night {
-            VStack(spacing: 0) {
-                Color(red: 0.05, green: 0.05, blue: 0.2)
-                Color(red: 0.05, green: 0.2, blue: 0.05).frame(height: 30)
-            }
-            Path { path in
-                path.addRect(CGRect(x: 20, y: 20, width: 4, height: 4))
-                path.addRect(CGRect(x: 100, y: 40, width: 4, height: 4))
-                path.addRect(CGRect(x: geometry.size.width - 30, y: 30, width: 4, height: 4))
-                path.addRect(CGRect(x: 50, y: 60, width: 4, height: 4))
-            }.fill(Color.yellow)
-            Path { path in
-                let mx: CGFloat = 40; let my: CGFloat = 30
-                path.addRect(CGRect(x: mx, y: my, width: 15, height: 15))
-                path.addRect(CGRect(x: mx-2, y: my+2, width: 19, height: 11))
-                path.addRect(CGRect(x: mx+2, y: my-2, width: 11, height: 19))
-            }.fill(Color.yellow)
-            Path { path in
-                let baseX = geometry.size.width - 60
-                let baseY = geometry.size.height - 30
-                path.addRect(CGRect(x: baseX, y: baseY - 30, width: 40, height: 30))
-                path.addRect(CGRect(x: baseX - 10, y: baseY - 40, width: 15, height: 40))
-                path.addRect(CGRect(x: baseX + 35, y: baseY - 40, width: 15, height: 40))
-                path.addRect(CGRect(x: baseX - 10, y: baseY - 45, width: 5, height: 5))
-                path.addRect(CGRect(x: baseX, y: baseY - 45, width: 5, height: 5))
-                path.addRect(CGRect(x: baseX + 35, y: baseY - 45, width: 5, height: 5))
-                path.addRect(CGRect(x: baseX + 45, y: baseY - 45, width: 5, height: 5))
-            }.fill(Color.black)
-        }
-        if theme == .night {
-            Color.black.opacity(0.3)
-        } else if theme == .morning {
-            Color.orange.opacity(0.2)
         }
     }
     

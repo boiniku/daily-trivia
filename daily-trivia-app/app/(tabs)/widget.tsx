@@ -146,19 +146,39 @@ export default function WidgetThemeScreen() {
             return;
         }
 
-        setSelectedTheme(themeId);
-
+        setLoading(true);
         try {
             if (Platform.OS === 'ios') {
-                // クラウドテーマの画像をDL（キャッシュ済みならスキップ）
-                await ensureThemeImage(themeId);
+                console.log(`[Widget] Selecting theme: ${themeId}`);
                 
+                // クラウドテーマの画像をDL（キャッシュ済みならスキップ）
+                const ok = await ensureThemeImage(themeId);
+                
+                if (!ok) {
+                    Alert.alert('ダウンロードに失敗しました', 'デザイン画像の取得に失敗しました。電波の良い場所で再度お試しください。');
+                    setLoading(false);
+                    return;
+                }
+                
+                // Diagnostic: Check saved files
+                import('../../modules/widget-control').then(({ getSavedWidgetFiles }) => {
+                    getSavedWidgetFiles().then(files => {
+                        console.log('[Widget] Saved files in container:', files);
+                    }).catch(err => {
+                        console.error('[Widget] Failed to list diagnostics:', err);
+                    });
+                });
+
                 await DefaultPreference.setName('group.com.dailytrivia.app');
                 await DefaultPreference.set('widget_theme', themeId);
                 reloadAllTimelines();
             }
+            setSelectedTheme(themeId);
         } catch (e) {
             console.error('Failed to save widget theme', e);
+            Alert.alert('エラー', 'デザインの保存に失敗しました。');
+        } finally {
+            setLoading(false);
         }
     };
 
