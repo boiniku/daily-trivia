@@ -76,16 +76,13 @@ export async function ensureThemeImage(theme: string): Promise<boolean> {
     // custom はユーザーが登録するため、ここではスキップ
     if (theme === 'custom') return true;
 
-    // RPG/catは時間帯別に3枚必要
+    // RPG/catは時間帯別に3枚必要 - 常に再ダウンロード（キャッシュ不整合防止）
     if (theme === 'rpg' || theme === 'cat') {
         const variants = [`${theme}_morning`, `${theme}_noon`, `${theme}_night`];
         let allOk = true;
         for (const v of variants) {
-            const cached = await isThemeCached(v);
-            if (!cached) {
-                const ok = await downloadAndSaveThemeImage(v);
-                if (!ok) allOk = false;
-            }
+            const ok = await downloadAndSaveThemeImage(v);
+            if (!ok) allOk = false;
         }
         return allOk;
     }

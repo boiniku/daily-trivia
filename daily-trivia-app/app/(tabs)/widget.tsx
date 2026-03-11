@@ -201,7 +201,6 @@ export default function WidgetThemeScreen() {
                 // カスタムが選択中なら即座にウィジェットリロード
                 if (selectedTheme === 'custom') {
                     reloadAllTimelines();
-                    setTimeout(() => reloadAllTimelines(), 500);
                 }
             }
         } catch (e) {
