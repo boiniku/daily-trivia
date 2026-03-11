@@ -85,6 +85,14 @@ const WidgetPreview = ({ theme, previewTime, customImageUri }: { theme: ThemeTyp
                     source={{ uri: cloudImageUrl }} 
                     style={styles.widgetImage} 
                     resizeMode="cover" 
+                    onError={() => {
+                        // If the default .jpeg fails, try .png as a fallback
+                        if (cloudImageUrl.endsWith('.jpeg')) {
+                            setCloudImageUrl(cloudImageUrl.replace('.jpeg', '.png'));
+                        } else if (cloudImageUrl.endsWith('.png')) {
+                            setCloudImageUrl(cloudImageUrl.replace('.png', '.jpg'));
+                        }
+                    }}
                 />
             ) : (
                 <ActivityIndicator size="small" color={Colors.light.primary} />

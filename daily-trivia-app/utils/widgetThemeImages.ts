@@ -23,45 +23,30 @@ export async function downloadAndSaveThemeImage(theme: string): Promise<boolean>
     if (Platform.OS !== 'ios') return false;
 
     const extensions = ['jpeg', 'png', 'jpg'];
-    let successfulExt = '';
-    let targetUrl = '';
 
     for (const ext of extensions) {
         try {
             const url = `${R2_BASE_URL}/${theme}.${ext}`;
-            console.log(`Trying to check theme image: ${theme} from ${url}`);
+            console.log(`[WidgetDownload] Attempting native download: ${theme} from ${url}`);
             
-            // Use HEAD request just to check if file exists on R2
-            const res = await fetch(url, { method: 'HEAD' });
-            if (res.ok) {
-                targetUrl = url;
-                successfulExt = ext;
-                break; // Found the file!
+            // ネイティブ側で直接URLからダウンロードと保存を試行する
+            // 失敗した場合は例外が投げられるかfalseが返る想定
+            const saved = await downloadAndSaveWidgetThemeImage(url, theme);
+            
+            if (saved) {
+                // 保存成功時に、どの拡張子だったかをAsyncStorageに記録（プレビュー表示用）
+                await AsyncStorage.setItem(`${CACHE_KEY_PREFIX}${theme}_ext`, ext);
+                await AsyncStorage.setItem(`${CACHE_KEY_PREFIX}${theme}`, 'true');
+                console.log(`[WidgetDownload] Success! Natively saved: ${theme} (was .${ext})`);
+                return true;
             }
         } catch (e) {
-            console.log(`Failed to fetch .${ext} for ${theme}`);
+            console.log(`[WidgetDownload] Failed native download for .${ext} of ${theme}`);
         }
     }
 
-    if (!targetUrl) {
-        console.error(`Failed to find ${theme} with any extension (.jpeg, .png, .jpg)`);
-        return false;
-    }
-
-    try {
-        // ネイティブ側で直接URLからダウンロードと保存を行う
-        const saved = await downloadAndSaveWidgetThemeImage(targetUrl, theme);
-        if (saved) {
-            // 保存成功時に、どの拡張子だったかをAsyncStorageに記録（プレビュー表示用）
-            await AsyncStorage.setItem(`${CACHE_KEY_PREFIX}${theme}_ext`, successfulExt);
-            await AsyncStorage.setItem(`${CACHE_KEY_PREFIX}${theme}`, 'true');
-            console.log(`Theme image natively downloaded and saved: ${theme} (was .${successfulExt})`);
-        }
-        return saved;
-    } catch (e) {
-        console.error(`Error downloading theme ${theme}:`, e);
-        return false;
-    }
+    console.error(`[WidgetDownload] CRITICAL: Failed to download ${theme} with ANY extension (.jpeg, .png, .jpg)`);
+    return false;
 }
 
 /**
@@ -115,20 +100,9 @@ export async function getThemeImageUrl(themeName: string): Promise<string | null
         return `${R2_BASE_URL}/${themeName}.${ext}`;
     }
     
-    // まだダウンロード・キャッシュされていない場合、PNGかJPEGか分からないためHEADリクエストで確認
-    for (const testExt of ['jpeg', 'png', 'jpg']) {
-        try {
-            const url = `${R2_BASE_URL}/${themeName}.${testExt}`;
-            const res = await fetch(url, { method: 'HEAD' });
-            if (res.ok) {
-                return url; // 見つかった有効なURLを返す
-            }
-        } catch (e) {
-            // ignore
-        }
-    }
-    
-    // 最終フォールバック
+    // HEAD request is unstable in RN over cellular/certain networks.
+    // Default to jpeg. If we need png support in preview BEFORE download, 
+    // the UI component itself should handle the fallback via onError.
     return `${R2_BASE_URL}/${themeName}.jpeg`;
 }
 
