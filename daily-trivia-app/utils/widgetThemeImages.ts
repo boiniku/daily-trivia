@@ -19,10 +19,13 @@ async function isThemeCached(theme: string): Promise<boolean> {
     return cached === 'true';
 }
 
+import { Alert } from 'react-native';
+
 export async function downloadAndSaveThemeImage(theme: string): Promise<boolean> {
     if (Platform.OS !== 'ios') return false;
 
     const extensions = ['jpeg', 'png', 'jpg'];
+    let lastError = '';
 
     for (const ext of extensions) {
         try {
@@ -40,12 +43,14 @@ export async function downloadAndSaveThemeImage(theme: string): Promise<boolean>
                 console.log(`[WidgetDownload] Success! Natively saved: ${theme} (was .${ext})`);
                 return true;
             }
-        } catch (e) {
+        } catch (e: any) {
             console.log(`[WidgetDownload] Failed native download for .${ext} of ${theme}`);
+            lastError = e?.message || String(e);
         }
     }
 
     console.error(`[WidgetDownload] CRITICAL: Failed to download ${theme} with ANY extension (.jpeg, .png, .jpg)`);
+    Alert.alert('Debug Native Error', `Theme: ${theme}\nError: ${lastError}`);
     return false;
 }
 
