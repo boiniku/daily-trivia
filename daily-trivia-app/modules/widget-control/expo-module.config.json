@@ -1,8 +1,8 @@
 {
     "platforms": [
-        "ios"
+        "apple"
     ],
-    "ios": {
+    "apple": {
         "modules": [
             "WidgetControlModule"
         ]
