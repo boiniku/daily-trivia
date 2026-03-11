@@ -4,5 +4,10 @@
     "main": "index.ts",
     "dependencies": {
         "expo-modules-core": "~2.0.0"
+    },
+    "expo": {
+        "modules": [
+            "./expo-module.config.json"
+        ]
     }
 }

@@ -3,7 +3,7 @@
     "name": "毎日雑学",
     "slug": "daily-trivia-app",
     "owner": "boiniku",
-    "version": "1.0.25",
+    "version": "1.0.26",
     "orientation": "portrait",
     "platforms": [
       "ios",
@@ -21,7 +21,7 @@
     "ios": {
       "supportsTablet": false,
       "bundleIdentifier": "com.dailytrivia.app",
-      "buildNumber": "130",
+      "buildNumber": "131",
       "entitlements": {
         "com.apple.security.application-groups": [
           "group.com.dailytrivia.app"
