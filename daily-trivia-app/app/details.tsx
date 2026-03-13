@@ -46,32 +46,9 @@ export default function DetailsScreen() {
     });
     const [loadingDetails, setLoadingDetails] = useState(false);
 
-    // Block non-Pro users from deep-linking via Widget
-    useEffect(() => {
-        if (params.from_widget === 'true' && !isPro) {
-            Alert.alert(
-                'プレミアム限定',
-                'ウィジェットから直接過去の雑学を開く機能はプレミアム（PRO）限定です。\nアプリ内の「今日の雑学」や「過去に見た雑学」をご利用ください。',
-                [
-                    { 
-                        text: 'PROプランを見る', 
-                        onPress: () => router.replace('/paywall')
-                    },
-                    { 
-                        text: 'OK', 
-                        style: 'cancel',
-                        onPress: () => router.replace('/')
-                    }
-                ]
-            );
-        }
-    }, [params.from_widget, isPro]);
 
     // Fetch full data if explanation is missing (e.g. from Widget deep link)
     useEffect(() => {
-        // Do not fetch if non-pro widget deep link because we are kicking them out
-        if (params.from_widget === 'true' && !isPro) return;
-
         const fetchFullDetails = async () => {
             if ((!params.explanation || params.explanation === '解説データがありません') && id) {
                 setLoadingDetails(true);

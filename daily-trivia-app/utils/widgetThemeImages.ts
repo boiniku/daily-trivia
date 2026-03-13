@@ -19,49 +19,53 @@ async function isThemeCached(theme: string): Promise<boolean> {
     return cached === 'true';
 }
 
-import { Alert } from 'react-native';
-
 export async function downloadAndSaveThemeImage(theme: string): Promise<boolean> {
     if (Platform.OS !== 'ios') return false;
 
     const extensions = ['jpeg', 'png', 'jpg'];
+    const maxAttemptsPerExt = 2;
     let lastError = 'No error thrown, but loop finished.';
 
     for (const ext of extensions) {
-        try {
-            const url = `${R2_BASE_URL}/${theme}.${ext}`;
-            console.log(`[WidgetDownload] Attempting native download: ${theme} from ${url}`);
-            
-            // ネイティブ側で直接URLからダウンロードと保存を試行する
-            const saved = await downloadAndSaveWidgetThemeImage(url, theme);
-            
-            if (saved) {
-                // 保存成功時に、どの拡張子だったかをAsyncStorageに記録（プレビュー表示用）
-                await AsyncStorage.setItem(`${CACHE_KEY_PREFIX}${theme}_ext`, ext);
-                await AsyncStorage.setItem(`${CACHE_KEY_PREFIX}${theme}`, 'true');
-                console.log(`[WidgetDownload] Success! Natively saved: ${theme} (was .${ext})`);
-                return true;
-            } else {
-                lastError = "Native module returned false silently!";
-            }
-        } catch (e: any) {
-            console.log(`[WidgetDownload] Failed native download for .${ext} of ${theme}`, e);
-            if (e instanceof Error) {
-                lastError = `${e.name}: ${e.message}`;
-            } else if (typeof e === 'string') {
-                lastError = e;
-            } else {
-                try {
-                    lastError = JSON.stringify(e);
-                } catch {
-                    lastError = String(e);
+        for (let attempt = 1; attempt <= maxAttemptsPerExt; attempt++) {
+            try {
+                const url = `${R2_BASE_URL}/${theme}.${ext}`;
+                console.log(`[WidgetDownload] Attempting native download: ${theme} from ${url} (try ${attempt}/${maxAttemptsPerExt})`);
+                
+                // ネイティブ側で直接URLからダウンロードと保存を試行する
+                const saved = await downloadAndSaveWidgetThemeImage(url, theme);
+                
+                if (saved) {
+                    // 保存成功時に、どの拡張子だったかをAsyncStorageに記録（プレビュー表示用）
+                    await AsyncStorage.setItem(`${CACHE_KEY_PREFIX}${theme}_ext`, ext);
+                    await AsyncStorage.setItem(`${CACHE_KEY_PREFIX}${theme}`, 'true');
+                    console.log(`[WidgetDownload] Success! Natively saved: ${theme} (was .${ext})`);
+                    return true;
+                } else {
+                    lastError = "Native module returned false silently!";
                 }
+            } catch (e: any) {
+                console.log(`[WidgetDownload] Failed native download for .${ext} of ${theme} (try ${attempt})`, e);
+                if (e instanceof Error) {
+                    lastError = `${e.name}: ${e.message}`;
+                } else if (typeof e === 'string') {
+                    lastError = e;
+                } else {
+                    try {
+                        lastError = JSON.stringify(e);
+                    } catch {
+                        lastError = String(e);
+                    }
+                }
+            }
+            if (attempt < maxAttemptsPerExt) {
+                await new Promise((resolve) => setTimeout(resolve, 350));
             }
         }
     }
 
     console.error(`[WidgetDownload] CRITICAL: Failed to download ${theme} with ANY extension (.jpeg, .png, .jpg)`);
-    Alert.alert('Debug Native Error', `Theme: ${theme}\nError Details:\n${lastError}`);
+    console.error(`[WidgetDownload] ${theme} error detail: ${lastError}`);
     return false;
 }
 
@@ -85,7 +89,14 @@ export async function ensureThemeImage(theme: string): Promise<boolean> {
             const ok = await downloadAndSaveThemeImage(v);
             if (!ok) allOk = false;
         }
-        return allOk;
+        if (allOk) return true;
+
+        // ダウンロード失敗時でも、既存キャッシュが揃っていれば反映を許可して反映失敗を減らす
+        for (const v of variants) {
+            const cached = await isThemeCached(v);
+            if (!cached) return false;
+        }
+        return true;
     }
 
     // キャッシュ済みならスキップ

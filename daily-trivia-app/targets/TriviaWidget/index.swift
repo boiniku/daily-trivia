@@ -355,6 +355,7 @@ struct TriviaEntry: TimelineEntry {
 
 struct TriviaWidgetEntryView : View {
     var entry: Provider.Entry
+    @Environment(\.widgetFamily) private var widgetFamily
 
     var body: some View {
         let isLight = entry.displayTheme == "light"
@@ -362,6 +363,7 @@ struct TriviaWidgetEntryView : View {
         let isRpg = entry.displayTheme == "rpg"
         let isCat = entry.displayTheme == "cat"
         let isCustom = entry.displayTheme == "custom"
+        let hasOutline = isRpg || isCat
         
         let titleColor: Color = isLight ? Color(white: 0.1) : .white
         let contentColor: Color = isLight ? Color(white: 0.3) : .white
@@ -372,7 +374,7 @@ struct TriviaWidgetEntryView : View {
         let customFontName = (isRpg) ? "DotGothic16-Regular" : ""
         
         ZStack {
-            BackgroundView(theme: entry.theme, displayTheme: entry.displayTheme, imageTimestamp: entry.imageTimestamp)
+            BackgroundView(theme: entry.theme, displayTheme: entry.displayTheme, imageTimestamp: entry.imageTimestamp, widgetFamily: widgetFamily)
                 .id(entry.imageTimestamp) // Force SwiftUI redraw on timestamp update
             
             VStack(alignment: .leading, spacing: 5) {
@@ -394,6 +396,10 @@ struct TriviaWidgetEntryView : View {
                 Text(entry.title)
                     .font(customFontName.isEmpty ? .system(size: 20, weight: .black, design: .rounded) : .custom(customFontName, size: 20))
                     .foregroundColor(titleColor)
+                    .shadow(color: hasOutline ? .black : .clear, radius: 0, x: 1, y: 1)
+                    .shadow(color: hasOutline ? .black : .clear, radius: 0, x: -1, y: 1)
+                    .shadow(color: hasOutline ? .black : .clear, radius: 0, x: 1, y: -1)
+                    .shadow(color: hasOutline ? .black : .clear, radius: 0, x: -1, y: -1)
                     .shadow(radius: shadowRad)
                     .minimumScaleFactor(0.8)
                 
@@ -401,6 +407,10 @@ struct TriviaWidgetEntryView : View {
                     .font(customFontName.isEmpty ? .system(size: 13, weight: .bold, design: .rounded) : .custom(customFontName, size: 13))
                     .foregroundColor(contentColor)
                     .lineLimit(4)
+                    .shadow(color: hasOutline ? .black : .clear, radius: 0, x: 1, y: 1)
+                    .shadow(color: hasOutline ? .black : .clear, radius: 0, x: -1, y: 1)
+                    .shadow(color: hasOutline ? .black : .clear, radius: 0, x: 1, y: -1)
+                    .shadow(color: hasOutline ? .black : .clear, radius: 0, x: -1, y: -1)
                     .shadow(radius: hasShadow ? 1 : 0)
                     .lineSpacing(isRpg ? 4 : 0)
                 
@@ -430,6 +440,7 @@ struct BackgroundView: View {
     let theme: TriviaTheme
     let displayTheme: String
     let imageTimestamp: Double
+    let widgetFamily: WidgetFamily
     
     /// App Group から widget_bg_{displayTheme}.jpeg を読み込み
     private func loadThemeImage() -> UIImage? {
@@ -471,10 +482,15 @@ struct BackgroundView: View {
                 if displayTheme == "standard" {
                     standardBackground(geometry: geometry)
                 } else if let themeImage = loadThemeImage() {
+                    let trailingCropForSmall = widgetFamily == .systemSmall && (displayTheme == "rpg" || displayTheme == "cat")
                     Image(uiImage: themeImage)
                         .resizable()
                         .aspectRatio(contentMode: .fill)
-                        .frame(width: geometry.size.width, height: geometry.size.height)
+                        .frame(
+                            width: geometry.size.width,
+                            height: geometry.size.height,
+                            alignment: trailingCropForSmall ? .trailing : .center
+                        )
                         .clipped()
                     if displayTheme == "custom" {
                         Color.black.opacity(0.25)
@@ -603,7 +619,7 @@ struct TriviaWidget_Previews: PreviewProvider {
             // --- Game Contexts ---
             TriviaWidgetEntryView(entry: rpgEntry)
                 .previewContext(WidgetPreviewContext(family: .systemMedium))
-                .previewDisplayName("RPG Theme")
+                .previewDisplayName("RPG Theme (changes by time)")
 
             TriviaWidgetEntryView(entry: baseEntry.modified(displayTheme: "cat"))
                 .previewContext(WidgetPreviewContext(family: .systemMedium))

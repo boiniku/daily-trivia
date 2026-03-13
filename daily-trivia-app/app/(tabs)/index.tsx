@@ -110,6 +110,34 @@ export default function HomeScreen() {
     };
 
     const params = useLocalSearchParams();
+    const lastHandledWidgetDeepLinkRef = useRef<string | null>(null);
+
+    const getParamString = (value: string | string[] | undefined) => {
+        if (Array.isArray(value)) return value[0];
+        return value;
+    };
+
+    // If a widget deep link lands on this tab first, forward it to details unconditionally.
+    useEffect(() => {
+        const fromWidget = getParamString(params.from_widget) === 'true';
+        const triviaId = getParamString(params.id);
+        if (!fromWidget || !triviaId) return;
+        if (lastHandledWidgetDeepLinkRef.current === triviaId) return;
+
+        lastHandledWidgetDeepLinkRef.current = triviaId;
+        router.replace({
+            pathname: '/details',
+            params: {
+                id: triviaId,
+                title: getParamString(params.title) ?? '',
+                content: getParamString(params.content) ?? '',
+                explanation: getParamString(params.explanation) ?? '解説データがありません',
+                source: getParamString(params.source) ?? '',
+                category: getParamString(params.category) ?? '未分類',
+                from_widget: 'true'
+            }
+        });
+    }, [params, router]);
 
     // Run tutorial check ONCE on mount
     useEffect(() => {
