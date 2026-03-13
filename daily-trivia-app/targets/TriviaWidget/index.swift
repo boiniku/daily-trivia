@@ -416,7 +416,7 @@ struct TriviaWidgetEntryView : View {
         let shadowRad: CGFloat = hasShadow ? 2 : 0
         let customFontName = (isRpg) ? "DotGothic16-Regular" : ""
         
-        ZStack {
+        return ZStack {
             BackgroundView(theme: entry.theme, displayTheme: entry.displayTheme, imageTimestamp: entry.imageTimestamp, widgetFamily: widgetFamily)
                 .id(entry.imageTimestamp) // Force SwiftUI redraw on timestamp update
             
