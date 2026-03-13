@@ -18,7 +18,7 @@ const THEMES: { id: ThemeType; label: string; isPremium: boolean }[] = [
     { id: 'standard', label: 'スタンダード（時間で変化）', isPremium: false },
     { id: 'light', label: 'ホワイト（白ベース）', isPremium: false },
     { id: 'dark', label: 'ダーク（黒ベース）', isPremium: false },
-    { id: 'rpg', label: 'ドラクエ風（RPG・時間で変化）', isPremium: true },
+    { id: 'rpg', label: 'RPG風（時間で変化）', isPremium: true },
     { id: 'cat', label: '猫柄（時間で変化）', isPremium: true },
     { id: 'custom', label: 'カスタム画像', isPremium: true },
 ];
@@ -255,7 +255,7 @@ export default function WidgetThemeScreen() {
                     「スタンダード」はタップで時間帯プレビューを切り替えられます。
                 </Text>
                 <Text style={styles.previewHint}>
-                    「ドラクエ風（RPG）」も朝・昼・夜で画像が自動で切り替わります。
+                    「RPG風」も朝・昼・夜で画像が自動で切り替わります。
                 </Text>
 
                 <View style={styles.themeGrid}>

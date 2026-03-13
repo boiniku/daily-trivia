@@ -3,11 +3,10 @@ import { View, Text, StyleSheet, FlatList, Pressable, ActivityIndicator, Alert, 
 import React, { useState, useEffect, useCallback } from 'react';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import Constants from 'expo-constants';
 import { Config } from '../../constants/Config';
 import { Theme, Colors } from '../../constants/Colors';
 import { useRevenueCat } from '../../contexts/RevenueCatContext';
-import { InterstitialAd, AdEventType, TestIds } from 'react-native-google-mobile-ads';
+import { InterstitialAd, AdEventType } from 'react-native-google-mobile-ads';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { fetchWithToken } from '../../utils/apiClient';
 
@@ -49,6 +48,8 @@ export default function CollectionDetailsScreen() {
 
     // Ads
     const [adLoaded, setAdLoaded] = useState(false);
+    const normalizedTitle = Array.isArray(title) ? title[0] : title;
+    const isHistoryCollection = (normalizedTitle ?? '').trim().includes('過去に見た雑学');
 
     useFocusEffect(
         useCallback(() => {
@@ -71,6 +72,10 @@ export default function CollectionDetailsScreen() {
                 setAdLoaded(false);
                 interstitial.load();
             });
+            const unsubscribeError = interstitial.addAdEventListener(AdEventType.ERROR, (error) => {
+                setAdLoaded(false);
+                console.error('[Ads] Interstitial failed to load/show:', error);
+            });
 
             if (!interstitial.loaded) {
                 interstitial.load();
@@ -79,6 +84,7 @@ export default function CollectionDetailsScreen() {
             return () => {
                 unsubscribe();
                 unsubscribeClosed();
+                unsubscribeError();
             };
         }
     }, [id, isPro]);
@@ -87,7 +93,7 @@ export default function CollectionDetailsScreen() {
     useEffect(() => {
         const triggerAdIfReady = async () => {
             if (isPro) return; // サブスク(Pro)に加入している場合はここで早期リターンし、広告は表示されません
-            if (title !== "過去に見た雑学") return; // 過去に見た雑学フォルダのみで表示
+            if (!isHistoryCollection) return; // 過去に見た雑学フォルダのみで表示
             if (!adLoaded && !interstitial.loaded) return;
 
             try {
@@ -107,7 +113,7 @@ export default function CollectionDetailsScreen() {
         if (adLoaded || interstitial.loaded) {
             triggerAdIfReady();
         }
-    }, [adLoaded, isPro, title]);
+    }, [adLoaded, isPro, isHistoryCollection]);
 
     const fetchCollectionItems = async () => {
         try {
@@ -201,7 +207,7 @@ export default function CollectionDetailsScreen() {
                 <Pressable onPress={() => router.back()} style={styles.backButton}>
                     <Ionicons name="arrow-back" size={24} color={Colors.light.primary} />
                 </Pressable>
-                <Text style={styles.headerTitle} numberOfLines={1}>{title || 'フォルダの中身'}</Text>
+                <Text style={styles.headerTitle} numberOfLines={1}>{normalizedTitle || 'フォルダの中身'}</Text>
                 <View style={{ width: 40 }} />
             </View>
 

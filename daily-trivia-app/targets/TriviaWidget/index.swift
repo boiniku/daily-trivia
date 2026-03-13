@@ -358,6 +358,49 @@ struct TriviaWidgetEntryView : View {
     @Environment(\.widgetFamily) private var widgetFamily
 
     var body: some View {
+        if widgetFamily == .accessoryInline || widgetFamily == .accessoryCircular || widgetFamily == .accessoryRectangular {
+            accessoryView
+                .widgetURL(deepLinkURL)
+        } else {
+            regularWidgetView
+                .widgetURL(deepLinkURL)
+        }
+    }
+
+    private var deepLinkURL: URL? {
+        URL(string: "dailytrivia://details?id=\(entry.id)&title=\(entry.title.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? "")&content=\(entry.content.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? "")&from_widget=true")
+    }
+
+    @ViewBuilder
+    private var accessoryView: some View {
+        switch widgetFamily {
+        case .accessoryInline:
+            Text("毎日雑学: \(entry.title)")
+        case .accessoryCircular:
+            ZStack {
+                AccessoryWidgetBackground()
+                Text("雑")
+                    .font(.system(size: 16, weight: .bold))
+            }
+        case .accessoryRectangular:
+            VStack(alignment: .leading, spacing: 2) {
+                Text(entry.themeTitle)
+                    .font(.caption2)
+                    .lineLimit(1)
+                Text(entry.title)
+                    .font(.caption)
+                    .fontWeight(.bold)
+                    .lineLimit(1)
+                Text(entry.content)
+                    .font(.caption2)
+                    .lineLimit(1)
+            }
+        default:
+            EmptyView()
+        }
+    }
+
+    private var regularWidgetView: some View {
         let isLight = entry.displayTheme == "light"
         let isDark = entry.displayTheme == "dark"
         let isRpg = entry.displayTheme == "rpg"
@@ -418,11 +461,6 @@ struct TriviaWidgetEntryView : View {
             }
             .padding()
         }
-        .overlay(
-            RoundedRectangle(cornerRadius: isRpg ? 0 : (22))
-                .stroke(isRpg ? Color.white : (Color.clear), lineWidth: isRpg ? 4 : (0))
-        )
-        .widgetURL(URL(string: "dailytrivia://details?id=\(entry.id)&title=\(entry.title.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? "")&content=\(entry.content.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? "")&from_widget=true"))
     }
 }
 
@@ -560,7 +598,7 @@ struct TriviaWidget: Widget {
         }
         .configurationDisplayName("毎日雑学")
         .description("朝・昼・夜で変わる雑学をお届けします。")
-        .supportedFamilies([.systemSmall, .systemMedium])
+        .supportedFamilies([.systemSmall, .systemMedium, .accessoryInline, .accessoryCircular, .accessoryRectangular])
         .contentMarginsDisabled()
     }
 }
@@ -624,6 +662,19 @@ struct TriviaWidget_Previews: PreviewProvider {
             TriviaWidgetEntryView(entry: baseEntry.modified(displayTheme: "cat"))
                 .previewContext(WidgetPreviewContext(family: .systemMedium))
                 .previewDisplayName("Cat Theme")
+
+            // --- Lock Screen ---
+            TriviaWidgetEntryView(entry: baseEntry)
+                .previewContext(WidgetPreviewContext(family: .accessoryInline))
+                .previewDisplayName("Lock Screen - Inline")
+
+            TriviaWidgetEntryView(entry: baseEntry)
+                .previewContext(WidgetPreviewContext(family: .accessoryCircular))
+                .previewDisplayName("Lock Screen - Circular")
+
+            TriviaWidgetEntryView(entry: baseEntry)
+                .previewContext(WidgetPreviewContext(family: .accessoryRectangular))
+                .previewDisplayName("Lock Screen - Rectangular")
         }
     }
 }
