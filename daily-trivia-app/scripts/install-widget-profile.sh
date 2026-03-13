@@ -7,7 +7,7 @@ SOURCE_FILE="./credentials/ios/widget.mobileprovision"
 if [ -f "$SOURCE_FILE" ]; then
   # Extract UUID from the provisioning profile
   UUID=$(grep -aA1 "UUID" "$SOURCE_FILE" | grep -ioE "[a-f0-9-]{36}" | head -n 1)
-  
+
   if [ -z "$UUID" ]; then
     echo "Error: Could not extract UUID from $SOURCE_FILE"
     exit 1
