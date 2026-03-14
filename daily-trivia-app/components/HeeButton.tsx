@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { View, Text, StyleSheet, Pressable, Animated, Easing } from 'react-native';
+import { View, Text, StyleSheet, Pressable, Animated, Easing, ActivityIndicator } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors, Theme } from '../constants/Colors';
 import { Config } from '../constants/Config';
@@ -115,7 +115,13 @@ export default function HeeButton({ triviaId, initialTotalCount = 0, onHeeAdded 
 
     return (
         <View style={styles.container}>
-            <Text style={styles.totalCount}>{totalCount} へぇ</Text>
+            {loading ? (
+                <View style={styles.totalCountLoader}>
+                    <ActivityIndicator size="small" color={Colors.light.text} />
+                </View>
+            ) : (
+                <Text style={styles.totalCount}>{totalCount} へぇ</Text>
+            )}
 
             <Pressable
                 onPress={handlePress}
@@ -151,6 +157,13 @@ const styles = StyleSheet.create({
         fontWeight: '900',
         color: Colors.light.text,
         marginBottom: 4, // Reduced from 10
+    },
+    totalCountLoader: {
+        height: 20,
+        minWidth: 56,
+        alignItems: 'center',
+        justifyContent: 'center',
+        marginBottom: 4,
     },
     button: {
         backgroundColor: Colors.light.primary,

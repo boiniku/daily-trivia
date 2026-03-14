@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, Pressable, ScrollView, Platform, Dimensions, Image, Alert, ActivityIndicator } from 'react-native';
+import { View, Text, StyleSheet, Pressable, ScrollView, Platform, Image, Alert, ActivityIndicator } from 'react-native';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -105,6 +105,7 @@ export default function WidgetThemeScreen() {
     const router = useRouter();
     const { isPro } = useRevenueCat();
     const [selectedTheme, setSelectedTheme] = useState<ThemeType>('standard');
+    const [selectingThemeId, setSelectingThemeId] = useState<ThemeType | null>(null);
     const [standardPreviewTime, setStandardPreviewTime] = useState<'morning' | 'noon' | 'night'>('noon');
     const [loading, setLoading] = useState(true);
     const [customImageUri, setCustomImageUri] = useState<string | null>(null);
@@ -142,18 +143,8 @@ export default function WidgetThemeScreen() {
         }
     };
 
-    const handleThemeSelect = async (themeId: ThemeType, isPremium: boolean) => {
-        if (isPremium && !isPro) {
-            Alert.alert('このデザインは使用できません', 'このウィジェットデザインはプレミアムプラン専用です。タップで確認することはできますが、実際に適用するにはプランの登録が必要です。');
-            return;
-        }
-
-        // カスタムテーマで画像未設定の場合
-        if (themeId === 'custom' && !customImageUri) {
-            Alert.alert('画像を選択してください', 'カスタムデザインを使うには、まず画像を登録してください。');
-            return;
-        }
-
+    const applyTheme = async (themeId: ThemeType) => {
+        setSelectingThemeId(themeId);
         setLoading(true);
         try {
             if (Platform.OS === 'ios') {
@@ -190,7 +181,23 @@ export default function WidgetThemeScreen() {
             Alert.alert('エラー', 'デザインの保存に失敗しました。');
         } finally {
             setLoading(false);
+            setSelectingThemeId(null);
         }
+    };
+
+    const handleThemeSelect = async (themeId: ThemeType, isPremium: boolean) => {
+        if (isPremium && !isPro) {
+            Alert.alert('このデザインは使用できません', 'このウィジェットデザインはプレミアムプラン専用です。タップで確認することはできますが、実際に適用するにはプランの登録が必要です。');
+            return;
+        }
+
+        // カスタムテーマで画像未設定の場合
+        if (themeId === 'custom' && !customImageUri) {
+            Alert.alert('画像を選択してください', 'カスタムデザインを使うには、まず画像を登録してください。');
+            return;
+        }
+
+        await applyTheme(themeId);
     };
 
     const handlePickCustomImage = async () => {
@@ -228,8 +235,10 @@ export default function WidgetThemeScreen() {
 
                 setSavingCustomImage(false);
 
-                // カスタムが選択中なら即座にウィジェットリロード
-                if (selectedTheme === 'custom') {
+                // 保存直後にカスタムテーマを即適用
+                if (isPro) {
+                    await applyTheme('custom');
+                } else if (selectedTheme === 'custom') {
                     reloadAllTimelines();
                 }
             }
@@ -333,6 +342,11 @@ export default function WidgetThemeScreen() {
                                         <View style={styles.lockOverlay}>
                                             <ActivityIndicator size="small" color="#fff" />
                                             <Text style={{ color: '#fff', marginTop: 4, fontSize: 12 }}>保存中...</Text>
+                                        </View>
+                                    )}
+                                    {selectingThemeId === theme.id && (
+                                        <View style={styles.selectingOverlay}>
+                                            <ActivityIndicator size="large" color={Colors.light.primary} />
                                         </View>
                                     )}
 
@@ -470,6 +484,12 @@ const styles = StyleSheet.create({
     lockOverlay: {
         ...StyleSheet.absoluteFillObject,
         backgroundColor: 'rgba(0,0,0,0.4)',
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    selectingOverlay: {
+        ...StyleSheet.absoluteFillObject,
+        backgroundColor: 'rgba(255,255,255,0.55)',
         alignItems: 'center',
         justifyContent: 'center',
     },
