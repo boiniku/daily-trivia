@@ -3,7 +3,7 @@
     "name": "毎日雑学",
     "slug": "daily-trivia-app",
     "owner": "nobooooooo",
-    "version": "1.0.34",
+    "version": "1.0.35",
     "orientation": "portrait",
     "platforms": [
       "ios",
@@ -20,7 +20,7 @@
     "ios": {
       "supportsTablet": false,
       "bundleIdentifier": "com.dailytrivia.app",
-      "buildNumber": "140",
+      "buildNumber": "141",
       "entitlements": {
         "com.apple.security.application-groups": [
           "group.com.dailytrivia.app"
