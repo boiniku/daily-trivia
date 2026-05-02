@@ -27,6 +27,17 @@ def add_missing_columns():
                         conn.execute(text("CREATE INDEX ix_collections_user_id ON collections (user_id)"))
             else:
                 print("user_id already exists in collections")
+
+        # Check trivia
+        if inspector.has_table("trivia"):
+            trivia_columns = [c['name'] for c in inspector.get_columns("trivia")]
+            if "image_url" not in trivia_columns:
+                print("Adding image_url to trivia...")
+                with engine.connect() as conn:
+                    with conn.begin():
+                        conn.execute(text("ALTER TABLE trivia ADD COLUMN image_url VARCHAR"))
+            else:
+                print("image_url already exists in trivia")
                 
     except Exception as e:
         print(f"Error updating schema: {e}")

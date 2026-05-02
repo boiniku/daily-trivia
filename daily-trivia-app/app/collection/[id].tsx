@@ -23,6 +23,7 @@ interface TriviaItem {
     category: string;
     hee_count?: number;
     user_hee_count?: number;
+    image_url?: string | null;
 }
 
 const INTERSTITIAL_ID = Platform.OS === 'ios'
@@ -36,6 +37,7 @@ const interstitial = InterstitialAd.createForAdRequest(INTERSTITIAL_ID, {
 export default function CollectionDetailsScreen() {
     const { id, title } = useLocalSearchParams();
     const router = useRouter();
+    const normalizedCollectionId = Array.isArray(id) ? id[0] : id;
     const [items, setItems] = useState<TriviaItem[]>([]);
     const [filteredItems, setFilteredItems] = useState<TriviaItem[]>([]);
     const [loading, setLoading] = useState(true);
@@ -51,21 +53,51 @@ export default function CollectionDetailsScreen() {
     const normalizedTitle = Array.isArray(title) ? title[0] : title;
     const isHistoryCollection = (normalizedTitle ?? '').trim().includes('過去に見た雑学');
 
+    const tryShowInterstitial = useCallback(async (reason: string) => {
+        if (isPro) return;
+        if (!isHistoryCollection) return;
+        if (!adLoaded && !interstitial.loaded) return;
+
+        try {
+            const lastShown = await AsyncStorage.getItem('last_interstitial_shown');
+            const now = Date.now();
+            const COOLDOWN = 5 * 60 * 1000; // 5 minutes
+            const parsedLastShown = Number(lastShown);
+            const hasValidLastShown = Number.isFinite(parsedLastShown) && parsedLastShown > 0;
+            const isCooldownPassed = !hasValidLastShown || (now - parsedLastShown) > COOLDOWN;
+            if (isCooldownPassed) {
+                console.log('[Ads] Showing interstitial:', { reason, interstitialId: INTERSTITIAL_ID });
+                interstitial.show();
+                await AsyncStorage.setItem('last_interstitial_shown', now.toString());
+            } else {
+                console.log('[Ads] Interstitial cooldown active');
+            }
+        } catch (e) {
+            console.error("Ad cooldown error", e);
+        }
+    }, [adLoaded, isHistoryCollection, isPro]);
+
     useFocusEffect(
         useCallback(() => {
             fetchCollectionItems();
-        }, [id])
+        }, [normalizedCollectionId])
     );
 
     useEffect(() => {
         // Ad Logic
         if (!isPro) {
+            console.log('[Ads] Interstitial setup:', {
+                interstitialId: INTERSTITIAL_ID,
+                isHistoryCollection,
+                title: normalizedTitle ?? '',
+            });
             if (interstitial.loaded) {
                 setAdLoaded(true);
             }
 
             const unsubscribe = interstitial.addAdEventListener(AdEventType.LOADED, () => {
                 setAdLoaded(true);
+                tryShowInterstitial('loaded_event');
             });
 
             const unsubscribeClosed = interstitial.addAdEventListener(AdEventType.CLOSED, () => {
@@ -87,48 +119,62 @@ export default function CollectionDetailsScreen() {
                 unsubscribeError();
             };
         }
-    }, [id, isPro]);
+    }, [id, isPro, isHistoryCollection, normalizedTitle, tryShowInterstitial]);
 
-    // Reverting ad check function to fire when the folder opens (or ad loads while open)
+    // Show when folder is opened and ad is already ready.
     useEffect(() => {
-        const triggerAdIfReady = async () => {
-            if (isPro) return; // サブスク(Pro)に加入している場合はここで早期リターンし、広告は表示されません
-            if (!isHistoryCollection) return; // 過去に見た雑学フォルダのみで表示
-            if (!adLoaded && !interstitial.loaded) return;
-
-            try {
-                const lastShown = await AsyncStorage.getItem('last_interstitial_shown');
-                const now = Date.now();
-                const COOLDOWN = 5 * 60 * 1000; // 5 minutes 
-
-                if (!lastShown || (now - parseInt(lastShown)) > COOLDOWN) {
-                    interstitial.show();
-                    await AsyncStorage.setItem('last_interstitial_shown', now.toString());
-                }
-            } catch (e) {
-                console.error("Ad cooldown error", e);
-            }
-        };
-
         if (adLoaded || interstitial.loaded) {
-            triggerAdIfReady();
+            tryShowInterstitial('screen_open');
         }
-    }, [adLoaded, isPro, isHistoryCollection]);
+    }, [adLoaded, tryShowInterstitial]);
+
+    const normalizeTriviaItems = (rawData: unknown): TriviaItem[] => {
+        if (!Array.isArray(rawData)) return [];
+
+        return rawData
+            .map((item) => {
+                if (!item || typeof item !== 'object') return null;
+
+                const rawItem = item as Partial<TriviaItem> & {
+                    id?: unknown;
+                    hee_count?: unknown;
+                    user_hee_count?: unknown;
+                    image_url?: unknown;
+                };
+
+                const numericId = Number(rawItem.id);
+                if (!Number.isFinite(numericId)) return null;
+
+                return {
+                    id: numericId,
+                    title: typeof rawItem.title === 'string' ? rawItem.title : 'タイトルなし',
+                    content: typeof rawItem.content === 'string' ? rawItem.content : '',
+                    explanation: typeof rawItem.explanation === 'string' ? rawItem.explanation : '解説データがありません',
+                    source: typeof rawItem.source === 'string' ? rawItem.source : '',
+                    category: typeof rawItem.category === 'string' ? rawItem.category : 'その他',
+                    image_url: typeof rawItem.image_url === 'string' ? rawItem.image_url : null,
+                    hee_count: Number.isFinite(Number(rawItem.hee_count)) ? Number(rawItem.hee_count) : 0,
+                    user_hee_count: Number.isFinite(Number(rawItem.user_hee_count)) ? Number(rawItem.user_hee_count) : 0,
+                };
+            })
+            .filter(Boolean) as TriviaItem[];
+    };
 
     const fetchCollectionItems = async () => {
         try {
-            const apiUrl = `${getBackendUrl()}/collections/${id}/items?t=${Date.now()}`;
+            if (!normalizedCollectionId) {
+                throw new Error('Collection id is missing');
+            }
+
+            const apiUrl = `${getBackendUrl()}/collections/${normalizedCollectionId}/items?t=${Date.now()}`;
             const response = await fetchWithToken(apiUrl);
             if (!response.ok) throw new Error('Network error');
-            const data: TriviaItem[] = await response.json();
-            setItems(data);
-            applySortAndFilter(selectedCategory, sortType, data);
+            const rawData = await response.json();
+            const normalizedItems = normalizeTriviaItems(rawData);
+            setItems(normalizedItems);
 
-            // Extract unique categories safely
-            if (Array.isArray(data)) {
-                const cats = Array.from(new Set(data.filter(item => item && item.category).map(item => item.category))).filter(Boolean);
-                setCategories(cats);
-            }
+            const cats = Array.from(new Set(normalizedItems.map(item => item.category))).filter(Boolean);
+            setCategories(cats);
 
         } catch (error) {
             Alert.alert('エラー', 'データの取得に失敗しました');
@@ -138,7 +184,7 @@ export default function CollectionDetailsScreen() {
     };
 
     const applySortAndFilter = (cat: string | null, sort: 'default' | 'total' | 'user', data: TriviaItem[]) => {
-        let result = data;
+        let result = [...data];
         if (cat) {
             result = result.filter(i => i.category === cat);
         }
@@ -149,6 +195,10 @@ export default function CollectionDetailsScreen() {
         }
         setFilteredItems(result);
     };
+
+    useEffect(() => {
+        applySortAndFilter(selectedCategory, sortType, items);
+    }, [items, selectedCategory, sortType]);
 
     const handleFilter = (category: string | null) => {
         setSelectedCategory(category);
@@ -168,12 +218,8 @@ export default function CollectionDetailsScreen() {
                     pathname: '/details',
                     params: {
                         id: item.id,
-                        title: item.title,
-                        explanation: item.explanation,
-                        source: item.source,
-                        category: item.category,
-                        content: item.content,
-                        user_hee_count: item.user_hee_count
+                        user_hee_count: item.user_hee_count,
+                        image_url: item.image_url ?? ''
                     }
                 });
             }}
@@ -210,7 +256,6 @@ export default function CollectionDetailsScreen() {
                 <Text style={styles.headerTitle} numberOfLines={1}>{normalizedTitle || 'フォルダの中身'}</Text>
                 <View style={{ width: 40 }} />
             </View>
-
             {/* Category Filter */}
             {categories.length > 0 && (
                 <View style={styles.filterContainer}>
@@ -266,7 +311,7 @@ export default function CollectionDetailsScreen() {
                 <FlatList
                     data={filteredItems}
                     renderItem={renderItem}
-                    keyExtractor={item => item.id.toString()}
+                    keyExtractor={item => String(item.id)}
                     contentContainerStyle={styles.listContent}
                     ListEmptyComponent={
                         <View style={styles.emptyContainer}>

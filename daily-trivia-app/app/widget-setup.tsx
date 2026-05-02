@@ -105,7 +105,7 @@ export default function WidgetSetupScreen() {
                 </Animated.View>
 
                 <Animated.View entering={FadeInDown.delay(200).springify()} style={styles.stepsContainer}>
-                    <Text style={styles.stepsTitle}>追加手順</Text>
+                    <Text style={styles.stepsTitle}>ホーム画面の追加手順</Text>
 
                     <View style={styles.step}>
                         <View style={styles.stepNumber}><Text style={styles.stepNumberText}>1</Text></View>
@@ -129,6 +129,31 @@ export default function WidgetSetupScreen() {
                         <View style={styles.stepNumber}><Text style={styles.stepNumberText}>3</Text></View>
                         <View style={styles.stepContent}>
                             <Text style={styles.stepText}>リストから<Text style={styles.bold}>「毎日雑学」</Text>を探して選択し、<Text style={styles.bold}>「ウィジェットを追加」</Text>をタップします。</Text>
+                        </View>
+                    </View>
+                </Animated.View>
+
+                <Animated.View entering={FadeInDown.delay(300).springify()} style={[styles.stepsContainer, styles.lockSection]}>
+                    <Text style={styles.stepsTitle}>ロック画面の追加手順</Text>
+
+                    <View style={styles.step}>
+                        <View style={styles.stepNumber}><Text style={styles.stepNumberText}>1</Text></View>
+                        <View style={styles.stepContent}>
+                            <Text style={styles.stepText}>ロック画面を<Text style={styles.bold}>長押し</Text>して、<Text style={styles.bold}>「カスタマイズ」</Text>をタップします。</Text>
+                        </View>
+                    </View>
+
+                    <View style={styles.step}>
+                        <View style={styles.stepNumber}><Text style={styles.stepNumberText}>2</Text></View>
+                        <View style={styles.stepContent}>
+                            <Text style={styles.stepText}><Text style={styles.bold}>「ロック画面」</Text>を選び、時計の下にある<Text style={styles.bold}>ウィジェット欄</Text>をタップします。</Text>
+                        </View>
+                    </View>
+
+                    <View style={styles.step}>
+                        <View style={styles.stepNumber}><Text style={styles.stepNumberText}>3</Text></View>
+                        <View style={styles.stepContent}>
+                            <Text style={styles.stepText}>候補から<Text style={styles.bold}>「毎日雑学」</Text>を選び、配置後に<Text style={styles.bold}>「完了」</Text>をタップします。</Text>
                         </View>
                     </View>
                 </Animated.View>
@@ -192,6 +217,9 @@ const styles = StyleSheet.create({
         borderRadius: 20,
         padding: 24,
         ...Theme.shadow.small,
+    },
+    lockSection: {
+        marginTop: 16,
     },
     stepsTitle: {
         fontSize: 20,

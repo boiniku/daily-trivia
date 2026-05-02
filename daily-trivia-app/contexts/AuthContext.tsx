@@ -21,6 +21,19 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
+const withTimeout = async <T,>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> => {
+    let timeoutId: ReturnType<typeof setTimeout> | null = null;
+    const timeoutPromise = new Promise<never>((_, reject) => {
+        timeoutId = setTimeout(() => reject(new Error(`${label} timed out`)), timeoutMs);
+    });
+
+    try {
+        return await Promise.race([promise, timeoutPromise]);
+    } finally {
+        if (timeoutId) clearTimeout(timeoutId);
+    }
+};
+
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     const [user, setUser] = useState<FirebaseAuthTypes.User | null>(null);
     const [userId, setUserId] = useState<string | null>(null);
@@ -66,7 +79,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             // Guest mode: We need a Firebase Token for the backend, so use Anonymous Auth
             if (!auth().currentUser) {
                 try {
-                    const anonCred = await auth().signInAnonymously();
+                    const anonCred = await withTimeout(auth().signInAnonymously(), 2500, 'Anonymous sign-in');
                     setUserId(anonCred.user.uid);
                     await syncUserIdToStorage(anonCred.user.uid);
                 } catch (e) {

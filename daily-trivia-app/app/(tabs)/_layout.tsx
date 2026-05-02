@@ -1,9 +1,14 @@
 import { Tabs } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { View, Platform } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Colors, Theme } from '../../constants/Colors';
+import { FLOATING_TAB_BAR_HEIGHT, getFloatingTabBarBottom } from '../../constants/Layout';
 
 export default function TabLayout() {
+    const insets = useSafeAreaInsets();
+    const tabBarBottom = getFloatingTabBarBottom(insets);
+
     return (
         <Tabs
             screenOptions={{
@@ -12,13 +17,13 @@ export default function TabLayout() {
                 tabBarInactiveTintColor: '#BBBBBB',
                 tabBarStyle: {
                     position: 'absolute',
-                    bottom: 50, // Moved up to avoid home button overlap
+                    bottom: tabBarBottom,
                     left: 40,
                     right: 40,
                     elevation: 0,
                     backgroundColor: '#FFFFFF',
                     borderRadius: 40, // Pill shape
-                    height: 70,
+                    height: FLOATING_TAB_BAR_HEIGHT,
                     ...Theme.shadow.pop, // Strong shadow
                     borderTopWidth: 0,
                     paddingBottom: Platform.OS === 'ios' ? 25 : 0, // Center icons vertically
@@ -28,7 +33,7 @@ export default function TabLayout() {
                 },
                 tabBarShowLabel: false,
                 tabBarItemStyle: {
-                    height: 70,
+                    height: FLOATING_TAB_BAR_HEIGHT,
                     paddingTop: 10,
                 }
             }}

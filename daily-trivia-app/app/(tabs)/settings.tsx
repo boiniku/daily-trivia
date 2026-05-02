@@ -7,7 +7,6 @@ import { Colors, Theme } from '../../constants/Colors';
 import { useRevenueCat } from '../../contexts/RevenueCatContext';
 import { useAuth } from '../../contexts/AuthContext';
 import LoginModal from '../../components/LoginModal';
-import { resetReviewStateForTesting, forceTriggerReviewForTesting } from '../../utils/reviewHandler';
 
 export default function SettingsScreen() {
     const router = useRouter();
@@ -67,15 +66,6 @@ export default function SettingsScreen() {
                 }
             ]
         );
-    };
-
-    const handleResetReview = async () => {
-        await resetReviewStateForTesting();
-        Alert.alert("リセット完了", "レビューのカウントとフラグをリセットしました。\nアプリを再起動するか、「強制表示」を試してください。");
-    };
-
-    const handleForceReview = async () => {
-        await forceTriggerReviewForTesting();
     };
 
     return (

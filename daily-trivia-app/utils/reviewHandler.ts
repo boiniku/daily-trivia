@@ -4,49 +4,112 @@ import { Alert, Platform } from 'react-native';
 
 const SWIPE_COUNT_KEY = 'cardSwipeCount';
 const REVIEW_REQUESTED_KEY = 'hasRequestedReview';
+const REVIEW_STATE_KEY = 'reviewStateV2';
 const REVIEW_THRESHOLD = 9;
+const MAX_REVIEW_REQUESTS = 1;
+
+type ReviewState = {
+    swipeCount: number;
+    requestCount: number;
+    lastRequestedAt: string | null;
+    lastAttemptedAt: string | null;
+};
+
+let reviewCheckQueue: Promise<void> = Promise.resolve();
+
+const parseReviewState = (raw: string | null): ReviewState | null => {
+    if (!raw) return null;
+    try {
+        const parsed = JSON.parse(raw);
+        const swipeCount = Number(parsed?.swipeCount);
+        const requestCount = Number(parsed?.requestCount);
+        return {
+            swipeCount: Number.isFinite(swipeCount) && swipeCount >= 0 ? swipeCount : 0,
+            requestCount: Number.isFinite(requestCount) && requestCount >= 0 ? requestCount : 0,
+            lastRequestedAt: typeof parsed?.lastRequestedAt === 'string' ? parsed.lastRequestedAt : null,
+            lastAttemptedAt: typeof parsed?.lastAttemptedAt === 'string' ? parsed.lastAttemptedAt : null,
+        };
+    } catch {
+        return null;
+    }
+};
+
+const loadReviewState = async (): Promise<ReviewState> => {
+    const [stateStr, swipeCountStr, hasRequested] = await Promise.all([
+        AsyncStorage.getItem(REVIEW_STATE_KEY),
+        AsyncStorage.getItem(SWIPE_COUNT_KEY),
+        AsyncStorage.getItem(REVIEW_REQUESTED_KEY),
+    ]);
+
+    const parsed = parseReviewState(stateStr);
+    if (parsed) return parsed;
+
+    const legacySwipeCount = Number.parseInt(swipeCountStr ?? '0', 10);
+    const legacyRequested = hasRequested === 'true';
+    return {
+        swipeCount: Number.isFinite(legacySwipeCount) && legacySwipeCount >= 0 ? legacySwipeCount : 0,
+        requestCount: legacyRequested ? 1 : 0,
+        lastRequestedAt: null,
+        lastAttemptedAt: null,
+    };
+};
+
+const saveReviewState = async (state: ReviewState) => {
+    await Promise.all([
+        AsyncStorage.setItem(REVIEW_STATE_KEY, JSON.stringify(state)),
+        AsyncStorage.setItem(SWIPE_COUNT_KEY, String(state.swipeCount)),
+        AsyncStorage.setItem(REVIEW_REQUESTED_KEY, state.requestCount > 0 ? 'true' : 'false'),
+    ]);
+};
+
+const runCheckAndRequestReview = async () => {
+    const state = await loadReviewState();
+
+    state.swipeCount += 1;
+    console.log(`[ReviewHandler] Card swipe count incremented to: ${state.swipeCount}`);
+
+    if (state.swipeCount < REVIEW_THRESHOLD) {
+        await saveReviewState(state);
+        return;
+    }
+
+    if (state.requestCount >= MAX_REVIEW_REQUESTS) {
+        console.log(`[ReviewHandler] Max review requests reached (${MAX_REVIEW_REQUESTS}). Skipping.`);
+        await saveReviewState(state);
+        return;
+    }
+
+    const nowMs = Date.now();
+    const isAvailable = await StoreReview.isAvailableAsync();
+    const hasAction = await StoreReview.hasAction();
+    const nowIso = new Date(nowMs).toISOString();
+    state.lastAttemptedAt = nowIso;
+
+    if (isAvailable && hasAction) {
+        console.log(`[ReviewHandler] Threshold ${REVIEW_THRESHOLD} reached. Requesting store review...`);
+        await StoreReview.requestReview();
+        state.requestCount += 1;
+        state.lastRequestedAt = nowIso;
+        state.swipeCount = 0;
+    } else {
+        console.log(`[ReviewHandler] Store review blocked. isAvailable: ${isAvailable}, hasAction: ${hasAction}`);
+    }
+
+    await saveReviewState(state);
+};
 
 /**
- * Checks the number of times the app has been opened.
- * If the count reaches the threshold (e.g., 3) and no review has been requested yet,
- * it prompts the user for a store review.
+ * Counts swipes and requests in-app review when threshold is reached.
+ * Calls are queued to avoid AsyncStorage race conditions.
  */
 export const checkAndRequestReview = async () => {
-    try {
-        // 1. Check if we've already requested a review
-        const hasRequested = await AsyncStorage.getItem(REVIEW_REQUESTED_KEY);
-        if (hasRequested === 'true') {
-            console.log('Review already requested in the past. Skipping.');
-            return; // We already asked, don't keep tracking or asking
-        }
+    reviewCheckQueue = reviewCheckQueue
+        .then(() => runCheckAndRequestReview())
+        .catch(error => {
+            console.error('Error in checkAndRequestReview:', error);
+        });
 
-        // 2. Get current swipe count (default to 0)
-        const swipeCountStr = await AsyncStorage.getItem(SWIPE_COUNT_KEY);
-        let swipeCount = swipeCountStr ? parseInt(swipeCountStr, 10) : 0;
-
-        // 3. Increment the count
-        swipeCount += 1;
-        await AsyncStorage.setItem(SWIPE_COUNT_KEY, swipeCount.toString());
-        console.log(`[ReviewHandler] Card swipe count incremented to: ${swipeCount}`);
-
-        // 4. Request review if we reach the threshold
-        if (swipeCount >= REVIEW_THRESHOLD) {
-            const isAvailable = await StoreReview.isAvailableAsync();
-            const hasAction = await StoreReview.hasAction(); // Specifically checks if the current environment supports it
-
-            if (isAvailable && hasAction) {
-                console.log(`[ReviewHandler] Threshold ${REVIEW_THRESHOLD} reached. Requesting store review...`);
-                await StoreReview.requestReview();
-
-                // Mark as requested so we don't ask again
-                await AsyncStorage.setItem(REVIEW_REQUESTED_KEY, 'true');
-            } else {
-                console.log(`[ReviewHandler] Store review blocked. isAvailable: ${isAvailable}, hasAction: ${hasAction}`);
-            }
-        }
-    } catch (error) {
-        console.error('Error in checkAndRequestReview:', error);
-    }
+    return reviewCheckQueue;
 };
 
 /**
@@ -54,8 +117,11 @@ export const checkAndRequestReview = async () => {
  */
 export const resetReviewStateForTesting = async () => {
     try {
-        await AsyncStorage.removeItem(SWIPE_COUNT_KEY);
-        await AsyncStorage.removeItem(REVIEW_REQUESTED_KEY);
+        await Promise.all([
+            AsyncStorage.removeItem(SWIPE_COUNT_KEY),
+            AsyncStorage.removeItem(REVIEW_REQUESTED_KEY),
+            AsyncStorage.removeItem(REVIEW_STATE_KEY),
+        ]);
         console.log('[ReviewHandler] Reset review state successfully.');
     } catch (error) {
         console.error('Error resetting review state:', error);
@@ -74,6 +140,13 @@ export const forceTriggerReviewForTesting = async () => {
         if (isAvailable && hasAction) {
             console.log('[ReviewHandler] Force requesting store review...');
             await StoreReview.requestReview();
+            const state = await loadReviewState();
+            const nowIso = new Date().toISOString();
+            state.requestCount += 1;
+            state.lastAttemptedAt = nowIso;
+            state.lastRequestedAt = nowIso;
+            state.swipeCount = 0;
+            await saveReviewState(state);
         } else {
             console.log(`[ReviewHandler] Force request blocked. isAvailable: ${isAvailable}, hasAction: ${hasAction}`);
 

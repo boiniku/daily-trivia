@@ -1,6 +1,17 @@
 import auth from '@react-native-firebase/auth';
-import { Config } from '../constants/Config';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+
+const withTimeout = async <T,>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> => {
+    let timeoutId: ReturnType<typeof setTimeout> | null = null;
+    const timeoutPromise = new Promise<never>((_, reject) => {
+        timeoutId = setTimeout(() => reject(new Error(`${label} timed out`)), timeoutMs);
+    });
+
+    try {
+        return await Promise.race([promise, timeoutPromise]);
+    } finally {
+        if (timeoutId) clearTimeout(timeoutId);
+    }
+};
 
 /**
  * A wrapper around the standard `fetch` that automatically attaches the
@@ -21,7 +32,7 @@ export async function fetchWithToken(url: string, options: RequestInit = {}) {
     if (!currentUser) {
         try {
             console.log("fetchWithToken: No currentUser found, attempting anonymous sign-in...");
-            const userCred = await auth().signInAnonymously();
+            const userCred = await withTimeout(auth().signInAnonymously(), 2500, 'Anonymous sign-in');
             currentUser = userCred.user;
         } catch (error) {
             console.error("fetchWithToken: Failed to sign in anonymously:", error);
@@ -31,7 +42,7 @@ export async function fetchWithToken(url: string, options: RequestInit = {}) {
     if (currentUser) {
         try {
             // Force refresh is false (fetches from cache if valid)
-            const idToken = await currentUser.getIdToken(false);
+            const idToken = await withTimeout(currentUser.getIdToken(false), 2000, 'Firebase token fetch');
             if (idToken) {
                 headers['Authorization'] = `Bearer ${idToken}`;
             } else {

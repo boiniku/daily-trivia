@@ -2,7 +2,7 @@ import { useState, useCallback, useEffect } from 'react';
 import { View, Text, StyleSheet, Pressable, FlatList, ActivityIndicator, Alert, Platform, Modal, TextInput, RefreshControl } from 'react-native';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import Constants from 'expo-constants';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Crypto from 'expo-crypto';
@@ -11,6 +11,7 @@ import { Config } from '../../constants/Config';
 import { useRevenueCat } from '../../contexts/RevenueCatContext';
 import { BannerAd, BannerAdSize, TestIds } from 'react-native-google-mobile-ads';
 import { Theme, Colors } from '../../constants/Colors';
+import { BANNER_RESERVED_HEIGHT, getTabScreenAdBottomMargin } from '../../constants/Layout';
 import { useAuth } from '../../contexts/AuthContext';
 import { fetchWithToken } from '../../utils/apiClient';
 
@@ -34,6 +35,7 @@ export default function CollectionsScreen() {
     const [refreshing, setRefreshing] = useState(false);
     const { isPro } = useRevenueCat();
     const { userId, loading: authLoading } = useAuth();
+    const insets = useSafeAreaInsets();
 
     // Create Collection State
     const [isModalVisible, setIsModalVisible] = useState(false);
@@ -226,7 +228,7 @@ export default function CollectionsScreen() {
                 alwaysBounceVertical={true}
             />
 
-            <View style={{ alignItems: 'center', marginBottom: 90 }}>
+            <View style={[styles.adsContainer, { marginBottom: getTabScreenAdBottomMargin(insets) }]}>
                 {!isPro && (
                     <BannerAd
                         unitId={Platform.OS === 'ios' ? Config.BANNER_ID_IOS : Config.BANNER_ID_ANDROID}
@@ -322,6 +324,11 @@ const styles = StyleSheet.create({
     listContent: {
         padding: 15,
         paddingBottom: 100, // Bottom padding for content
+    },
+    adsContainer: {
+        minHeight: BANNER_RESERVED_HEIGHT,
+        alignItems: 'center',
+        justifyContent: 'center',
     },
     folderItem: {
         flex: 1,

@@ -60,6 +60,7 @@ class TriviaSchema(BaseModel):
     explanation: str
     source: str
     category: str
+    image_url: Optional[str] = None
     hee_count: int = 0
     date: Optional[datetime.date] = None
     

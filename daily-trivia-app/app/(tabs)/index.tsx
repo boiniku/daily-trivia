@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { View, Text, StyleSheet, Pressable, ActivityIndicator, Alert, Platform, AppState, AppStateStatus } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import { Link, useRouter, useFocusEffect, useLocalSearchParams } from 'expo-router';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import Constants from 'expo-constants';
 import TriviaCard from '../../components/TriviaCard';
@@ -15,6 +15,7 @@ import { useRevenueCat } from '../../contexts/RevenueCatContext';
 import { Config } from '../../constants/Config';
 import { fetchWithToken } from '../../utils/apiClient';
 import { Theme, Colors } from '../../constants/Colors';
+import { BANNER_RESERVED_HEIGHT, getTabScreenAdBottomMargin } from '../../constants/Layout';
 import { checkAndRequestReview } from '../../utils/reviewHandler';
 
 // Helper to determine backend URL
@@ -29,6 +30,7 @@ interface TriviaItem {
     explanation: string;
     source: string;
     category: string;
+    image_url?: string | null;
 }
 
 import { useAuth } from '../../contexts/AuthContext';
@@ -43,6 +45,7 @@ export default function HomeScreen() {
     const DAILY_LIMIT = 3;
     const { isPro, currentOffering, purchasePackage } = useRevenueCat();
     const { userId } = useAuth(); // Use AuthContext
+    const insets = useSafeAreaInsets();
 
     const appState = useRef(AppState.currentState);
     const isFetchingRef = useRef(false);
@@ -134,6 +137,7 @@ export default function HomeScreen() {
                 explanation: getParamString(params.explanation) ?? '解説データがありません',
                 source: getParamString(params.source) ?? '',
                 category: getParamString(params.category) ?? '未分類',
+                image_url: getParamString(params.image_url) ?? '',
                 from_widget: 'true'
             }
         });
@@ -447,7 +451,8 @@ export default function HomeScreen() {
                 explanation: item.explanation,
                 source: item.source,
                 category: item.category,
-                content: item.content
+                content: item.content,
+                image_url: item.image_url ?? ''
             }
         });
     };
@@ -635,7 +640,7 @@ export default function HomeScreen() {
                 )}
             </View>
 
-            <View style={styles.adsContainer}>
+            <View style={[styles.adsContainer, { marginBottom: getTabScreenAdBottomMargin(insets) }]}>
                 {/* Banner Ad */}
                 {!isPro && (
                     <BannerAd
@@ -749,10 +754,9 @@ const styles = StyleSheet.create({
         fontSize: 18,
     },
     adsContainer: {
-        height: 60,
+        minHeight: BANNER_RESERVED_HEIGHT,
         backgroundColor: 'transparent',
         justifyContent: 'center',
         alignItems: 'center',
-        marginBottom: 90,
     },
 });

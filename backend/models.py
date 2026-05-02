@@ -12,6 +12,7 @@ class Trivia(Base):
     explanation = Column(Text)
     source = Column(String)
     category = Column(String)
+    image_url = Column(String, nullable=True)
     hee_count = Column(Integer, default=0) # Added for "Hee" button
     embedding = Column(JSON, nullable=True) # Vector for similarity check
 

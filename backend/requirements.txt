@@ -9,3 +9,4 @@ supabase
 gunicorn
 openai
 firebase-admin
+boto3

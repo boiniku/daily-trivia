@@ -9,6 +9,7 @@ create table public.trivia (
   explanation text, -- Detailed explanation
   source_url text,
   category text,
+  image_url text, -- Optional public Cloudflare R2 image URL
   published_date date unique, -- One main trivia per day, or use this to schedule
   created_at timestamp with time zone default timezone('utc'::text, now()) not null
 );

@@ -1,14 +1,12 @@
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { View, Text, StyleSheet, ScrollView, Pressable, Modal, FlatList, ActivityIndicator, Alert, TouchableOpacity, Platform, Linking } from 'react-native';
-import { BannerAd, BannerAdSize, TestIds } from 'react-native-google-mobile-ads';
+import { View, Text, StyleSheet, ScrollView, Pressable, Modal, FlatList, ActivityIndicator, Alert, TouchableOpacity, Platform, Linking, Image } from 'react-native';
+import { BannerAd, BannerAdSize } from 'react-native-google-mobile-ads';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { Theme, Colors } from '../constants/Colors';
 import { useRevenueCat } from '../contexts/RevenueCatContext';
 import { useState, useEffect } from 'react';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Config } from '../constants/Config';
-import * as Crypto from 'expo-crypto';
 import { useAuth } from '../contexts/AuthContext';
 import HeeButton from '../components/HeeButton';
 import { fetchWithToken } from '../utils/apiClient';
@@ -32,48 +30,65 @@ export default function DetailsScreen() {
     const { isPro } = useRevenueCat();
     const { userId } = useAuth();
 
-    // Data passed from index.tsx
-    const id = params.id as string;
+    const getSingleParam = (value: string | string[] | undefined) => {
+        if (Array.isArray(value)) return value[0] ?? '';
+        return value ?? '';
+    };
+
+    const idParam = getSingleParam(params.id);
+    const triviaId = Number(idParam);
+    const hasValidTriviaId = Number.isFinite(triviaId);
+    const initialUserHeeCount = Number(getSingleParam(params.user_hee_count));
 
     // State to hold potentially fetched full data
     const [fullData, setFullData] = useState({
-        title: params.title as string || 'タイトルなし',
-        explanation: params.explanation as string || '解説データがありません',
-        source: params.source as string || '',
-        category: params.category as string || '未分類',
-        content: params.content as string || '',
-        user_hee_count: params.user_hee_count ? parseInt(params.user_hee_count as string, 10) : 0
+        title: getSingleParam(params.title) || 'タイトルなし',
+        explanation: getSingleParam(params.explanation) || '解説データがありません',
+        source: getSingleParam(params.source) || '',
+        category: getSingleParam(params.category) || '未分類',
+        content: getSingleParam(params.content) || '',
+        image_url: getSingleParam(params.image_url) || '',
+        user_hee_count: Number.isFinite(initialUserHeeCount) ? initialUserHeeCount : 0
     });
     const [loadingDetails, setLoadingDetails] = useState(false);
 
 
-    // Fetch full data if explanation is missing (e.g. from Widget deep link)
+    // Always fetch by id for consistency and to avoid relying on long route params.
     useEffect(() => {
         const fetchFullDetails = async () => {
-            if ((!params.explanation || params.explanation === '解説データがありません') && id) {
-                setLoadingDetails(true);
-                try {
-                    const response = await fetchWithToken(`${getBackendUrl()}/trivia/${id}`);
-                    if (response.ok) {
-                        const data = await response.json();
-                        setFullData({
-                            title: data.title || fullData.title,
-                            explanation: data.explanation || '解説データがありません',
-                            source: data.source || fullData.source,
-                            category: data.category || fullData.category,
-                            content: data.content || fullData.content,
-                            user_hee_count: data.user_hee_count !== undefined ? data.user_hee_count : fullData.user_hee_count
-                        });
-                    }
-                } catch (e) {
-                    console.error("Failed to fetch full trivia details", e);
-                } finally {
-                    setLoadingDetails(false);
+            if (!hasValidTriviaId) return;
+            setLoadingDetails(true);
+            try {
+                const response = await fetchWithToken(`${getBackendUrl()}/trivia/${triviaId}`);
+                if (response.ok) {
+                    const data = await response.json();
+                    setFullData(prev => ({
+                        title: data.title || prev.title,
+                        explanation: data.explanation || '解説データがありません',
+                        source: data.source || prev.source,
+                        category: data.category || prev.category,
+                        content: data.content || prev.content,
+                        image_url: data.image_url || prev.image_url,
+                        user_hee_count: data.user_hee_count !== undefined ? data.user_hee_count : prev.user_hee_count
+                    }));
                 }
+            } catch (e) {
+                console.error("Failed to fetch full trivia details", e);
+            } finally {
+                setLoadingDetails(false);
             }
         };
         fetchFullDetails();
-    }, [id, params.explanation]);
+    }, [hasValidTriviaId, triviaId]);
+
+    const triviaImageUrl = (() => {
+        const rawUrl = fullData.image_url.trim();
+        if (!rawUrl) return '';
+        if (/^https?:\/\//i.test(rawUrl) || rawUrl.startsWith('data:')) return rawUrl;
+        const baseUrl = Config.TRIVIA_IMAGE_R2_BASE_URL.trim().replace(/\/+$/, '');
+        const path = rawUrl.replace(/^\/+/, '');
+        return baseUrl ? `${baseUrl}/${path}` : '';
+    })();
 
     // Add to Folder State
     const [isModalVisible, setIsModalVisible] = useState(false);
@@ -114,14 +129,11 @@ export default function DetailsScreen() {
     const addToCollection = async (collectionId: number) => {
         setAdding(true);
         try {
-            if (!userId) return;
+            if (!userId || !hasValidTriviaId) return;
             const response = await fetchWithToken(`${getBackendUrl()}/collections/${collectionId}/items`, {
                 method: 'POST',
                 body: JSON.stringify({
-                    trivia_id: id, // Assuming we have the ID, wait. params.id might be undefined if not passed?
-                    // We need to ensure we have the trivia ID or content to save.
-                    // The backend `POST /collections/{id}/items` expects `trivia_id`.
-                    // Does `details.tsx` receive `id`? Yes, line 28.
+                    trivia_id: triviaId,
                 })
             });
 
@@ -175,18 +187,31 @@ export default function DetailsScreen() {
 
                     <Text style={styles.title}>{fullData.title}</Text>
 
+                    {triviaImageUrl ? (
+                        <Image
+                            source={{ uri: triviaImageUrl }}
+                            style={styles.heroImage}
+                            resizeMode="cover"
+                            accessibilityLabel={`${fullData.title}の写真`}
+                        />
+                    ) : null}
+
                     <View style={styles.cardSection}>
                         <Text style={styles.mainContent}>{fullData.content}</Text>
                     </View>
 
                     {/* Action Buttons Row */}
                     <View style={styles.actionRow}>
-                        <HeeButton triviaId={parseInt(id, 10)} onHeeAdded={(count) => {
-                            setFullData(prev => ({
-                                ...prev,
-                                user_hee_count: prev.user_hee_count + count
-                            }));
-                        }} />
+                        {hasValidTriviaId ? (
+                            <HeeButton triviaId={triviaId} onHeeAdded={(count) => {
+                                setFullData(prev => ({
+                                    ...prev,
+                                    user_hee_count: prev.user_hee_count + count
+                                }));
+                            }} />
+                        ) : (
+                            <View />
+                        )}
 
                         <Pressable style={styles.shareButton} onPress={() => {
                             const shareText = `【${fullData.title}】\n${fullData.content}\n\n#毎日雑学`;
@@ -198,6 +223,12 @@ export default function DetailsScreen() {
                             <Text style={styles.shareButtonText}>ポスト</Text>
                         </Pressable>
                     </View>
+
+                    {!hasValidTriviaId && (
+                        <View style={styles.section}>
+                            <Text style={styles.text}>雑学IDを読み取れなかったため、操作を一部無効化しています。</Text>
+                        </View>
+                    )}
 
                     <View style={styles.section}>
                         <View style={styles.sectionHeader}>
@@ -353,6 +384,13 @@ const styles = StyleSheet.create({
         marginBottom: 32,
         borderWidth: 2, // Thicker border
         borderColor: '#EFEFEF',
+    },
+    heroImage: {
+        width: '100%',
+        aspectRatio: 16 / 9,
+        borderRadius: Theme.borderRadius.l,
+        marginBottom: 24,
+        backgroundColor: '#EFEFEF',
     },
     mainContent: {
         fontSize: 18,
