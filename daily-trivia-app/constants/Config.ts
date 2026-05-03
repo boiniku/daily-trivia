@@ -7,6 +7,7 @@ export const Config = {
     // If you want to use local backend, change this to your local IP or localhost logic
     BACKEND_URL: 'https://daily-trivia-e7ge.onrender.com',
     TRIVIA_IMAGE_R2_BASE_URL: process.env.EXPO_PUBLIC_TRIVIA_IMAGE_R2_BASE_URL || '',
+    APP_VERSION: '1.0.5',
 
     // API Keys (loaded from env or fallback)
     REVENUECAT_IOS_KEY: process.env.EXPO_PUBLIC_REVENUECAT_IOS_API_KEY || '',

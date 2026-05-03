@@ -200,7 +200,7 @@ export default function SettingsScreen() {
                     <Text style={styles.sectionHeader}>アプリについて</Text>
                     <View style={styles.infoRow}>
                         <Text style={styles.infoLabel}>バージョン</Text>
-                        <Text style={styles.infoValue}>1.0.4</Text>
+                        <Text style={styles.infoValue}>1.0.5</Text>
                     </View>
                     <Pressable style={styles.infoRow} onPress={() => Linking.openURL('https://docs.google.com/document/d/1_K7priRhIk6OSG3c_YQBngnW4uVpTcCOdIEHVN7jFnw/edit?usp=sharing')}>
                         <Text style={styles.infoLabel}>利用規約</Text>

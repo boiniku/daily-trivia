@@ -63,6 +63,9 @@ except ImportError:
     validator = None
 
 TRIVIA_IMAGE_R2_BASE_URL = os.getenv("TRIVIA_IMAGE_R2_BASE_URL", "").strip().rstrip("/")
+MINIMUM_SUPPORTED_APP_VERSION = os.getenv("MINIMUM_SUPPORTED_APP_VERSION", "1.0.5").strip()
+LATEST_APP_VERSION = os.getenv("LATEST_APP_VERSION", "1.0.5").strip()
+APP_STORE_URL = os.getenv("APP_STORE_URL", "https://apps.apple.com/app/id6758872525").strip()
 
 
 def build_trivia_image_url(raw_value: Optional[str]) -> Optional[str]:
@@ -117,6 +120,15 @@ class CollectionSchema(BaseModel):
 @app.get("/")
 def read_root():
     return {"message": "Hello from Daily Trivia Backend with Neon DB!"}
+
+
+@app.get("/app/version")
+def get_app_version():
+    return {
+        "minimum_supported_version": MINIMUM_SUPPORTED_APP_VERSION,
+        "latest_version": LATEST_APP_VERSION,
+        "app_store_url": APP_STORE_URL,
+    }
 
 @app.get("/trivia/today", response_model=List[TriviaSchema])
 def get_todays_trivia(
