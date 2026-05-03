@@ -188,12 +188,15 @@ export default function DetailsScreen() {
                     <Text style={styles.title}>{fullData.title}</Text>
 
                     {triviaImageUrl ? (
-                        <Image
-                            source={{ uri: triviaImageUrl }}
-                            style={styles.heroImage}
-                            resizeMode="cover"
-                            accessibilityLabel={`${fullData.title}の写真`}
-                        />
+                        <View style={styles.heroImageBlock}>
+                            <Image
+                                source={{ uri: triviaImageUrl }}
+                                style={styles.heroImage}
+                                resizeMode="cover"
+                                accessibilityLabel={`${fullData.title}の写真`}
+                            />
+                            <Text style={styles.imageDisclaimer}>画像はイメージです</Text>
+                        </View>
                     ) : null}
 
                     <View style={styles.cardSection}>
@@ -389,8 +392,17 @@ const styles = StyleSheet.create({
         width: '100%',
         aspectRatio: 16 / 9,
         borderRadius: Theme.borderRadius.l,
-        marginBottom: 24,
         backgroundColor: '#EFEFEF',
+    },
+    heroImageBlock: {
+        marginBottom: 24,
+    },
+    imageDisclaimer: {
+        marginTop: 6,
+        fontSize: 12,
+        color: Colors.light.subtext,
+        textAlign: 'right',
+        fontWeight: '500',
     },
     mainContent: {
         fontSize: 18,

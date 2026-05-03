@@ -11,8 +11,11 @@ import Animated, {
 import { Ionicons } from '@expo/vector-icons';
 import { Theme, Colors } from '../constants/Colors';
 
-export default function SwipeGuide() {
+type GuideMode = 'tap' | 'swipe';
+
+export default function SwipeGuide({ mode = 'swipe' }: { mode?: GuideMode }) {
     const translateX = useSharedValue(0);
+    const tapScale = useSharedValue(1);
 
     useEffect(() => {
         // Horizontal swiping animation
@@ -42,6 +45,19 @@ export default function SwipeGuide() {
         );
     }, []);
 
+    useEffect(() => {
+        tapScale.value = withRepeat(
+            withSequence(
+                withTiming(1.18, { duration: 220, easing: Easing.out(Easing.ease) }),
+                withTiming(1, { duration: 180, easing: Easing.inOut(Easing.ease) }),
+                withTiming(1.18, { duration: 220, easing: Easing.out(Easing.ease) }),
+                withTiming(1, { duration: 600, easing: Easing.inOut(Easing.ease) })
+            ),
+            -1,
+            false
+        );
+    }, []);
+
     const animatedStyle = useAnimatedStyle(() => {
         return {
             transform: [{ translateX: translateX.value }],
@@ -54,15 +70,33 @@ export default function SwipeGuide() {
         };
     });
 
+    const tapAnimatedStyle = useAnimatedStyle(() => {
+        return {
+            transform: [{ scale: tapScale.value }],
+        };
+    });
+
     return (
         <View style={styles.container} pointerEvents="none">
             <Animated.View style={[styles.overlay, overlayAnimatedStyle]}>
-                <Animated.View style={[styles.iconContainer, animatedStyle]}>
-                    <Ionicons name="hand-right" size={50} color="rgba(255, 255, 255, 0.9)" />
-                </Animated.View>
-                <View style={styles.textContainer}>
-                    <Text style={styles.text}>左右にスワイプして</Text>
-                    <Text style={styles.text}>次の雑学へ</Text>
+                <View style={styles.guideRow}>
+                    {mode === 'tap' ? (
+                        <View style={styles.guideItemWide}>
+                            <Animated.View style={[styles.iconContainer, tapAnimatedStyle]}>
+                                <Ionicons name="finger-print" size={52} color="rgba(255, 255, 255, 0.9)" />
+                            </Animated.View>
+                            <Text style={styles.text}>雑学カードをダブルタップ</Text>
+                            <Text style={styles.subText}>へぇを送れます</Text>
+                        </View>
+                    ) : (
+                        <View style={styles.guideItemWide}>
+                            <Animated.View style={[styles.iconContainer, animatedStyle]}>
+                                <Ionicons name="hand-right" size={52} color="rgba(255, 255, 255, 0.9)" />
+                            </Animated.View>
+                            <Text style={styles.text}>左右にスワイプ</Text>
+                            <Text style={styles.subText}>次の雑学へ</Text>
+                        </View>
+                    )}
                 </View>
             </Animated.View>
         </View>
@@ -79,17 +113,23 @@ const styles = StyleSheet.create({
     },
     overlay: {
         backgroundColor: 'rgba(0, 0, 0, 0.25)', // Lighter background
-        paddingVertical: 20,
-        paddingHorizontal: 40,
+        paddingVertical: 18,
+        paddingHorizontal: 22,
         borderRadius: Theme.borderRadius.l,
         alignItems: 'center',
         justifyContent: 'center',
     },
+    guideRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    guideItemWide: {
+        width: 240,
+        alignItems: 'center',
+    },
     iconContainer: {
         marginBottom: 10,
-    },
-    textContainer: {
-        alignItems: 'center',
     },
     text: {
         color: 'white',
@@ -99,5 +139,16 @@ const styles = StyleSheet.create({
         textShadowOffset: { width: 0, height: 1 },
         textShadowRadius: 3,
         marginTop: 4,
+        textAlign: 'center',
+    },
+    subText: {
+        color: 'white',
+        fontSize: 14,
+        fontWeight: '600',
+        textShadowColor: 'rgba(0,0,0,0.5)',
+        textShadowOffset: { width: 0, height: 1 },
+        textShadowRadius: 3,
+        marginTop: 4,
+        textAlign: 'center',
     }
 });

@@ -10,3 +10,5 @@ gunicorn
 openai
 firebase-admin
 boto3
+pillow
+streamlit-cropper

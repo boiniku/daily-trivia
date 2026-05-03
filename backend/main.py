@@ -7,6 +7,7 @@ from database import get_db, AppSessionLocal
 from models import Trivia, Collection, CollectionItem, DailyAssignment, TriviaHee
 import random
 import datetime
+import os
 from auth import get_current_user_id, get_optional_user_id  # Added for token verification
 from fastapi.responses import JSONResponse
 import firebase_admin
@@ -52,6 +53,27 @@ app.include_router(user.router)
 
 # Pydantic Schemas
 from pydantic import BaseModel
+try:
+    from pydantic import field_validator
+except ImportError:
+    field_validator = None
+try:
+    from pydantic import validator
+except ImportError:
+    validator = None
+
+TRIVIA_IMAGE_R2_BASE_URL = os.getenv("TRIVIA_IMAGE_R2_BASE_URL", "").strip().rstrip("/")
+
+
+def build_trivia_image_url(raw_value: Optional[str]) -> Optional[str]:
+    value = (raw_value or "").strip()
+    if not value:
+        return None
+    if value.startswith(("http://", "https://", "data:")):
+        return value
+    if not TRIVIA_IMAGE_R2_BASE_URL:
+        return value
+    return f"{TRIVIA_IMAGE_R2_BASE_URL}/{value.lstrip('/')}"
 
 class TriviaSchema(BaseModel):
     id: int
@@ -63,6 +85,16 @@ class TriviaSchema(BaseModel):
     image_url: Optional[str] = None
     hee_count: int = 0
     date: Optional[datetime.date] = None
+
+    if field_validator:
+        @field_validator("image_url", mode="before")
+        @classmethod
+        def normalize_image_url(cls, value):
+            return build_trivia_image_url(value)
+    elif validator:
+        @validator("image_url", pre=True, always=True)
+        def normalize_image_url(cls, value):
+            return build_trivia_image_url(value)
     
     class Config:
         from_attributes = True

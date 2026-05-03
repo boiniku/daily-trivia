@@ -44,7 +44,7 @@ export default function TabLayout() {
                     title: 'Today',
                     tabBarIcon: ({ color, focused }) => (
                         <View style={{ alignItems: 'center', justifyContent: 'center', height: 46 }}>
-                            <Ionicons name={focused ? "sparkles" : "sparkles-outline"} size={32} color={color} />
+                            <Ionicons name={focused ? "bulb" : "bulb-outline"} size={32} color={color} />
                             {focused && <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: color, position: 'absolute', bottom: 0 }} />}
                         </View>
                     ),

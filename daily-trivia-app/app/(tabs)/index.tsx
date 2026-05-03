@@ -40,7 +40,7 @@ export default function HomeScreen() {
     const [currentIndex, setCurrentIndex] = useState(0);
     const [triviaList, setTriviaList] = useState<TriviaItem[]>([]);
     const [loading, setLoading] = useState(true);
-    const [showSwipeGuide, setShowSwipeGuide] = useState(false);
+    const [showGuideMode, setShowGuideMode] = useState<'tap' | 'swipe' | null>(null);
     const [hasSeenWidgetGuide, setHasSeenWidgetGuide] = useState(true); // Default true, updated accurately on mount and focus
     const DAILY_LIMIT = 3;
     const { isPro, currentOffering, purchasePackage } = useRevenueCat();
@@ -52,6 +52,7 @@ export default function HomeScreen() {
     const isFetchingMoreRef = useRef(false); // Prevents infinite swiping API flood
     const [errorFetchingMore, setErrorFetchingMore] = useState(false); // New state for fetchMoreTrivia errors
     const currentIndexRef = useRef(currentIndex); // Ensures saveState uses exact latest index during async fetch
+    const shouldShowSwipeAfterTapGuideRef = useRef(true);
 
     // Helper to get effective date (changes at 2:00 AM)
     const getEffectiveDate = useCallback(() => {
@@ -82,29 +83,38 @@ export default function HomeScreen() {
 
     const swipeTimerRef = useRef<NodeJS.Timeout | null>(null);
 
+    const showTapGuide = (shouldShowSwipeAfterTap: boolean) => {
+        shouldShowSwipeAfterTapGuideRef.current = shouldShowSwipeAfterTap;
+        setShowGuideMode('tap');
+
+        if (swipeTimerRef.current) {
+            clearTimeout(swipeTimerRef.current);
+        }
+
+        swipeTimerRef.current = setTimeout(() => {
+            if (shouldShowSwipeAfterTapGuideRef.current) {
+                AsyncStorage.setItem('hasSeenSwipeGuide', 'true').catch(() => {});
+                setShowGuideMode('swipe');
+            } else {
+                setShowGuideMode(null);
+            }
+        }, 8000);
+    };
+
     const checkSwipeGuide = async () => {
         try {
             // Only check if tutorial is already done
             const hasSeen = await AsyncStorage.getItem('hasSeenTutorial');
             if (hasSeen !== 'true') return;
 
-            const hasSeenSwipe = await AsyncStorage.getItem('hasSeenSwipeGuide');
-            if (hasSeenSwipe !== 'true') {
-                // Set the flag immediately so it truly only shows once
-                await AsyncStorage.setItem('hasSeenSwipeGuide', 'true');
+            const hasSeenInteractionGuide = await AsyncStorage.getItem('hasSeenInteractionGuide');
+            if (hasSeenInteractionGuide !== 'true') {
+                const hasSeenOldSwipeGuide = await AsyncStorage.getItem('hasSeenSwipeGuide');
+                await AsyncStorage.setItem('hasSeenInteractionGuide', 'true');
 
                 // Delay slightly to ensure render is ready
                 setTimeout(() => {
-                    setShowSwipeGuide(true);
-
-                    if (swipeTimerRef.current) {
-                        clearTimeout(swipeTimerRef.current);
-                    }
-
-                    // Auto hide after 8 seconds
-                    swipeTimerRef.current = setTimeout(() => {
-                        setShowSwipeGuide(false);
-                    }, 8000);
+                    showTapGuide(hasSeenOldSwipeGuide !== 'true');
                 }, 500);
             }
         } catch (e) {
@@ -190,14 +200,11 @@ export default function HomeScreen() {
                     const pending = await AsyncStorage.getItem('pendingSwipeGuide');
                     if (pending === 'true') {
                         await AsyncStorage.removeItem('pendingSwipeGuide');
-                        const hasSeenSwipe = await AsyncStorage.getItem('hasSeenSwipeGuide');
-                        if (hasSeenSwipe !== 'true') {
-                            await AsyncStorage.setItem('hasSeenSwipeGuide', 'true');
-                            setShowSwipeGuide(true);
-                            if (swipeTimerRef.current) clearTimeout(swipeTimerRef.current);
-                            swipeTimerRef.current = setTimeout(() => {
-                                setShowSwipeGuide(false);
-                            }, 8000);
+                        const hasSeenInteractionGuide = await AsyncStorage.getItem('hasSeenInteractionGuide');
+                        if (hasSeenInteractionGuide !== 'true') {
+                            const hasSeenOldSwipeGuide = await AsyncStorage.getItem('hasSeenSwipeGuide');
+                            await AsyncStorage.setItem('hasSeenInteractionGuide', 'true');
+                            showTapGuide(hasSeenOldSwipeGuide !== 'true');
                         }
                     }
                 } catch (e) {
@@ -410,8 +417,9 @@ export default function HomeScreen() {
         console.log(`Swiped ${direction}`);
 
         // Dismiss the swipe guide if it's currently showing
-        if (showSwipeGuide) {
-            setShowSwipeGuide(false);
+        if (showGuideMode === 'swipe') {
+            setShowGuideMode(null);
+            AsyncStorage.setItem('hasSeenSwipeGuide', 'true').catch(() => {});
             if (swipeTimerRef.current) clearTimeout(swipeTimerRef.current);
         }
 
@@ -460,6 +468,15 @@ export default function HomeScreen() {
     const handleDoubleTapHee = async () => {
         const item = triviaList[currentIndex];
         if (!item || !userId) return;
+        if (showGuideMode === 'tap') {
+            if (swipeTimerRef.current) clearTimeout(swipeTimerRef.current);
+            if (shouldShowSwipeAfterTapGuideRef.current) {
+                AsyncStorage.setItem('hasSeenSwipeGuide', 'true').catch(() => {});
+                setShowGuideMode('swipe');
+            } else {
+                setShowGuideMode(null);
+            }
+        }
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
         try {
             await fetchWithToken(`${getBackendUrl()}/trivia/${item.id}/hee`, {
@@ -623,8 +640,8 @@ export default function HomeScreen() {
                         )}
 
                         {/* Swipe Guide Overlay */}
-                        {showSwipeGuide && triviaList.length > 0 && (
-                            <SwipeGuide />
+                        {showGuideMode && triviaList.length > 0 && (
+                            <SwipeGuide mode={showGuideMode} />
                         )}
                     </>
                 ) : (
