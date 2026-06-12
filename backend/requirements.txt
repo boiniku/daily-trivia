@@ -12,3 +12,4 @@ firebase-admin
 boto3
 pillow
 streamlit-cropper
+requests

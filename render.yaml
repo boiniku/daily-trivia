@@ -4,9 +4,23 @@ services:
     env: python
     rootDir: backend
     buildCommand: pip install -r requirements.txt
-    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    startCommand: python migrate_trivia_candidates.py && uvicorn main:app --host 0.0.0.0 --port $PORT
     envVars:
       - key: DATABASE_URL
+        sync: false
+      - key: APP_DATABASE_URL
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: LINE_CHANNEL_SECRET
+        sync: false
+      - key: LINE_CHANNEL_ACCESS_TOKEN
+        sync: false
+      - key: LINE_ADMIN_USER_IDS
+        sync: false
+      - key: CANDIDATE_EDITOR_SECRET
+        generateValue: true
+      - key: PUBLIC_BASE_URL
         sync: false
       - key: PYTHON_VERSION
         value: 3.13.0

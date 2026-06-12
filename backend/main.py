@@ -50,6 +50,8 @@ app.add_middleware(
 # Include Routers
 from routers import user
 app.include_router(user.router)
+from routers import line_admin
+app.include_router(line_admin.router)
 
 # Pydantic Schemas
 from pydantic import BaseModel

@@ -60,9 +60,17 @@ class TriviaCandidate(Base):
     explanation = Column(Text)
     source = Column(String)
     category = Column(String)
+    image_url = Column(String, nullable=True)
     status = Column(String, default="pending", index=True) # pending, approved, rejected
     created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    reviewed_at = Column(DateTime, nullable=True)
+    reviewed_by = Column(String, nullable=True)
+    published_trivia_id = Column(Integer, ForeignKey("trivia.id"), nullable=True, unique=True)
+    line_sent_at = Column(DateTime, nullable=True)
     embedding = Column(JSON, nullable=True)
+
+    published_trivia = relationship("Trivia")
 
 class TriviaHee(Base):
     __tablename__ = "trivia_hees"
