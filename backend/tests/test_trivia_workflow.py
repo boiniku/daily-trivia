@@ -12,7 +12,9 @@ from models import Base, Trivia, TriviaCandidate
 from services.line_bot import make_editor_token, read_editor_token, verify_signature
 from services.trivia_candidates import (
     CandidateError,
+    DuplicateCandidateError,
     approve_candidate,
+    create_candidate,
     create_candidates,
     reject_candidate,
     update_candidate,
@@ -63,6 +65,49 @@ class TriviaWorkflowTests(unittest.TestCase):
 
         with self.assertRaises(CandidateError):
             approve_candidate(self.db, candidate.id, "test")
+        self.assertEqual(self.db.query(Trivia).count(), 0)
+        refreshed = self.db.query(TriviaCandidate).filter_by(id=candidate.id).one()
+        self.assertEqual(refreshed.status, "rejected")
+        self.assertIsNone(refreshed.published_trivia_id)
+
+    def test_manual_candidate_rejects_similar_published_trivia(self):
+        self.db.add(Trivia(
+            title="タコには心臓が3つある",
+            content="タコは全身用とエラ用を合わせて3つの心臓を持っています。",
+            explanation="",
+            source="",
+            category="生物",
+        ))
+        self.db.commit()
+
+        with self.assertRaises(DuplicateCandidateError):
+            create_candidate(self.db, {
+                "title": "タコの心臓は3つある",
+                "content": "タコには役割の違う心臓が合計3つあります。",
+                "category": "生物",
+            })
+
+    def test_generated_candidates_filter_duplicates(self):
+        existing = create_candidate(self.db, {
+            "title": "ハチミツは腐りにくい",
+            "content": "糖度が高いハチミツは非常に腐りにくい食品です。",
+            "category": "食べ物",
+        })
+        created = create_candidates(self.db, [
+            {
+                "title": "ハチミツは腐りにくい",
+                "content": "糖度が高いハチミツは非常に腐りにくい食品です。",
+                "category": "食べ物",
+            },
+            {
+                "title": "金星の1日は1年より長い",
+                "content": "金星は自転が遅く、1日の長さが公転周期よりも長くなります。",
+                "category": "宇宙・天体",
+            },
+        ])
+
+        self.assertEqual(len(created), 1)
+        self.assertNotEqual(created[0].id, existing.id)
 
 
 class LineSecurityTests(unittest.TestCase):

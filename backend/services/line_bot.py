@@ -148,5 +148,25 @@ def candidate_flex_message(candidate: TriviaCandidate) -> dict:
     }
 
 
+def new_candidate_message() -> dict:
+    public_base_url = os.getenv("PUBLIC_BASE_URL", "").rstrip("/")
+    if not public_base_url:
+        raise RuntimeError("PUBLIC_BASE_URL is not configured")
+    url = (
+        f"{public_base_url}/admin/candidates/new?"
+        f"{urlencode({'token': make_editor_token(0)})}"
+    )
+    return {
+        "type": "template",
+        "altText": "新しい雑学を手入力",
+        "template": {
+            "type": "buttons",
+            "title": "新しい雑学",
+            "text": "スマホで文章と画像を入力できます。",
+            "actions": [{"type": "uri", "label": "登録フォームを開く", "uri": url}],
+        },
+    }
+
+
 def mark_line_sent(candidate: TriviaCandidate) -> None:
     candidate.line_sent_at = datetime.utcnow()
