@@ -6,6 +6,7 @@ import time
 import unittest
 
 from sqlalchemy import create_engine
+from sqlalchemy import inspect
 from sqlalchemy.orm import sessionmaker
 
 from models import Base, Trivia, TriviaCandidate
@@ -29,6 +30,20 @@ class TriviaWorkflowTests(unittest.TestCase):
 
     def tearDown(self):
         self.db.close()
+
+    def test_candidate_schema_contains_workflow_columns(self):
+        columns = {
+            column["name"]
+            for column in inspect(self.db.get_bind()).get_columns("trivia_candidates")
+        }
+        self.assertTrue({
+            "image_url",
+            "updated_at",
+            "reviewed_at",
+            "reviewed_by",
+            "published_trivia_id",
+            "line_sent_at",
+        }.issubset(columns))
 
     def test_candidate_can_be_edited_and_approved_once(self):
         candidate = create_candidates(self.db, [{
