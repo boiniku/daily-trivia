@@ -58,7 +58,10 @@ def _parse_generate_command(text: str) -> tuple[str, int] | None:
     count = 3
     if parts and parts[-1].isdigit():
         count = max(1, min(int(parts.pop()), 10))
-    return " ".join(parts) or "ランダム", count
+    topic = " ".join(parts).strip()
+    if topic.lower() in {"", "ランダム", "おまかせ", "お任せ", "random"}:
+        topic = ""
+    return topic, count
 
 
 def _generate_and_push(user_id: str, topic: str, count: int) -> None:
@@ -127,7 +130,8 @@ async def line_webhook(request: Request, background_tasks: BackgroundTasks):
             command = _parse_generate_command(message_text)
             if command:
                 topic, count = command
-                reply_message(reply_token, [_text_message(f"「{topic}」の雑学を{count}件生成します。")])
+                subject = f"「{topic}」" if topic else "幅広いジャンル"
+                reply_message(reply_token, [_text_message(f"{subject}の雑学を{count}件生成します。")])
                 background_tasks.add_task(_generate_and_push, user_id, topic, count)
             elif message_text in {"候補", "承認待ち", "一覧"}:
                 reply_message(reply_token, [_text_message("承認待ちの候補を確認します。")])

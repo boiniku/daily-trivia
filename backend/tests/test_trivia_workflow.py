@@ -15,6 +15,7 @@ from sqlalchemy.pool import StaticPool
 
 from models import Base, Trivia, TriviaCandidate
 from routers import line_admin
+from routers.line_admin import _parse_generate_command
 from services.line_bot import make_editor_token, read_editor_token, verify_signature
 from services.trivia_candidates import (
     CandidateError,
@@ -166,6 +167,13 @@ class LineSecurityTests(unittest.TestCase):
         time.sleep(0.01)
         with self.assertRaises(ValueError):
             read_editor_token(token)
+
+    def test_random_generation_commands_do_not_use_random_as_topic(self):
+        self.assertEqual(_parse_generate_command("生成"), ("", 3))
+        self.assertEqual(_parse_generate_command("生成 5"), ("", 5))
+        self.assertEqual(_parse_generate_command("生成 ランダム 5"), ("", 5))
+        self.assertEqual(_parse_generate_command("生成 おまかせ"), ("", 3))
+        self.assertEqual(_parse_generate_command("生成 宇宙 4"), ("宇宙", 4))
 
 
 class MobileEditorIntegrationTests(unittest.TestCase):
