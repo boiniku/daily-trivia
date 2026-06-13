@@ -41,10 +41,15 @@ GENERIC_TOPIC_PHRASES = (
     "地域の歴史を反映",
 )
 
+SUBJECT_ALIASES = {
+    "目": ("目", "眼", "眼球", "瞳", "視覚", "網膜", "角膜", "虹彩"),
+}
+
 
 class CollectedTrivia(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
+    subject_key: str
     title: str
     content: str
     explanation: str
@@ -73,13 +78,15 @@ def build_collection_prompt(
     topic: str,
     count: int,
     exclusion_titles: list[str],
+    output_count: int | None = None,
 ) -> str:
+    output_count = output_count or count
     subject = f"「{topic}」に関する" if topic else "ジャンルを限定しない"
     categories = ", ".join(TRIVIA_CATEGORIES)
     exclusions = "\n".join(f"- {title}" for title in exclusion_titles[-300:])
     return f"""
 Web検索を1回だけ行い、日本語の雑学・豆知識・話のネタをまとめたWebサイトの記事から、
-{subject}具体的な事実を{count}件見つけ、それぞれを独立した雑学として書いてください。
+{subject}具体的な事実を{output_count}件見つけ、それぞれを独立した雑学として書いてください。
 
 Webサイトは題材を探すための情報源にすぎません。出力対象は、記事内で紹介されている
 生物、人体、自然、科学、歴史、文化、生活、食べ物などに関する具体的な事実です。
@@ -95,9 +102,11 @@ Webサイトは題材を探すための情報源にすぎません。出力対�
 - 1候補につき、具体的な対象1つと、検証可能な事実1つだけを扱う
 - 複数の事例をまとめた総論、傾向の紹介、一覧記事の要約ではなく、その中から具体的な事実を1つ選ぶ
 - 「多くあります」「さまざまです」「〜ことがあります」だけで終わる広すぎる主張は採用しない
-- {count}件は対象と事実が互いに異なるものにし、同じ事実の言い換えや似たネタを含めない
+- {output_count}件は対象と事実が互いに異なるものにし、同じ事実の言い換えや似たネタを含めない
 - テーマ指定がない場合、特定ジャンルに偏らず、同じ動物、食品、人物、天体など同一対象から選ぶのは1件までにする
-- テーマ指定がない場合、{count}件のうち可能な限り異なるカテゴリを選び、3件以上なら最低3カテゴリに分ける
+- テーマ指定がない場合、{output_count}件のうち可能な限り異なるカテゴリを選び、3件以上なら最低3カテゴリに分ける
+- subject_keyには中心対象を短い一般名詞で1つだけ入れる。例: 目、タコ、金星、ハチミツ、江戸時代
+- 目・視覚・瞳・眼球のように実質同じ対象は、同じsubject_key「目」に統一する
 
 【最重要: タイトル】
 - 30文字以内で、タイトルだけで「何についての、どんな意外な事実か」が伝わるようにする
@@ -146,6 +155,7 @@ Webサイトは題材を探すための情報源にすぎません。出力対�
 {{
   "trivia": [
     {{
+      "subject_key": "中心対象を表す短い一般名詞",
       "title": "独自に作成した30文字以内のタイトル",
       "content": "独自に作成した50〜80文字程度の本文",
       "explanation": "独自に作成した100〜150文字程度の解説",
@@ -201,6 +211,7 @@ def validate_collected_items(items: list[CollectedTrivia]) -> list[dict]:
             continue
         if data["category"] not in TRIVIA_CATEGORIES:
             data["category"] = "その他"
+        data.pop("subject_key", None)
         if (
             data["title"].strip()
             and data["content"].strip()
@@ -208,6 +219,55 @@ def validate_collected_items(items: list[CollectedTrivia]) -> list[dict]:
         ):
             valid_items.append(data)
     return valid_items
+
+
+def select_diverse_items(
+    items: list[CollectedTrivia],
+    count: int,
+) -> list[CollectedTrivia]:
+    selected = []
+    used_subjects = set()
+    category_counts = {}
+
+    # First pass: maximize category variety.
+    for item in items:
+        subject = normalize_subject_key(item.subject_key)
+        if (
+            not subject
+            or subject in used_subjects
+            or category_counts.get(item.category, 0) >= 1
+        ):
+            continue
+        selected.append(item)
+        used_subjects.add(subject)
+        category_counts[item.category] = category_counts.get(item.category, 0) + 1
+        if len(selected) == count:
+            return selected
+
+    # Second pass: allow a second item per category, but never the same subject.
+    for item in items:
+        subject = normalize_subject_key(item.subject_key)
+        if (
+            not subject
+            or subject in used_subjects
+            or item in selected
+            or category_counts.get(item.category, 0) >= 2
+        ):
+            continue
+        selected.append(item)
+        used_subjects.add(subject)
+        category_counts[item.category] = category_counts.get(item.category, 0) + 1
+        if len(selected) == count:
+            break
+    return selected
+
+
+def normalize_subject_key(value: str) -> str:
+    normalized = re.sub(r"[\W_]+", "", (value or "").lower())
+    for canonical, aliases in SUBJECT_ALIASES.items():
+        if any(alias in normalized for alias in aliases):
+            return canonical
+    return normalized
 
 
 def get_incomplete_reason(response) -> str:
@@ -230,6 +290,7 @@ def collect_trivia(db: Session, topic: str, count: int) -> list[dict]:
 
     count = max(1, min(count, 10))
     topic = topic.strip()
+    output_count = min(10, count * 2) if not topic else count
     existing_titles = [
         row[0]
         for row in db.query(Trivia.title).all()
@@ -264,6 +325,7 @@ def collect_trivia(db: Session, topic: str, count: int) -> list[dict]:
             topic,
             count,
             existing_titles,
+            output_count=output_count,
         ),
     )
     incomplete_reason = get_incomplete_reason(response)
@@ -281,4 +343,7 @@ def collect_trivia(db: Session, topic: str, count: int) -> list[dict]:
         raise RuntimeError(
             "Web収集結果を構造化できませんでした。件数を減らして再実行してください"
         )
-    return validate_collected_items(parsed.trivia)[:count]
+    collected_items = parsed.trivia
+    if not topic:
+        collected_items = select_diverse_items(collected_items, count)
+    return validate_collected_items(collected_items)[:count]

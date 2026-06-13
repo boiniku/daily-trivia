@@ -26,6 +26,7 @@ from services.trivia_collection import (
     get_incomplete_reason,
     get_discovery_domains,
     parse_collection_output,
+    select_diverse_items,
     validate_collected_items,
 )
 from services.line_bot import make_editor_token, read_editor_token, verify_signature
@@ -283,6 +284,7 @@ class LineSecurityTests(unittest.TestCase):
 
     def test_collection_uses_one_web_tool_call(self):
         parsed_result = TriviaCollectionResult(trivia=[CollectedTrivia(
+            subject_key="Web検索",
             title="Web収集テスト",
             content="Web検索から題材を集めて独自に作った本文です。",
             explanation="独自解説",
@@ -292,6 +294,7 @@ class LineSecurityTests(unittest.TestCase):
         response = type("Response", (), {
             "output_text": json.dumps({
                 "trivia": [{
+                    "subject_key": "Web検索",
                     "title": "Web収集テスト",
                     "content": "Web検索から題材を集めて独自に作った本文です。",
                     "explanation": "独自解説",
@@ -341,12 +344,13 @@ class LineSecurityTests(unittest.TestCase):
         self.assertFalse(item_schema["additionalProperties"])
         self.assertEqual(
             set(item_schema["required"]),
-            {"title", "content", "explanation", "category", "source"},
+            {"subject_key", "title", "content", "explanation", "category", "source"},
         )
 
     def test_parsed_collection_filters_invalid_source_and_normalizes_category(self):
         items = validate_collected_items([
             CollectedTrivia(
+                subject_key="有効",
                 title="有効",
                 content="本文",
                 explanation="解説",
@@ -354,6 +358,7 @@ class LineSecurityTests(unittest.TestCase):
                 source="https://example.com",
             ),
             CollectedTrivia(
+                subject_key="無効",
                 title="無効",
                 content="本文",
                 explanation="解説",
@@ -367,6 +372,7 @@ class LineSecurityTests(unittest.TestCase):
     def test_parsed_collection_filters_site_meta_topics(self):
         items = validate_collected_items([
             CollectedTrivia(
+                subject_key="雑学サイト",
                 title="雑学系サイトの分類と活用法",
                 content="雑学サイトにはさまざまな分類があります。",
                 explanation="サイトの使い方を説明します。",
@@ -374,6 +380,7 @@ class LineSecurityTests(unittest.TestCase):
                 source="https://example.com/article",
             ),
             CollectedTrivia(
+                subject_key="タコ",
                 title="タコには心臓が3つある",
                 content="タコは全身用の心臓と、えらへ血液を送る心臓を持ちます。",
                 explanation="えら心臓が二つ、体心臓が一つあり、それぞれ異なる役割を担っています。",
@@ -386,6 +393,7 @@ class LineSecurityTests(unittest.TestCase):
     def test_parsed_collection_filters_broad_article_summaries(self):
         items = validate_collected_items([
             CollectedTrivia(
+                subject_key="日本語",
                 title="日本語には意外な由来を持つ語が多い",
                 content="日常語には歴史的事情から生まれた言葉が多数あります。",
                 explanation="記事では複数の言葉の由来が紹介されています。",
@@ -393,6 +401,7 @@ class LineSecurityTests(unittest.TestCase):
                 source="https://example.com/word-list",
             ),
             CollectedTrivia(
+                subject_key="イクラ",
                 title="イクラの語源はロシア語",
                 content="日本語のイクラは、魚卵を意味するロシア語に由来します。",
                 explanation="ロシア語の魚卵を表す言葉が日本へ伝わり、サケ科の卵を指す語として定着しました。",
@@ -405,6 +414,7 @@ class LineSecurityTests(unittest.TestCase):
     def test_concrete_fact_is_kept_even_if_explanation_mentions_article(self):
         items = validate_collected_items([
             CollectedTrivia(
+                subject_key="ウナギ",
                 title="ウナギの血液には毒性がある",
                 content="ウナギの血清には毒性がありますが、加熱すると毒性は失われます。",
                 explanation="記事では、生食を避け加熱調理する理由として血清毒が説明されています。",
@@ -413,6 +423,40 @@ class LineSecurityTests(unittest.TestCase):
             ),
         ])
         self.assertEqual([item["title"] for item in items], ["ウナギの血液には毒性がある"])
+
+    def test_random_collection_selects_unique_subjects_and_limits_categories(self):
+        items = [
+            CollectedTrivia(
+                subject_key=subject,
+                title=title,
+                content="本文",
+                explanation="解説",
+                category=category,
+                source=f"https://example.com/{index}",
+            )
+            for index, (subject, title, category) in enumerate([
+                ("目", "目の雑学1", "人体・医学"),
+                ("目", "目の雑学2", "科学"),
+                ("網膜", "網膜の雑学", "人体・医学"),
+                ("タコ", "タコの雑学", "生物"),
+                ("金星", "金星の雑学", "宇宙・天体"),
+                ("ハチミツ", "ハチミツの雑学", "食べ物"),
+                ("ウサギ", "ウサギの雑学", "生物"),
+            ])
+        ]
+
+        selected = select_diverse_items(items, 5)
+
+        self.assertEqual(len(selected), 5)
+        self.assertEqual(
+            sum(item.subject_key in {"目", "網膜"} for item in selected),
+            1,
+        )
+        category_counts = {}
+        for item in selected:
+            category_counts[item.category] = category_counts.get(item.category, 0) + 1
+        self.assertLessEqual(max(category_counts.values()), 2)
+        self.assertGreaterEqual(len(category_counts), 4)
 
     def test_incomplete_collection_response_has_clear_message(self):
         response = type("Response", (), {
