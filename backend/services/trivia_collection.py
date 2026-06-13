@@ -83,7 +83,7 @@ def build_collection_prompt(
     output_count = output_count or count
     subject = f"「{topic}」に関する" if topic else "ジャンルを限定しない"
     categories = ", ".join(TRIVIA_CATEGORIES)
-    exclusions = "\n".join(f"- {title}" for title in exclusion_titles[-300:])
+    exclusions = "\n".join(f"- {title}" for title in exclusion_titles)
     return f"""
 Web検索を1回だけ行い、日本語の雑学・豆知識・話のネタをまとめたWebサイトの記事から、
 {subject}具体的な事実を{output_count}件見つけ、それぞれを独立した雑学として書いてください。

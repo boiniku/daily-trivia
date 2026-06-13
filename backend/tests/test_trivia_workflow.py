@@ -143,6 +143,20 @@ class TriviaWorkflowTests(unittest.TestCase):
         self.assertEqual(len(created), 1)
         self.assertNotEqual(created[0].id, existing.id)
 
+    def test_local_admin_content_similarity_threshold_is_preserved(self):
+        create_candidate(self.db, {
+            "title": "海の生き物の体の仕組み",
+            "content": "タコは全身用とえら用を合わせて三つの心臓を持っています。",
+            "category": "生物",
+        })
+
+        with self.assertRaises(DuplicateCandidateError):
+            create_candidate(self.db, {
+                "title": "軟体動物が持つ循環器官",
+                "content": "タコは全身用とえら用を合わせて三個の心臓を備えています。",
+                "category": "生物",
+            })
+
     def test_reworded_fact_is_detected_as_duplicate(self):
         create_candidate(self.db, {
             "title": "タコには心臓が3つある",
@@ -266,6 +280,13 @@ class LineSecurityTests(unittest.TestCase):
         self.assertIn("一覧記事の要約ではなく", prompt)
         self.assertIn("同一対象から選ぶのは1件まで", prompt)
         self.assertIn("最低3カテゴリ", prompt)
+
+    def test_collection_prompt_includes_all_existing_titles(self):
+        titles = [f"既存タイトル{i}" for i in range(305)]
+        prompt = build_collection_prompt("", 5, titles)
+
+        self.assertIn("既存タイトル0", prompt)
+        self.assertIn("既存タイトル304", prompt)
 
     def test_collection_output_parser(self):
         items = parse_collection_output("""```json

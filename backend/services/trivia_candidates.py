@@ -86,9 +86,9 @@ def _duplicate_reason(
 ) -> Optional[str]:
     if _normalize_source(source) and _normalize_source(source) == _normalize_source(other_source):
         return "出典URLが同じです"
-    if _similarity(title, other_title) >= 0.70:
+    if _similarity(title, other_title) > 0.70:
         return "タイトルが類似しています"
-    if _similarity(content, other_content) >= 0.76:
+    if _similarity(content, other_content) > 0.70:
         return "本文が類似しています"
 
     combined = f"{title} {content}"
