@@ -249,7 +249,7 @@ async def upload_candidate_image(
         raise HTTPException(status_code=503, detail=str(exc))
 
 
-@router.put("/admin/candidates/{candidate_id}")
+@router.put("/admin/candidates/{candidate_id}/edit")
 def save_candidate(candidate_id: int, request: CandidateUpdateRequest):
     _validate_editor_token(candidate_id, request.token)
     db = SessionLocal()
