@@ -1,10 +1,11 @@
 import base64
 import hashlib
 import hmac
+import json
 import os
 import time
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -15,8 +16,14 @@ from sqlalchemy.pool import StaticPool
 
 from models import Base, Trivia, TriviaCandidate
 from routers import line_admin
-from routers.line_admin import _parse_generate_command
+from routers.line_admin import _parse_collect_command, _parse_generate_command
 from services.trivia_generation import build_generation_prompt
+from services.trivia_collection import (
+    build_collection_prompt,
+    collect_trivia,
+    get_discovery_domains,
+    parse_collection_output,
+)
 from services.line_bot import make_editor_token, read_editor_token, verify_signature
 from services.trivia_candidates import (
     CandidateError,
@@ -186,6 +193,75 @@ class LineSecurityTests(unittest.TestCase):
         self.assertNotIn("ランダム", prompt)
         self.assertIn("それぞれ1件ずつ", prompt)
         self.assertIn("歴史、生物、食べ物", prompt)
+
+    def test_collection_commands(self):
+        self.assertEqual(_parse_collect_command("収集"), ("", 3))
+        self.assertEqual(_parse_collect_command("収集 5"), ("", 5))
+        self.assertEqual(_parse_collect_command("収集 食べ物 5"), ("食べ物", 5))
+        self.assertIsNone(_parse_collect_command("生成 5"))
+
+    def test_collection_prompt_forbids_copying(self):
+        prompt = build_collection_prompt("", 5, ["既存タイトル"])
+        self.assertIn("元記事のタイトルや文章をコピーしない", prompt)
+        self.assertIn("事実・題材・キーワードだけ", prompt)
+        self.assertIn("独自の日本語表現", prompt)
+
+    def test_collection_output_parser(self):
+        items = parse_collection_output("""```json
+        {"trivia": [
+          {
+            "title": "独自タイトル",
+            "content": "独自本文",
+            "explanation": "独自解説",
+            "category": "生活",
+            "source": "https://example.com/article"
+          }
+        ]}
+        ```""")
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0]["title"], "独自タイトル")
+
+    def test_collection_uses_one_web_tool_call(self):
+        response = type("Response", (), {
+            "output_text": json.dumps({
+                "trivia": [{
+                    "title": "Web収集テスト",
+                    "content": "Web検索から題材を集めて独自に作った本文です。",
+                    "explanation": "独自解説",
+                    "category": "生活",
+                    "source": "https://example.com/article",
+                }]
+            }, ensure_ascii=False)
+        })()
+        create = MagicMock(return_value=response)
+        client = type("Client", (), {
+            "responses": type("Responses", (), {"create": create})()
+        })()
+
+        with patch.dict(os.environ, {
+            "OPENAI_API_KEY": "test-key",
+            "TRIVIA_DISCOVERY_DOMAINS": "example.com,https://media.example.jp/path",
+        }, clear=False), patch(
+            "services.trivia_collection.OpenAI",
+            return_value=client,
+        ):
+            engine = create_engine("sqlite:///:memory:")
+            Base.metadata.create_all(engine)
+            db = sessionmaker(bind=engine)()
+            try:
+                items = collect_trivia(db, "", 5)
+            finally:
+                db.close()
+                engine.dispose()
+
+        self.assertEqual(len(items), 1)
+        kwargs = create.call_args.kwargs
+        self.assertEqual(kwargs["max_tool_calls"], 1)
+        self.assertEqual(kwargs["tool_choice"], "required")
+        self.assertEqual(
+            kwargs["tools"][0]["filters"]["allowed_domains"],
+            ["example.com", "media.example.jp"],
+        )
 
 
 class MobileEditorIntegrationTests(unittest.TestCase):

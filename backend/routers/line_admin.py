@@ -28,6 +28,7 @@ from services.trivia_candidates import (
     update_candidate,
 )
 from services.image_storage import upload_trivia_image
+from services.trivia_collection import collect_trivia
 from services.trivia_generation import TRIVIA_CATEGORIES, generate_trivia
 
 
@@ -64,6 +65,20 @@ def _parse_generate_command(text: str) -> tuple[str, int] | None:
     return topic, count
 
 
+def _parse_collect_command(text: str) -> tuple[str, int] | None:
+    normalized = text.strip()
+    if not normalized.startswith("収集"):
+        return None
+    parts = normalized[len("収集"):].strip().split()
+    count = 3
+    if parts and parts[-1].isdigit():
+        count = max(1, min(int(parts.pop()), 10))
+    topic = " ".join(parts).strip()
+    if topic.lower() in {"", "ランダム", "おまかせ", "お任せ", "random"}:
+        topic = ""
+    return topic, count
+
+
 def _generate_and_push(user_id: str, topic: str, count: int) -> None:
     db = SessionLocal()
     try:
@@ -78,6 +93,30 @@ def _generate_and_push(user_id: str, topic: str, count: int) -> None:
             db.commit()
     except Exception as exc:
         push_message(user_id, [_text_message(f"生成中にエラーが発生しました: {exc}")])
+    finally:
+        db.close()
+
+
+def _collect_and_push(user_id: str, topic: str, count: int) -> None:
+    db = SessionLocal()
+    try:
+        candidates = create_candidates(db, collect_trivia(db, topic, count))
+        if not candidates:
+            push_message(
+                user_id,
+                [_text_message("重複を除くと収集できる候補がありませんでした。")],
+            )
+            return
+        push_message(
+            user_id,
+            [_text_message(f"Webから{len(candidates)}件の題材を収集しました。確認してください。")],
+        )
+        for candidate in candidates:
+            push_message(user_id, [candidate_flex_message(candidate)])
+            mark_line_sent(candidate)
+            db.commit()
+    except Exception as exc:
+        push_message(user_id, [_text_message(f"収集中にエラーが発生しました: {exc}")])
     finally:
         db.close()
 
@@ -127,9 +166,21 @@ async def line_webhook(request: Request, background_tasks: BackgroundTasks):
 
         if event.get("type") == "message" and event.get("message", {}).get("type") == "text":
             message_text = event["message"].get("text", "").strip()
-            command = _parse_generate_command(message_text)
-            if command:
-                topic, count = command
+            collect_command = _parse_collect_command(message_text)
+            generate_command = _parse_generate_command(message_text)
+            if collect_command:
+                topic, count = collect_command
+                subject = f"「{topic}」" if topic else "幅広いジャンル"
+                reply_message(
+                    reply_token,
+                    [_text_message(
+                        f"{subject}の題材をWebから{count}件収集します。"
+                        "検索料金が発生します。"
+                    )],
+                )
+                background_tasks.add_task(_collect_and_push, user_id, topic, count)
+            elif generate_command:
+                topic, count = generate_command
                 subject = f"「{topic}」" if topic else "幅広いジャンル"
                 reply_message(reply_token, [_text_message(f"{subject}の雑学を{count}件生成します。")])
                 background_tasks.add_task(_generate_and_push, user_id, topic, count)
@@ -144,6 +195,8 @@ async def line_webhook(request: Request, background_tasks: BackgroundTasks):
                     [_text_message(
                         "使い方:\n"
                         "・生成 宇宙 3\n"
+                        "・収集 5\n"
+                        "・収集 食べ物 5\n"
                         "・候補\n"
                         "・新規\n"
                         "生成件数は最大10件です。"
