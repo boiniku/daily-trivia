@@ -2,7 +2,6 @@ from datetime import datetime
 import difflib
 import re
 from typing import Iterable, Optional
-from urllib.parse import urlsplit, urlunsplit
 
 from sqlalchemy.orm import Session
 
@@ -58,23 +57,6 @@ def _ngram_similarity(left: str, right: str, size: int = 2) -> float:
     )
 
 
-def _normalize_source(source: str) -> str:
-    value = (source or "").strip()
-    if not value:
-        return ""
-    try:
-        parts = urlsplit(value)
-    except ValueError:
-        return ""
-    if parts.scheme not in {"http", "https"} or not parts.netloc:
-        return ""
-    hostname = parts.netloc.lower()
-    if hostname.startswith("www."):
-        hostname = hostname[4:]
-    path = parts.path.rstrip("/") or "/"
-    return urlunsplit(("https", hostname, path, "", ""))
-
-
 def _duplicate_reason(
     *,
     title: str,
@@ -84,8 +66,6 @@ def _duplicate_reason(
     other_content: str,
     other_source: str,
 ) -> Optional[str]:
-    if _normalize_source(source) and _normalize_source(source) == _normalize_source(other_source):
-        return "出典URLが同じです"
     if _similarity(title, other_title) > 0.70:
         return "タイトルが類似しています"
     if _similarity(content, other_content) > 0.70:

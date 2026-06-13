@@ -171,21 +171,22 @@ class TriviaWorkflowTests(unittest.TestCase):
                 "category": "生物",
             })
 
-    def test_same_source_with_tracking_query_is_duplicate(self):
+    def test_different_facts_from_same_source_are_allowed(self):
         create_candidate(self.db, {
-            "title": "最初の題名",
-            "content": "最初に登録した雑学の本文です。",
-            "source": "https://www.example.com/facts/octopus/?utm_source=line",
+            "title": "タコは心臓を3つ持つ",
+            "content": "タコには全身用が一つと、えら用が二つの心臓があります。",
+            "source": "https://example.com/facts-list",
             "category": "生物",
         })
 
-        with self.assertRaises(DuplicateCandidateError):
-            create_candidate(self.db, {
-                "title": "まったく異なる題名",
-                "content": "表現を全面的に変更した別の本文です。",
-                "source": "http://example.com/facts/octopus#detail",
-                "category": "生物",
-            })
+        candidate = create_candidate(self.db, {
+            "title": "金星の1日は1年より長い",
+            "content": "金星は自転が遅いため、一日の長さが公転周期を上回ります。",
+            "source": "https://example.com/facts-list",
+            "category": "宇宙・天体",
+        })
+
+        self.assertEqual(candidate.title, "金星の1日は1年より長い")
 
     def test_different_fact_about_same_subject_is_not_duplicate(self):
         create_candidate(self.db, {
