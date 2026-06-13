@@ -19,12 +19,14 @@ from routers import line_admin
 from routers.line_admin import _parse_collect_command, _parse_generate_command
 from services.trivia_generation import build_generation_prompt
 from services.trivia_collection import (
-    COLLECTION_OUTPUT_FORMAT,
+    CollectedTrivia,
+    TriviaCollectionResult,
     build_collection_prompt,
     collect_trivia,
     get_incomplete_reason,
     get_discovery_domains,
     parse_collection_output,
+    validate_collected_items,
 )
 from services.line_bot import make_editor_token, read_editor_token, verify_signature
 from services.trivia_candidates import (
@@ -224,6 +226,13 @@ class LineSecurityTests(unittest.TestCase):
         self.assertEqual(items[0]["title"], "独自タイトル")
 
     def test_collection_uses_one_web_tool_call(self):
+        parsed_result = TriviaCollectionResult(trivia=[CollectedTrivia(
+            title="Web収集テスト",
+            content="Web検索から題材を集めて独自に作った本文です。",
+            explanation="独自解説",
+            category="生活",
+            source="https://example.com/article",
+        )])
         response = type("Response", (), {
             "output_text": json.dumps({
                 "trivia": [{
@@ -233,11 +242,13 @@ class LineSecurityTests(unittest.TestCase):
                     "category": "生活",
                     "source": "https://example.com/article",
                 }]
-            }, ensure_ascii=False)
+            }, ensure_ascii=False),
+            "output_parsed": parsed_result,
+            "status": "completed",
         })()
-        create = MagicMock(return_value=response)
+        parse = MagicMock(return_value=response)
         client = type("Client", (), {
-            "responses": type("Responses", (), {"create": create})()
+            "responses": type("Responses", (), {"parse": parse})()
         })()
 
         with patch.dict(os.environ, {
@@ -257,26 +268,45 @@ class LineSecurityTests(unittest.TestCase):
                 engine.dispose()
 
         self.assertEqual(len(items), 1)
-        kwargs = create.call_args.kwargs
+        kwargs = parse.call_args.kwargs
         self.assertEqual(kwargs["max_tool_calls"], 1)
+        self.assertEqual(kwargs["max_output_tokens"], 16000)
+        self.assertEqual(kwargs["reasoning"], {"effort": "low"})
         self.assertEqual(kwargs["tool_choice"], "required")
-        self.assertEqual(
-            kwargs["text"]["format"]["type"],
-            "json_schema",
-        )
-        self.assertTrue(kwargs["text"]["format"]["strict"])
+        self.assertIs(kwargs["text_format"], TriviaCollectionResult)
         self.assertEqual(
             kwargs["tools"][0]["filters"]["allowed_domains"],
             ["example.com", "media.example.jp"],
         )
 
     def test_collection_schema_requires_all_fields(self):
-        item_schema = COLLECTION_OUTPUT_FORMAT["schema"]["properties"]["trivia"]["items"]
+        schema = TriviaCollectionResult.model_json_schema()
+        item_schema = schema["$defs"]["CollectedTrivia"]
         self.assertFalse(item_schema["additionalProperties"])
         self.assertEqual(
             set(item_schema["required"]),
             {"title", "content", "explanation", "category", "source"},
         )
+
+    def test_parsed_collection_filters_invalid_source_and_normalizes_category(self):
+        items = validate_collected_items([
+            CollectedTrivia(
+                title="有効",
+                content="本文",
+                explanation="解説",
+                category="暮らし",
+                source="https://example.com",
+            ),
+            CollectedTrivia(
+                title="無効",
+                content="本文",
+                explanation="解説",
+                category="生活",
+                source="example.com",
+            ),
+        ])
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0]["category"], "その他")
 
     def test_incomplete_collection_response_has_clear_message(self):
         response = type("Response", (), {

@@ -1,50 +1,33 @@
 import json
+import logging
 import os
 import re
 
 from openai import OpenAI
+from pydantic import BaseModel, ConfigDict
 from sqlalchemy.orm import Session
 
 from models import Trivia, TriviaCandidate
 from services.trivia_generation import TRIVIA_CATEGORIES
 
 
-COLLECTION_OUTPUT_FORMAT = {
-    "type": "json_schema",
-    "name": "trivia_collection",
-    "strict": True,
-    "schema": {
-        "type": "object",
-        "properties": {
-            "trivia": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "title": {"type": "string"},
-                        "content": {"type": "string"},
-                        "explanation": {"type": "string"},
-                        "category": {
-                            "type": "string",
-                            "enum": TRIVIA_CATEGORIES,
-                        },
-                        "source": {"type": "string"},
-                    },
-                    "required": [
-                        "title",
-                        "content",
-                        "explanation",
-                        "category",
-                        "source",
-                    ],
-                    "additionalProperties": False,
-                },
-            }
-        },
-        "required": ["trivia"],
-        "additionalProperties": False,
-    },
-}
+logger = logging.getLogger(__name__)
+
+
+class CollectedTrivia(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    title: str
+    content: str
+    explanation: str
+    category: str
+    source: str
+
+
+class TriviaCollectionResult(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    trivia: list[CollectedTrivia]
 
 
 def get_discovery_domains() -> list[str]:
@@ -77,6 +60,7 @@ Web検索を1回だけ行い、日本語の雑学・豆知識・話のネタを�
 - 元記事のタイトルや文章をコピーしない
 - 元記事から事実・題材・キーワードだけを抽出する
 - タイトル、本文、解説は必ず独自の日本語表現で書き直す
+- titleは30文字以内、contentは50〜80文字、explanationは100〜150文字程度に収める
 - 各項目は異なる題材にする
 - 既存タイトルと同じ題材を避ける
 - sourceには、その題材を見つけた記事ページのURLを入れる
@@ -127,6 +111,21 @@ def parse_collection_output(output_text: str) -> list[dict]:
     ]
 
 
+def validate_collected_items(items: list[CollectedTrivia]) -> list[dict]:
+    valid_items = []
+    for item in items:
+        data = item.model_dump()
+        if data["category"] not in TRIVIA_CATEGORIES:
+            data["category"] = "その他"
+        if (
+            data["title"].strip()
+            and data["content"].strip()
+            and data["source"].strip().startswith(("http://", "https://"))
+        ):
+            valid_items.append(data)
+    return valid_items
+
+
 def get_incomplete_reason(response) -> str:
     status = getattr(response, "status", None)
     if status != "incomplete":
@@ -165,7 +164,7 @@ def collect_trivia(db: Session, topic: str, count: int) -> list[dict]:
     if domains:
         tool["filters"] = {"allowed_domains": domains}
 
-    response = OpenAI(api_key=api_key).responses.create(
+    response = OpenAI(api_key=api_key).responses.parse(
         model=os.getenv(
             "TRIVIA_COLLECTION_MODEL",
             os.getenv("TRIVIA_GENERATION_MODEL", "gpt-5-mini"),
@@ -173,8 +172,9 @@ def collect_trivia(db: Session, topic: str, count: int) -> list[dict]:
         tools=[tool],
         tool_choice="required",
         max_tool_calls=1,
-        max_output_tokens=8000,
-        text={"format": COLLECTION_OUTPUT_FORMAT},
+        max_output_tokens=16000,
+        reasoning={"effort": "low"},
+        text_format=TriviaCollectionResult,
         input=build_collection_prompt(topic.strip(), count, existing_titles),
     )
     incomplete_reason = get_incomplete_reason(response)
@@ -182,4 +182,14 @@ def collect_trivia(db: Session, topic: str, count: int) -> list[dict]:
         raise RuntimeError(incomplete_reason)
     if not (response.output_text or "").strip():
         raise RuntimeError("Web収集結果が空でした。もう一度実行してください")
-    return parse_collection_output(response.output_text)[:count]
+    parsed = getattr(response, "output_parsed", None)
+    if parsed is None:
+        logger.error(
+            "Web collection parse failed: status=%s output=%r",
+            getattr(response, "status", None),
+            (response.output_text or "")[:1000],
+        )
+        raise RuntimeError(
+            "Web収集結果を構造化できませんでした。件数を減らして再実行してください"
+        )
+    return validate_collected_items(parsed.trivia)[:count]
