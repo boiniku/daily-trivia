@@ -16,6 +16,7 @@ from sqlalchemy.pool import StaticPool
 from models import Base, Trivia, TriviaCandidate
 from routers import line_admin
 from routers.line_admin import _parse_generate_command
+from services.trivia_generation import build_generation_prompt
 from services.line_bot import make_editor_token, read_editor_token, verify_signature
 from services.trivia_candidates import (
     CandidateError,
@@ -174,6 +175,17 @@ class LineSecurityTests(unittest.TestCase):
         self.assertEqual(_parse_generate_command("生成 ランダム 5"), ("", 5))
         self.assertEqual(_parse_generate_command("生成 おまかせ"), ("", 3))
         self.assertEqual(_parse_generate_command("生成 宇宙 4"), ("宇宙", 4))
+
+    def test_theme_free_prompt_uses_distinct_categories_without_random_word(self):
+        prompt = build_generation_prompt(
+            "",
+            3,
+            "",
+            selected_categories=["歴史", "生物", "食べ物"],
+        )
+        self.assertNotIn("ランダム", prompt)
+        self.assertIn("それぞれ1件ずつ", prompt)
+        self.assertIn("歴史、生物、食べ物", prompt)
 
 
 class MobileEditorIntegrationTests(unittest.TestCase):

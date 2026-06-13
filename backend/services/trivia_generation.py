@@ -1,5 +1,6 @@
 import json
 import os
+import random
 
 from openai import OpenAI
 from sqlalchemy.orm import Session
@@ -14,30 +15,26 @@ TRIVIA_CATEGORIES = [
 ]
 
 
-def generate_trivia(db: Session, topic: str, count: int) -> list[dict]:
-    api_key = os.getenv("OPENAI_API_KEY")
-    if not api_key:
-        raise RuntimeError("OPENAI_API_KEY is not configured")
-
-    count = max(1, min(count, 10))
+def build_generation_prompt(
+    topic: str,
+    count: int,
+    exclusion: str,
+    selected_categories: list[str] | None = None,
+) -> str:
     topic = topic.strip()
-    is_random = topic.lower() in {"", "ランダム", "おまかせ", "お任せ", "random"}
-    topic_instruction = (
-        "歴史、科学、生物、食べ物、宇宙、文化など、幅広いジャンルから"
-        "互いにジャンルの異なる雑学"
-        if is_random
-        else f"「{topic}」に関する雑学"
-    )
-    existing_titles = [
-        row[0]
-        for row in db.query(Trivia.title).all()
-        + db.query(TriviaCandidate.title).filter(TriviaCandidate.status == "pending").all()
-        if row[0]
-    ]
-    exclusion = "\n".join(f"- {title}" for title in existing_titles[-300:])
+    if selected_categories:
+        category_plan = "、".join(selected_categories)
+        topic_instruction = (
+            f"次の{count}カテゴリから、それぞれ1件ずつ雑学を作成してください: "
+            f"{category_plan}。各項目のcategoryは指定されたカテゴリにしてください。"
+        )
+    else:
+        topic_instruction = f"「{topic}」に関する雑学を{count}件作成してください。"
+
     categories = ", ".join(TRIVIA_CATEGORIES)
-    prompt = f"""
-{topic_instruction}を{count}件作成してください。
+    return f"""
+{topic_instruction}
+正確で意外性のある日本語の内容にしてください。
 出力は {{"trivia": [...]}} のJSONオブジェクトだけにしてください。
 
 各要素:
@@ -48,10 +45,40 @@ def generate_trivia(db: Session, topic: str, count: int) -> list[dict]:
 - source: 根拠を確認できるhttpまたはhttpsのURL
 
 URLを提示できない事実は生成しないでください。同じ事実の言い換えは禁止です。
-ランダム指定の場合は、可能な限り各件を異なるカテゴリにしてください。
+指定されたカテゴリ同士で、題材や内容が重ならないようにしてください。
 既存または承認待ちのタイトル:
 {exclusion}
 """
+
+
+def generate_trivia(db: Session, topic: str, count: int) -> list[dict]:
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        raise RuntimeError("OPENAI_API_KEY is not configured")
+
+    count = max(1, min(count, 10))
+    topic = topic.strip()
+    is_random = topic.lower() in {"", "ランダム", "おまかせ", "お任せ", "random"}
+    selected_categories = None
+    if is_random:
+        available_categories = [
+            category for category in TRIVIA_CATEGORIES
+            if category != "その他"
+        ]
+        selected_categories = random.sample(available_categories, count)
+    existing_titles = [
+        row[0]
+        for row in db.query(Trivia.title).all()
+        + db.query(TriviaCandidate.title).filter(TriviaCandidate.status == "pending").all()
+        if row[0]
+    ]
+    exclusion = "\n".join(f"- {title}" for title in existing_titles[-300:])
+    prompt = build_generation_prompt(
+        topic,
+        count,
+        exclusion,
+        selected_categories=selected_categories,
+    )
     response = OpenAI(api_key=api_key).chat.completions.create(
         model=os.getenv("TRIVIA_GENERATION_MODEL", "gpt-5-mini"),
         messages=[
