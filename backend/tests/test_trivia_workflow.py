@@ -254,8 +254,17 @@ class LineSecurityTests(unittest.TestCase):
         self.assertIn("事実・題材・キーワードだけ", prompt)
         self.assertIn("独自の日本語表現", prompt)
         self.assertIn("雑学サイト、まとめサイト、記事、メディアそのものを題材にしない", prompt)
-        self.assertIn("個別記事ページのURL", prompt)
+        self.assertIn("個別記事ページのhttpまたはhttps URL", prompt)
         self.assertIn("話題まとめサイトの使い方", prompt)
+        self.assertIn("タイトルだけで「何についての、どんな意外な事実か」", prompt)
+        self.assertIn("疑問形、過度な煽り", prompt)
+        self.assertIn("contentの繰り返しではなく", prompt)
+        self.assertIn("同じ対象について同じ事実を述べる言い換え", prompt)
+        self.assertIn("特定ジャンルに偏らず", prompt)
+        self.assertIn("具体的な対象1つと、検証可能な事実1つ", prompt)
+        self.assertIn("一覧記事の要約ではなく", prompt)
+        self.assertIn("同一対象から選ぶのは1件まで", prompt)
+        self.assertIn("最低3カテゴリ", prompt)
 
     def test_collection_output_parser(self):
         items = parse_collection_output("""```json
@@ -373,6 +382,37 @@ class LineSecurityTests(unittest.TestCase):
             ),
         ])
         self.assertEqual([item["title"] for item in items], ["タコには心臓が3つある"])
+
+    def test_parsed_collection_filters_broad_article_summaries(self):
+        items = validate_collected_items([
+            CollectedTrivia(
+                title="日本語には意外な由来を持つ語が多い",
+                content="日常語には歴史的事情から生まれた言葉が多数あります。",
+                explanation="記事では複数の言葉の由来が紹介されています。",
+                category="言語・言葉",
+                source="https://example.com/word-list",
+            ),
+            CollectedTrivia(
+                title="イクラの語源はロシア語",
+                content="日本語のイクラは、魚卵を意味するロシア語に由来します。",
+                explanation="ロシア語の魚卵を表す言葉が日本へ伝わり、サケ科の卵を指す語として定着しました。",
+                category="言語・言葉",
+                source="https://example.com/ikura",
+            ),
+        ])
+        self.assertEqual([item["title"] for item in items], ["イクラの語源はロシア語"])
+
+    def test_concrete_fact_is_kept_even_if_explanation_mentions_article(self):
+        items = validate_collected_items([
+            CollectedTrivia(
+                title="ウナギの血液には毒性がある",
+                content="ウナギの血清には毒性がありますが、加熱すると毒性は失われます。",
+                explanation="記事では、生食を避け加熱調理する理由として血清毒が説明されています。",
+                category="生物",
+                source="https://example.com/eel",
+            ),
+        ])
+        self.assertEqual([item["title"] for item in items], ["ウナギの血液には毒性がある"])
 
     def test_incomplete_collection_response_has_clear_message(self):
         response = type("Response", (), {
