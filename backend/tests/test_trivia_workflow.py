@@ -142,6 +142,50 @@ class TriviaWorkflowTests(unittest.TestCase):
         self.assertEqual(len(created), 1)
         self.assertNotEqual(created[0].id, existing.id)
 
+    def test_reworded_fact_is_detected_as_duplicate(self):
+        create_candidate(self.db, {
+            "title": "タコには心臓が3つある",
+            "content": "タコは全身用とえら用の心臓を合わせて三つ持っています。",
+            "category": "生物",
+        })
+
+        with self.assertRaises(DuplicateCandidateError):
+            create_candidate(self.db, {
+                "title": "心臓を3個持つタコ",
+                "content": "タコの体には全身へ血液を送る心臓が一つ、えらへ送る心臓が二つあります。",
+                "category": "生物",
+            })
+
+    def test_same_source_with_tracking_query_is_duplicate(self):
+        create_candidate(self.db, {
+            "title": "最初の題名",
+            "content": "最初に登録した雑学の本文です。",
+            "source": "https://www.example.com/facts/octopus/?utm_source=line",
+            "category": "生物",
+        })
+
+        with self.assertRaises(DuplicateCandidateError):
+            create_candidate(self.db, {
+                "title": "まったく異なる題名",
+                "content": "表現を全面的に変更した別の本文です。",
+                "source": "http://example.com/facts/octopus#detail",
+                "category": "生物",
+            })
+
+    def test_different_fact_about_same_subject_is_not_duplicate(self):
+        create_candidate(self.db, {
+            "title": "タコには心臓が3つある",
+            "content": "タコは全身用とえら用の心臓を合わせて三つ持っています。",
+            "category": "生物",
+        })
+        candidate = create_candidate(self.db, {
+            "title": "タコの血液は青い",
+            "content": "タコの血液は銅を含むヘモシアニンによって青く見えます。",
+            "category": "生物",
+        })
+
+        self.assertEqual(candidate.title, "タコの血液は青い")
+
 
 class LineSecurityTests(unittest.TestCase):
     def setUp(self):

@@ -2,6 +2,7 @@ from datetime import datetime
 import difflib
 import re
 from typing import Iterable, Optional
+from urllib.parse import urlsplit, urlunsplit
 
 from sqlalchemy.orm import Session
 
@@ -9,6 +10,10 @@ from models import Trivia, TriviaCandidate
 
 
 VALID_CANDIDATE_STATUSES = {"pending", "approved", "rejected"}
+NUMBER_TRANSLATION = str.maketrans(
+    "０１２３４５６７８９一二三四五六七八九",
+    "0123456789123456789",
+)
 
 
 class CandidateError(ValueError):
@@ -20,7 +25,10 @@ class DuplicateCandidateError(CandidateError):
 
 
 def _normalize_for_similarity(value: str) -> str:
-    return re.sub(r"[\W_]+", "", (value or "").lower(), flags=re.UNICODE)
+    normalized = (value or "").lower().translate(NUMBER_TRANSLATION)
+    normalized = normalized.replace("センチメートル", "cm").replace("センチ", "cm")
+    normalized = normalized.replace("個", "つ")
+    return re.sub(r"[\W_]+", "", normalized, flags=re.UNICODE)
 
 
 def _similarity(left: str, right: str) -> float:
@@ -31,33 +39,114 @@ def _similarity(left: str, right: str) -> float:
     return difflib.SequenceMatcher(None, normalized_left, normalized_right).ratio()
 
 
+def _ngram_similarity(left: str, right: str, size: int = 2) -> float:
+    normalized_left = _normalize_for_similarity(left)
+    normalized_right = _normalize_for_similarity(right)
+    if len(normalized_left) < size or len(normalized_right) < size:
+        return 0.0
+    left_ngrams = {
+        normalized_left[index:index + size]
+        for index in range(len(normalized_left) - size + 1)
+    }
+    right_ngrams = {
+        normalized_right[index:index + size]
+        for index in range(len(normalized_right) - size + 1)
+    }
+    return (
+        2 * len(left_ngrams & right_ngrams)
+        / (len(left_ngrams) + len(right_ngrams))
+    )
+
+
+def _normalize_source(source: str) -> str:
+    value = (source or "").strip()
+    if not value:
+        return ""
+    try:
+        parts = urlsplit(value)
+    except ValueError:
+        return ""
+    if parts.scheme not in {"http", "https"} or not parts.netloc:
+        return ""
+    hostname = parts.netloc.lower()
+    if hostname.startswith("www."):
+        hostname = hostname[4:]
+    path = parts.path.rstrip("/") or "/"
+    return urlunsplit(("https", hostname, path, "", ""))
+
+
+def _duplicate_reason(
+    *,
+    title: str,
+    content: str,
+    source: str,
+    other_title: str,
+    other_content: str,
+    other_source: str,
+) -> Optional[str]:
+    if _normalize_source(source) and _normalize_source(source) == _normalize_source(other_source):
+        return "出典URLが同じです"
+    if _similarity(title, other_title) >= 0.70:
+        return "タイトルが類似しています"
+    if _similarity(content, other_content) >= 0.76:
+        return "本文が類似しています"
+
+    combined = f"{title} {content}"
+    other_combined = f"{other_title} {other_content}"
+    if (
+        _ngram_similarity(title, other_title) >= 0.27
+        and _ngram_similarity(combined, other_combined) >= 0.33
+    ):
+        return "同じ事実の言い換えに見えます"
+    return None
+
+
 def find_duplicate(
     db: Session,
     *,
     title: str,
     content: str,
+    source: str = "",
     exclude_candidate_id: Optional[int] = None,
     include_pending: bool = True,
 ) -> Optional[str]:
-    for trivia in db.query(Trivia.id, Trivia.title, Trivia.content).all():
-        if _similarity(title, trivia.title) >= 0.72:
-            return f"公開済み #{trivia.id}「{trivia.title}」とタイトルが類似しています"
-        if _similarity(content, trivia.content) >= 0.78:
-            return f"公開済み #{trivia.id}「{trivia.title}」と本文が類似しています"
+    for trivia in db.query(
+        Trivia.id,
+        Trivia.title,
+        Trivia.content,
+        Trivia.source,
+    ).all():
+        reason = _duplicate_reason(
+            title=title,
+            content=content,
+            source=source,
+            other_title=trivia.title,
+            other_content=trivia.content,
+            other_source=trivia.source,
+        )
+        if reason:
+            return f"公開済み #{trivia.id}「{trivia.title}」と{reason}"
 
     if include_pending:
         query = db.query(
             TriviaCandidate.id,
             TriviaCandidate.title,
             TriviaCandidate.content,
+            TriviaCandidate.source,
         ).filter(TriviaCandidate.status == "pending")
         if exclude_candidate_id is not None:
             query = query.filter(TriviaCandidate.id != exclude_candidate_id)
         for candidate in query.all():
-            if _similarity(title, candidate.title) >= 0.72:
-                return f"承認待ち #{candidate.id}「{candidate.title}」とタイトルが類似しています"
-            if _similarity(content, candidate.content) >= 0.78:
-                return f"承認待ち #{candidate.id}「{candidate.title}」と本文が類似しています"
+            reason = _duplicate_reason(
+                title=title,
+                content=content,
+                source=source,
+                other_title=candidate.title,
+                other_content=candidate.content,
+                other_source=candidate.source,
+            )
+            if reason:
+                return f"承認待ち #{candidate.id}「{candidate.title}」と{reason}"
     return None
 
 
@@ -68,7 +157,12 @@ def create_candidates(db: Session, items: Iterable[dict]) -> list[TriviaCandidat
         content = (item.get("content") or "").strip()
         if not title or not content:
             continue
-        if find_duplicate(db, title=title, content=content):
+        if find_duplicate(
+            db,
+            title=title,
+            content=content,
+            source=(item.get("source") or "").strip(),
+        ):
             continue
         candidates.append(_add_candidate(db, item))
     db.commit()
@@ -82,7 +176,12 @@ def create_candidate(db: Session, item: dict) -> TriviaCandidate:
     content = (item.get("content") or "").strip()
     if not title or not content:
         raise CandidateError("Title and content are required")
-    duplicate = find_duplicate(db, title=title, content=content)
+    duplicate = find_duplicate(
+        db,
+        title=title,
+        content=content,
+        source=(item.get("source") or "").strip(),
+    )
     if duplicate:
         raise DuplicateCandidateError(duplicate)
     candidate = _add_candidate(db, item)
@@ -128,6 +227,7 @@ def update_candidate(
         db,
         title=title,
         content=content,
+        source=source,
         exclude_candidate_id=candidate_id,
     )
     if duplicate:
@@ -163,6 +263,7 @@ def approve_candidate(db: Session, candidate_id: int, reviewed_by: str) -> Trivi
         db,
         title=candidate.title,
         content=candidate.content,
+        source=candidate.source,
         exclude_candidate_id=candidate.id,
         include_pending=False,
     )
