@@ -209,6 +209,9 @@ class LineSecurityTests(unittest.TestCase):
         self.assertIn("元記事のタイトルや文章をコピーしない", prompt)
         self.assertIn("事実・題材・キーワードだけ", prompt)
         self.assertIn("独自の日本語表現", prompt)
+        self.assertIn("雑学サイト、まとめサイト、記事、メディアそのものを題材にしない", prompt)
+        self.assertIn("個別記事ページのURL", prompt)
+        self.assertIn("話題まとめサイトの使い方", prompt)
 
     def test_collection_output_parser(self):
         items = parse_collection_output("""```json
@@ -307,6 +310,25 @@ class LineSecurityTests(unittest.TestCase):
         ])
         self.assertEqual(len(items), 1)
         self.assertEqual(items[0]["category"], "その他")
+
+    def test_parsed_collection_filters_site_meta_topics(self):
+        items = validate_collected_items([
+            CollectedTrivia(
+                title="雑学系サイトの分類と活用法",
+                content="雑学サイトにはさまざまな分類があります。",
+                explanation="サイトの使い方を説明します。",
+                category="その他",
+                source="https://example.com/article",
+            ),
+            CollectedTrivia(
+                title="タコには心臓が3つある",
+                content="タコは全身用の心臓と、えらへ血液を送る心臓を持ちます。",
+                explanation="えら心臓が二つ、体心臓が一つあり、それぞれ異なる役割を担っています。",
+                category="生物",
+                source="https://example.com/octopus",
+            ),
+        ])
+        self.assertEqual([item["title"] for item in items], ["タコには心臓が3つある"])
 
     def test_incomplete_collection_response_has_clear_message(self):
         response = type("Response", (), {

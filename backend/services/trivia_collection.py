@@ -13,6 +13,20 @@ from services.trivia_generation import TRIVIA_CATEGORIES
 
 logger = logging.getLogger(__name__)
 
+META_TOPIC_PHRASES = (
+    "雑学サイト",
+    "まとめサイト",
+    "雑学まとめ",
+    "豆知識サイト",
+    "サイトで紹介",
+    "サイトによると",
+    "サイトの分類",
+    "サイトの活用",
+    "サイトの使い方",
+    "記事で紹介",
+    "よく紹介され",
+)
+
 
 class CollectedTrivia(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -50,22 +64,40 @@ def build_collection_prompt(
     categories = ", ".join(TRIVIA_CATEGORIES)
     exclusions = "\n".join(f"- {title}" for title in exclusion_titles[-300:])
     return f"""
-Web検索を1回だけ行い、日本語の雑学・豆知識・話のネタをまとめたWebサイトから、
-{subject}雑学の題材を{count}件集めてください。
+Web検索を1回だけ行い、日本語の雑学・豆知識・話のネタをまとめたWebサイトの記事から、
+{subject}具体的な事実を{count}件見つけ、それぞれを独立した雑学として書いてください。
 
-目的は題材の発見です。学術論文、大学、官公庁、企業の公式解説よりも、
-雑学まとめ、豆知識まとめ、話のネタ、面白い知識を扱う日本語メディアの記事を優先してください。
+Webサイトは題材を探すための情報源にすぎません。出力対象は、記事内で紹介されている
+生物、人体、自然、科学、歴史、文化、生活、食べ物などに関する具体的な事実です。
+学術論文、大学、官公庁、企業の公式解説よりも、雑学・豆知識を扱う日本語の記事を
+探索先として優先してください。
 
 重要:
+- 雑学サイト、まとめサイト、記事、メディアそのものを題材にしない
+- 「雑学サイトで紹介されている」「記事によると」など、情報源への言及をtitle、content、explanationに書かない
+- サイトの特徴、使い方、分類、人気、魅力、クイズ、ランキングを雑学として出力しない
+- 検索結果一覧やサイトのトップページではなく、具体的な事実を説明している個別記事を開いて内容を確認する
+- 各項目は「何についての、どのような意外な事実か」を一文で明確に説明できる題材にする
 - 元記事のタイトルや文章をコピーしない
 - 元記事から事実・題材・キーワードだけを抽出する
 - タイトル、本文、解説は必ず独自の日本語表現で書き直す
 - titleは30文字以内、contentは50〜80文字、explanationは100〜150文字程度に収める
 - 各項目は異なる題材にする
 - 既存タイトルと同じ題材を避ける
-- sourceには、その題材を見つけた記事ページのURLを入れる
+- sourceには、その具体的な事実を説明している個別記事ページのURLを入れる
 - 検索結果に確認できない内容は作らない
 - Markdownや引用記号を使わず、JSONだけを返す
+
+良い題材の例:
+- ウォンバットのフンが立方体になる
+- タコの心臓は3つある
+- ハチミツは適切に保存すると非常に腐りにくい
+
+悪い題材の例:
+- 雑学サイトには面白い知識が多い
+- 家族で楽しめる雑学クイズの魅力
+- 話題まとめサイトの使い方
+- 雑学系サイトの分類と活用法
 
 出力形式:
 {{
@@ -115,6 +147,12 @@ def validate_collected_items(items: list[CollectedTrivia]) -> list[dict]:
     valid_items = []
     for item in items:
         data = item.model_dump()
+        combined_text = " ".join(
+            (data["title"], data["content"], data["explanation"])
+        )
+        if any(phrase in combined_text for phrase in META_TOPIC_PHRASES):
+            logger.warning("Discarded meta-site trivia candidate: %s", data["title"])
+            continue
         if data["category"] not in TRIVIA_CATEGORIES:
             data["category"] = "その他"
         if (
