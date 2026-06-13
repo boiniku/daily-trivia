@@ -19,8 +19,10 @@ from routers import line_admin
 from routers.line_admin import _parse_collect_command, _parse_generate_command
 from services.trivia_generation import build_generation_prompt
 from services.trivia_collection import (
+    COLLECTION_OUTPUT_FORMAT,
     build_collection_prompt,
     collect_trivia,
+    get_incomplete_reason,
     get_discovery_domains,
     parse_collection_output,
 )
@@ -259,9 +261,29 @@ class LineSecurityTests(unittest.TestCase):
         self.assertEqual(kwargs["max_tool_calls"], 1)
         self.assertEqual(kwargs["tool_choice"], "required")
         self.assertEqual(
+            kwargs["text"]["format"]["type"],
+            "json_schema",
+        )
+        self.assertTrue(kwargs["text"]["format"]["strict"])
+        self.assertEqual(
             kwargs["tools"][0]["filters"]["allowed_domains"],
             ["example.com", "media.example.jp"],
         )
+
+    def test_collection_schema_requires_all_fields(self):
+        item_schema = COLLECTION_OUTPUT_FORMAT["schema"]["properties"]["trivia"]["items"]
+        self.assertFalse(item_schema["additionalProperties"])
+        self.assertEqual(
+            set(item_schema["required"]),
+            {"title", "content", "explanation", "category", "source"},
+        )
+
+    def test_incomplete_collection_response_has_clear_message(self):
+        response = type("Response", (), {
+            "status": "incomplete",
+            "incomplete_details": {"reason": "max_output_tokens"},
+        })()
+        self.assertIn("件数を減らして", get_incomplete_reason(response))
 
 
 class MobileEditorIntegrationTests(unittest.TestCase):

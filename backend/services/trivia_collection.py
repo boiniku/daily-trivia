@@ -9,6 +9,44 @@ from models import Trivia, TriviaCandidate
 from services.trivia_generation import TRIVIA_CATEGORIES
 
 
+COLLECTION_OUTPUT_FORMAT = {
+    "type": "json_schema",
+    "name": "trivia_collection",
+    "strict": True,
+    "schema": {
+        "type": "object",
+        "properties": {
+            "trivia": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "title": {"type": "string"},
+                        "content": {"type": "string"},
+                        "explanation": {"type": "string"},
+                        "category": {
+                            "type": "string",
+                            "enum": TRIVIA_CATEGORIES,
+                        },
+                        "source": {"type": "string"},
+                    },
+                    "required": [
+                        "title",
+                        "content",
+                        "explanation",
+                        "category",
+                        "source",
+                    ],
+                    "additionalProperties": False,
+                },
+            }
+        },
+        "required": ["trivia"],
+        "additionalProperties": False,
+    },
+}
+
+
 def get_discovery_domains() -> list[str]:
     raw_domains = os.getenv("TRIVIA_DISCOVERY_DOMAINS", "")
     domains = []
@@ -89,6 +127,19 @@ def parse_collection_output(output_text: str) -> list[dict]:
     ]
 
 
+def get_incomplete_reason(response) -> str:
+    status = getattr(response, "status", None)
+    if status != "incomplete":
+        return ""
+    details = getattr(response, "incomplete_details", None)
+    reason = getattr(details, "reason", None)
+    if not reason and isinstance(details, dict):
+        reason = details.get("reason")
+    if reason == "max_output_tokens":
+        return "収集結果が長すぎて途中で切れました。件数を減らして再実行してください"
+    return f"収集処理が完了しませんでした: {reason or 'unknown'}"
+
+
 def collect_trivia(db: Session, topic: str, count: int) -> list[dict]:
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
@@ -122,7 +173,13 @@ def collect_trivia(db: Session, topic: str, count: int) -> list[dict]:
         tools=[tool],
         tool_choice="required",
         max_tool_calls=1,
-        max_output_tokens=5000,
+        max_output_tokens=8000,
+        text={"format": COLLECTION_OUTPUT_FORMAT},
         input=build_collection_prompt(topic.strip(), count, existing_titles),
     )
+    incomplete_reason = get_incomplete_reason(response)
+    if incomplete_reason:
+        raise RuntimeError(incomplete_reason)
+    if not (response.output_text or "").strip():
+        raise RuntimeError("Web収集結果が空でした。もう一度実行してください")
     return parse_collection_output(response.output_text)[:count]
