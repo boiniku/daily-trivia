@@ -20,12 +20,16 @@ from routers.line_admin import _parse_collect_command, _parse_generate_command
 from services.trivia_generation import build_generation_prompt
 from services.trivia_collection import (
     CollectedTrivia,
+    DEFAULT_DISCOVERY_DOMAINS,
+    DEFAULT_MAX_SEARCH_CALLS,
     TriviaCollectionResult,
     build_collection_prompt,
     collect_trivia,
     get_incomplete_reason,
     get_discovery_domains,
+    get_max_search_calls,
     parse_collection_output,
+    remove_existing_duplicates,
     select_diverse_items,
     validate_collected_items,
 )
@@ -281,6 +285,31 @@ class LineSecurityTests(unittest.TestCase):
         self.assertIn("一覧記事の要約ではなく", prompt)
         self.assertIn("同一対象から選ぶのは1件まで", prompt)
         self.assertIn("最低3カテゴリ", prompt)
+        self.assertIn("まとめサイトだけ", prompt)
+        self.assertIn("学術論文、学会誌、大学・研究機関", prompt)
+        self.assertIn("日常会話で誰かに話したくなる", prompt)
+        self.assertIn(f"最大{DEFAULT_MAX_SEARCH_CALLS}回まで", prompt)
+        self.assertIn("検索語や切り口を変えて複数回", prompt)
+        self.assertIn("回数を使い切る必要はありません", prompt)
+
+    def test_collection_uses_trivia_sites_by_default(self):
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("TRIVIA_DISCOVERY_DOMAINS", None)
+            self.assertEqual(
+                get_discovery_domains(),
+                list(DEFAULT_DISCOVERY_DOMAINS),
+            )
+
+    def test_collection_search_limit_is_configurable_and_bounded(self):
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("TRIVIA_MAX_SEARCH_CALLS", None)
+            self.assertEqual(get_max_search_calls(), DEFAULT_MAX_SEARCH_CALLS)
+        with patch.dict(os.environ, {"TRIVIA_MAX_SEARCH_CALLS": "8"}, clear=False):
+            self.assertEqual(get_max_search_calls(), 8)
+        with patch.dict(os.environ, {"TRIVIA_MAX_SEARCH_CALLS": "99"}, clear=False):
+            self.assertEqual(get_max_search_calls(), 10)
+        with patch.dict(os.environ, {"TRIVIA_MAX_SEARCH_CALLS": "invalid"}, clear=False):
+            self.assertEqual(get_max_search_calls(), DEFAULT_MAX_SEARCH_CALLS)
 
     def test_collection_prompt_includes_all_existing_titles(self):
         titles = [f"既存タイトル{i}" for i in range(305)]
@@ -304,7 +333,7 @@ class LineSecurityTests(unittest.TestCase):
         self.assertEqual(len(items), 1)
         self.assertEqual(items[0]["title"], "独自タイトル")
 
-    def test_collection_uses_one_web_tool_call(self):
+    def test_collection_allows_multiple_web_tool_calls_in_one_response(self):
         parsed_result = TriviaCollectionResult(trivia=[CollectedTrivia(
             subject_key="Web検索",
             title="Web収集テスト",
@@ -350,7 +379,7 @@ class LineSecurityTests(unittest.TestCase):
 
         self.assertEqual(len(items), 1)
         kwargs = parse.call_args.kwargs
-        self.assertEqual(kwargs["max_tool_calls"], 1)
+        self.assertEqual(kwargs["max_tool_calls"], DEFAULT_MAX_SEARCH_CALLS)
         self.assertEqual(kwargs["max_output_tokens"], 16000)
         self.assertEqual(kwargs["reasoning"], {"effort": "low"})
         self.assertEqual(kwargs["tool_choice"], "required")

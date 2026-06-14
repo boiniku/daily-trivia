@@ -8,10 +8,17 @@ from pydantic import BaseModel, ConfigDict
 from sqlalchemy.orm import Session
 
 from models import Trivia, TriviaCandidate
+from services.trivia_candidates import find_duplicate
 from services.trivia_generation import TRIVIA_CATEGORIES
 
 
 logger = logging.getLogger(__name__)
+
+DEFAULT_DISCOVERY_DOMAINS = (
+    "zatsuneta.com",
+    "kerokero-info.com",
+)
+DEFAULT_MAX_SEARCH_CALLS = 5
 
 META_TOPIC_PHRASES = (
     "雑学サイト",
@@ -64,7 +71,10 @@ class TriviaCollectionResult(BaseModel):
 
 
 def get_discovery_domains() -> list[str]:
-    raw_domains = os.getenv("TRIVIA_DISCOVERY_DOMAINS", "")
+    raw_domains = os.getenv("TRIVIA_DISCOVERY_DOMAINS")
+    if raw_domains is None:
+        return list(DEFAULT_DISCOVERY_DOMAINS)
+
     domains = []
     for value in raw_domains.split(","):
         domain = value.strip().lower()
@@ -74,24 +84,39 @@ def get_discovery_domains() -> list[str]:
     return domains[:100]
 
 
+def get_max_search_calls() -> int:
+    raw_value = os.getenv("TRIVIA_MAX_SEARCH_CALLS", "")
+    try:
+        value = int(raw_value)
+    except ValueError:
+        value = DEFAULT_MAX_SEARCH_CALLS
+    return max(1, min(value or DEFAULT_MAX_SEARCH_CALLS, 10))
+
+
 def build_collection_prompt(
     topic: str,
     count: int,
     exclusion_titles: list[str],
     output_count: int | None = None,
+    max_search_calls: int = DEFAULT_MAX_SEARCH_CALLS,
 ) -> str:
     output_count = output_count or count
     subject = f"「{topic}」に関する" if topic else "ジャンルを限定しない"
     categories = ", ".join(TRIVIA_CATEGORIES)
     exclusions = "\n".join(f"- {title}" for title in exclusion_titles)
     return f"""
-Web検索を1回だけ行い、日本語の雑学・豆知識・話のネタをまとめたWebサイトの記事から、
+Web検索を最大{max_search_calls}回まで行い、日本語の雑学・豆知識・話のネタをまとめたWebサイトの記事から、
 {subject}具体的な事実を{output_count}件見つけ、それぞれを独立した雑学として書いてください。
+最初の検索だけで決めず、必要に応じて検索語や切り口を変えて複数回探してください。
+十分に良い候補が集まった時点で検索を止め、回数を使い切る必要はありません。
 
 Webサイトは題材を探すための情報源にすぎません。出力対象は、記事内で紹介されている
 生物、人体、自然、科学、歴史、文化、生活、食べ物などに関する具体的な事実です。
-学術論文、大学、官公庁、企業の公式解説よりも、雑学・豆知識を扱う日本語の記事を
-探索先として優先してください。
+検索と出典には、雑学・豆知識・話のネタを主目的とする日本語のまとめサイトだけを
+使用してください。学術論文、学会誌、大学・研究機関、官公庁、百科事典、報道機関、
+企業・団体の公式サイト、専門家向け技術資料は、検索結果に出ても使用しないでください。
+正確さは採用した雑学記事の記述範囲で保ち、学術的な詳説よりも、
+日常会話で誰かに話したくなる意外性と分かりやすさを重視してください。
 
 【最重要: 雑学の題材】
 - 雑学サイト、まとめサイト、記事、メディアそのものを題材にしない
@@ -132,7 +157,8 @@ Webサイトは題材を探すための情報源にすぎません。出力対�
 - explanationも情報源を紹介する文章にせず、その事実自体の理由や背景だけを書く
 
 【出典と正確性】
-- sourceには、その具体的な事実を説明している個別記事ページのhttpまたはhttps URLを入れる
+- sourceには、雑学・豆知識のまとめサイト内で、その具体的な事実を説明している個別記事ページのhttpまたはhttps URLを入れる
+- 学術論文、大学、研究機関、官公庁、百科事典、ニュース、企業公式ページのURLをsourceに入れない
 - URLが確認できない題材、検索結果の抜粋だけで判断した題材、記事に書かれていない内容は採用しない
 - 数値、年代、固有名詞、因果関係は記事の内容と一致させる
 - 条件や例外がある事実を、常に成り立つ事実のように書かない
@@ -201,14 +227,9 @@ def parse_collection_output(output_text: str) -> list[dict]:
 def validate_collected_items(items: list[CollectedTrivia]) -> list[dict]:
     valid_items = []
     for item in items:
+        if not is_valid_collected_item(item):
+            continue
         data = item.model_dump()
-        topic_text = " ".join((data["title"], data["content"]))
-        if any(phrase in topic_text for phrase in META_TOPIC_PHRASES):
-            logger.warning("Discarded meta-site trivia candidate: %s", data["title"])
-            continue
-        if any(phrase in topic_text for phrase in GENERIC_TOPIC_PHRASES):
-            logger.warning("Discarded overly broad trivia candidate: %s", data["title"])
-            continue
         if data["category"] not in TRIVIA_CATEGORIES:
             data["category"] = "その他"
         data.pop("subject_key", None)
@@ -219,6 +240,44 @@ def validate_collected_items(items: list[CollectedTrivia]) -> list[dict]:
         ):
             valid_items.append(data)
     return valid_items
+
+
+def is_valid_collected_item(item: CollectedTrivia) -> bool:
+    topic_text = " ".join((item.title, item.content))
+    if any(phrase in topic_text for phrase in META_TOPIC_PHRASES):
+        logger.warning("Discarded meta-site trivia candidate: %s", item.title)
+        return False
+    if any(phrase in topic_text for phrase in GENERIC_TOPIC_PHRASES):
+        logger.warning("Discarded overly broad trivia candidate: %s", item.title)
+        return False
+    return (
+        bool(item.title.strip())
+        and bool(item.content.strip())
+        and item.source.strip().startswith(("http://", "https://"))
+    )
+
+
+def remove_existing_duplicates(
+    db: Session,
+    items: list[CollectedTrivia],
+) -> tuple[list[CollectedTrivia], list[str]]:
+    novel_items = []
+    duplicate_titles = []
+    for item in items:
+        if not is_valid_collected_item(item):
+            continue
+        duplicate = find_duplicate(
+            db,
+            title=item.title,
+            content=item.content,
+            source=item.source,
+        )
+        if duplicate:
+            logger.info("Discarded collected duplicate %r: %s", item.title, duplicate)
+            duplicate_titles.append(item.title)
+            continue
+        novel_items.append(item)
+    return novel_items, duplicate_titles
 
 
 def select_diverse_items(
@@ -310,6 +369,7 @@ def collect_trivia(db: Session, topic: str, count: int) -> list[dict]:
     if domains:
         tool["filters"] = {"allowed_domains": domains}
 
+    max_search_calls = get_max_search_calls()
     response = OpenAI(api_key=api_key).responses.parse(
         model=os.getenv(
             "TRIVIA_COLLECTION_MODEL",
@@ -317,7 +377,7 @@ def collect_trivia(db: Session, topic: str, count: int) -> list[dict]:
         ),
         tools=[tool],
         tool_choice="required",
-        max_tool_calls=1,
+        max_tool_calls=max_search_calls,
         max_output_tokens=16000,
         reasoning={"effort": "low"},
         text_format=TriviaCollectionResult,
@@ -326,6 +386,7 @@ def collect_trivia(db: Session, topic: str, count: int) -> list[dict]:
             count,
             existing_titles,
             output_count=output_count,
+            max_search_calls=max_search_calls,
         ),
     )
     incomplete_reason = get_incomplete_reason(response)
@@ -343,7 +404,8 @@ def collect_trivia(db: Session, topic: str, count: int) -> list[dict]:
         raise RuntimeError(
             "Web収集結果を構造化できませんでした。件数を減らして再実行してください"
         )
-    collected_items = parsed.trivia
+
+    novel_items, _ = remove_existing_duplicates(db, parsed.trivia)
     if not topic:
-        collected_items = select_diverse_items(collected_items, count)
-    return validate_collected_items(collected_items)[:count]
+        novel_items = select_diverse_items(novel_items, count)
+    return validate_collected_items(novel_items)[:count]
