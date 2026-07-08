@@ -97,6 +97,31 @@ def candidate_flex_message(candidate: TriviaCandidate) -> dict:
         f"{public_base_url}/admin/candidates/{candidate.id}/edit?"
         f"{urlencode({'token': make_editor_token(candidate.id)})}"
     )
+    body_contents = [
+        {"type": "text", "text": candidate.title or "無題", "weight": "bold", "size": "lg", "wrap": True},
+        {"type": "text", "text": candidate.content or "", "wrap": True, "size": "sm"},
+        {"type": "text", "text": candidate.explanation or "", "wrap": True, "size": "xs", "color": "#666666"},
+        {"type": "text", "text": f"{candidate.category or 'その他'} / #{candidate.id}", "size": "xs", "color": "#888888"},
+    ]
+    if candidate.map_address or candidate.map_prefecture:
+        location_text = f"MAP: {candidate.map_prefecture or ''} {candidate.map_address or ''}".strip()
+        if candidate.map_latitude is not None and candidate.map_longitude is not None:
+            location_text += f" ({candidate.map_latitude:.5f}, {candidate.map_longitude:.5f})"
+        body_contents.append({"type": "text", "text": location_text, "size": "xxs", "color": "#2563eb", "wrap": True})
+    body_contents.append({"type": "text", "text": candidate.source or "出典なし", "size": "xxs", "color": "#888888", "wrap": True})
+    has_complete_map = bool(
+        candidate.map_address
+        and candidate.map_prefecture
+        and candidate.map_latitude is not None
+        and candidate.map_longitude is not None
+        and candidate.map_radius is not None
+    )
+    approve_label = "MAP公開する" if has_complete_map else "公開する"
+    approve_display = (
+        f"「{candidate.title}」をMAP公開"
+        if has_complete_map
+        else f"「{candidate.title}」を公開"
+    )
     return {
         "type": "flex",
         "altText": f"承認待ち: {candidate.title}",
@@ -107,13 +132,7 @@ def candidate_flex_message(candidate: TriviaCandidate) -> dict:
                 "type": "box",
                 "layout": "vertical",
                 "spacing": "md",
-                "contents": [
-                    {"type": "text", "text": candidate.title or "無題", "weight": "bold", "size": "lg", "wrap": True},
-                    {"type": "text", "text": candidate.content or "", "wrap": True, "size": "sm"},
-                    {"type": "text", "text": candidate.explanation or "", "wrap": True, "size": "xs", "color": "#666666"},
-                    {"type": "text", "text": f"{candidate.category or 'その他'} / #{candidate.id}", "size": "xs", "color": "#888888"},
-                    {"type": "text", "text": candidate.source or "出典なし", "size": "xxs", "color": "#888888", "wrap": True},
-                ],
+                "contents": body_contents,
             },
             "footer": {
                 "type": "box",
@@ -126,9 +145,9 @@ def candidate_flex_message(candidate: TriviaCandidate) -> dict:
                         "color": "#1DB446",
                         "action": {
                             "type": "postback",
-                            "label": "公開する",
+                            "label": approve_label,
                             "data": f"action=approve&candidate_id={candidate.id}",
-                            "displayText": f"「{candidate.title}」を公開",
+                            "displayText": approve_display,
                         },
                     },
                     {"type": "button", "action": {"type": "uri", "label": "編集する", "uri": editor_url}},
@@ -148,22 +167,32 @@ def candidate_flex_message(candidate: TriviaCandidate) -> dict:
     }
 
 
-def new_candidate_message() -> dict:
+def new_candidate_message(map_mode: bool = False) -> dict:
     public_base_url = os.getenv("PUBLIC_BASE_URL", "").rstrip("/")
     if not public_base_url:
         raise RuntimeError("PUBLIC_BASE_URL is not configured")
+    query = {"token": make_editor_token(0)}
+    if map_mode:
+        query["map"] = "1"
     url = (
         f"{public_base_url}/admin/candidates/new?"
-        f"{urlencode({'token': make_editor_token(0)})}"
+        f"{urlencode(query)}"
     )
+    title = "新しい地図用雑学" if map_mode else "新しい雑学"
+    text = (
+        "住所・都道府県・緯度経度も入力できます。"
+        if map_mode
+        else "スマホで文章と画像を入力できます。"
+    )
+    label = "地図用フォームを開く" if map_mode else "登録フォームを開く"
     return {
         "type": "template",
-        "altText": "新しい雑学を手入力",
+        "altText": title,
         "template": {
             "type": "buttons",
-            "title": "新しい雑学",
-            "text": "スマホで文章と画像を入力できます。",
-            "actions": [{"type": "uri", "label": "登録フォームを開く", "uri": url}],
+            "title": title,
+            "text": text,
+            "actions": [{"type": "uri", "label": label, "uri": url}],
         },
     }
 

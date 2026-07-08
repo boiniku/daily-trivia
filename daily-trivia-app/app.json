@@ -3,7 +3,7 @@
     "name": "毎日雑学",
     "slug": "daily-trivia-app",
     "owner": "nobooooooo",
-    "version": "1.0.36",
+    "version": "1.0.37",
     "orientation": "portrait",
     "platforms": [
       "ios",
@@ -20,7 +20,7 @@
     "ios": {
       "supportsTablet": false,
       "bundleIdentifier": "com.dailytrivia.app",
-      "buildNumber": "142",
+      "buildNumber": "143",
       "entitlements": {
         "com.apple.security.application-groups": [
           "group.com.dailytrivia.app"
@@ -28,6 +28,8 @@
       },
       "infoPlist": {
         "NSPhotoLibraryAddUsageDescription": "ウィジェットのスクリーンショットをカメラロールに保存するために使用します。",
+        "NSLocationWhenInUseUsageDescription": "現在地の近くにあるご当地雑学を表示・解放するために位置情報を使用します。",
+        "NSUserNotificationUsageDescription": "近くのご当地雑学が解放されたことをお知らせするために通知を使用します。",
         "SKAdNetworkItems": [
           {
             "SKAdNetworkIdentifier": "cstr6suwn9.skadnetwork"
@@ -50,11 +52,26 @@
       "package": "com.dailytrivia.app",
       "permissions": [
         "android.permission.RECEIVE_BOOT_COMPLETED",
-        "android.permission.WAKE_LOCK"
+        "android.permission.WAKE_LOCK",
+        "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.ACCESS_FINE_LOCATION",
+        "android.permission.POST_NOTIFICATIONS"
       ]
     },
     "plugins": [
       "./plugins/withPodfileFix",
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "現在地の近くにあるご当地雑学を表示・解放するために位置情報を使用します。"
+        }
+      ],
+      [
+        "expo-notifications",
+        {
+          "sounds": []
+        }
+      ],
       "expo-background-fetch",
       "expo-router",
       [

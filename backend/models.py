@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Text, ForeignKey, Boolean, DateTime, Date, JSON
+from sqlalchemy import Column, Integer, String, Text, ForeignKey, Boolean, DateTime, Date, JSON, Float
 from sqlalchemy.orm import relationship
 from datetime import datetime
 from database import Base
@@ -61,6 +61,12 @@ class TriviaCandidate(Base):
     source = Column(String)
     category = Column(String)
     image_url = Column(String, nullable=True)
+    map_address = Column(String, nullable=True)
+    map_prefecture = Column(String, nullable=True)
+    map_latitude = Column(Float, nullable=True)
+    map_longitude = Column(Float, nullable=True)
+    map_radius = Column(Integer, nullable=True)
+    map_hint = Column(String, nullable=True)
     status = Column(String, default="pending", index=True) # pending, approved, rejected
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

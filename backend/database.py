@@ -3,11 +3,14 @@ from sqlalchemy import create_engine, event, text
 from sqlalchemy.orm import sessionmaker, declarative_base
 from dotenv import load_dotenv
 
-load_dotenv()
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+load_dotenv(os.path.join(BASE_DIR, ".env"))
 
 # Admin connection (neondb_owner) - bypasses RLS
 # Used by admin_dashboard.py
 DATABASE_URL = os.getenv("DATABASE_URL")
+if not DATABASE_URL:
+    raise RuntimeError("DATABASE_URL is not set. Add it to backend/.env or the process environment.")
 
 # App connection (app_user) - subject to RLS policies
 # Used by main.py API endpoints

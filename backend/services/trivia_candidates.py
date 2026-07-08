@@ -23,6 +23,18 @@ class DuplicateCandidateError(CandidateError):
     pass
 
 
+def _optional_float(value):
+    if value in (None, ""):
+        return None
+    return float(value)
+
+
+def _optional_int(value):
+    if value in (None, ""):
+        return None
+    return int(value)
+
+
 def _normalize_for_similarity(value: str) -> str:
     normalized = (value or "").lower().translate(NUMBER_TRANSLATION)
     normalized = normalized.replace("センチメートル", "cm").replace("センチ", "cm")
@@ -178,6 +190,12 @@ def _add_candidate(db: Session, item: dict) -> TriviaCandidate:
         source=(item.get("source") or "").strip(),
         category=(item.get("category") or "その他").strip(),
         image_url=(item.get("image_url") or "").strip() or None,
+        map_address=(item.get("map_address") or "").strip() or None,
+        map_prefecture=(item.get("map_prefecture") or "").strip() or None,
+        map_latitude=_optional_float(item.get("map_latitude")),
+        map_longitude=_optional_float(item.get("map_longitude")),
+        map_radius=_optional_int(item.get("map_radius")),
+        map_hint=(item.get("map_hint") or "").strip() or None,
         status="pending",
     )
     db.add(candidate)
@@ -195,6 +213,12 @@ def update_candidate(
     source: str,
     category: str,
     image_url: Optional[str] = None,
+    map_address: Optional[str] = None,
+    map_prefecture: Optional[str] = None,
+    map_latitude: Optional[float] = None,
+    map_longitude: Optional[float] = None,
+    map_radius: Optional[int] = None,
+    map_hint: Optional[str] = None,
 ) -> TriviaCandidate:
     candidate = db.query(TriviaCandidate).filter(TriviaCandidate.id == candidate_id).first()
     if not candidate:
@@ -219,6 +243,12 @@ def update_candidate(
     candidate.source = source.strip()
     candidate.category = category.strip() or "その他"
     candidate.image_url = (image_url or "").strip() or None
+    candidate.map_address = (map_address or "").strip() or None
+    candidate.map_prefecture = (map_prefecture or "").strip() or None
+    candidate.map_latitude = _optional_float(map_latitude)
+    candidate.map_longitude = _optional_float(map_longitude)
+    candidate.map_radius = _optional_int(map_radius)
+    candidate.map_hint = (map_hint or "").strip() or None
     db.commit()
     db.refresh(candidate)
     return candidate

@@ -62,6 +62,12 @@ class CollectedTrivia(BaseModel):
     explanation: str
     category: str
     source: str
+    map_address: str = ""
+    map_prefecture: str = ""
+    map_latitude: float | None = None
+    map_longitude: float | None = None
+    map_radius: int | None = None
+    map_hint: str = ""
 
 
 class TriviaCollectionResult(BaseModel):
@@ -99,11 +105,24 @@ def build_collection_prompt(
     exclusion_titles: list[str],
     output_count: int | None = None,
     max_search_calls: int = DEFAULT_MAX_SEARCH_CALLS,
+    map_mode: bool = False,
 ) -> str:
     output_count = output_count or count
     subject = f"「{topic}」に関する" if topic else "ジャンルを限定しない"
     categories = ", ".join(TRIVIA_CATEGORIES)
     exclusions = "\n".join(f"- {title}" for title in exclusion_titles)
+    map_focus = ""
+    if map_mode:
+        map_focus = f"""
+【地図用収集モード】
+- 今回は雑学MAPへ登録する候補だけを集める
+- 地名、建物、史跡、駅、橋、公園、神社仏閣、城跡、観光地、地域文化、特定の店や施設など、現地に行ける具体的な場所に紐づく雑学だけを採用する
+- 場所に紐づかない生物・科学・言葉・食べ物などの一般雑学は、どれだけ面白くても採用しない
+- map_address、map_prefecture、map_latitude、map_longitude、map_radiusは全件必ず入れる
+- map_addressは施設名だけでなく、可能なら住所や「施設名 / 住所」の形にする
+- map_latitude/map_longitudeは代表地点の座標を数値で入れる。分からない地点は採用しない
+- {output_count}件は都道府県、施設、史跡、地域文化などが互いに偏りすぎないようにする
+"""
     return f"""
 Web検索を最大{max_search_calls}回まで行い、日本語の雑学・豆知識・話のネタをまとめたWebサイトの記事から、
 {subject}具体的な事実を{output_count}件見つけ、それぞれを独立した雑学として書いてください。
@@ -132,6 +151,7 @@ Webサイトは題材を探すための情報源にすぎません。出力対�
 - テーマ指定がない場合、{output_count}件のうち可能な限り異なるカテゴリを選び、3件以上なら最低3カテゴリに分ける
 - subject_keyには中心対象を短い一般名詞で1つだけ入れる。例: 目、タコ、金星、ハチミツ、江戸時代
 - 目・視覚・瞳・眼球のように実質同じ対象は、同じsubject_key「目」に統一する
+{map_focus}
 
 【最重要: タイトル】
 - 30文字以内で、タイトルだけで「何についての、どんな意外な事実か」が伝わるようにする
@@ -186,10 +206,24 @@ Webサイトは題材を探すための情報源にすぎません。出力対�
       "content": "独自に作成した50〜80文字程度の本文",
       "explanation": "独自に作成した100〜150文字程度の解説",
       "category": "{categories}のいずれか",
-      "source": "題材を発見した記事のURL"
+      "source": "題材を発見した記事のURL",
+      "map_address": "雑学MAPに置ける具体的な住所や施設名。場所に関係しない雑学なら空文字",
+      "map_prefecture": "都道府県。場所に関係しない雑学なら空文字",
+      "map_latitude": 35.6812,
+      "map_longitude": 139.7671,
+      "map_radius": 300,
+      "map_hint": ""
     }}
   ]
 }}
+
+【雑学MAP用情報】
+- 地名、建物、史跡、駅、観光地、地域文化など場所に紐づく雑学では、map_address/map_prefecture/map_latitude/map_longitude/map_radiusをできるだけ入れる
+- 場所に関係しない雑学では、map_address/map_prefecture/map_hintは空文字、map_latitude/map_longitude/map_radiusはnullにする
+- map_addressはユーザーが現地へ向かえる具体的な施設名や住所にする
+- 緯度経度はその地点の代表座標にする
+- map_radiusは通常300、広い公園や城跡などは500〜800にする
+{"- 地図用収集モードでは、場所情報が欠ける候補は出力しない" if map_mode else ""}
 
 【除外リスト】
 以下は公開済みまたは承認待ちです。タイトルの完全一致だけでなく、
@@ -240,6 +274,16 @@ def validate_collected_items(items: list[CollectedTrivia]) -> list[dict]:
         ):
             valid_items.append(data)
     return valid_items
+
+
+def has_complete_map_fields(item: CollectedTrivia) -> bool:
+    return bool(
+        item.map_address.strip()
+        and item.map_prefecture.strip()
+        and item.map_latitude is not None
+        and item.map_longitude is not None
+        and item.map_radius is not None
+    )
 
 
 def is_valid_collected_item(item: CollectedTrivia) -> bool:
@@ -342,7 +386,7 @@ def get_incomplete_reason(response) -> str:
     return f"収集処理が完了しませんでした: {reason or 'unknown'}"
 
 
-def collect_trivia(db: Session, topic: str, count: int) -> list[dict]:
+def collect_trivia(db: Session, topic: str, count: int, map_mode: bool = False) -> list[dict]:
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
         raise RuntimeError("OPENAI_API_KEY is not configured")
@@ -387,6 +431,7 @@ def collect_trivia(db: Session, topic: str, count: int) -> list[dict]:
             existing_titles,
             output_count=output_count,
             max_search_calls=max_search_calls,
+            map_mode=map_mode,
         ),
     )
     incomplete_reason = get_incomplete_reason(response)
@@ -405,7 +450,10 @@ def collect_trivia(db: Session, topic: str, count: int) -> list[dict]:
             "Web収集結果を構造化できませんでした。件数を減らして再実行してください"
         )
 
-    novel_items, _ = remove_existing_duplicates(db, parsed.trivia)
+    source_items = parsed.trivia
+    if map_mode:
+        source_items = [item for item in source_items if has_complete_map_fields(item)]
+    novel_items, _ = remove_existing_duplicates(db, source_items)
     if not topic:
         novel_items = select_diverse_items(novel_items, count)
     return validate_collected_items(novel_items)[:count]

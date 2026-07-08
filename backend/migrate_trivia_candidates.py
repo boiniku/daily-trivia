@@ -10,6 +10,12 @@ COLUMNS = {
     "reviewed_by": "VARCHAR",
     "published_trivia_id": "INTEGER REFERENCES trivia(id)",
     "line_sent_at": "TIMESTAMP",
+    "map_address": "VARCHAR",
+    "map_prefecture": "VARCHAR",
+    "map_latitude": "FLOAT",
+    "map_longitude": "FLOAT",
+    "map_radius": "INTEGER",
+    "map_hint": "VARCHAR",
 }
 
 

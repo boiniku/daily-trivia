@@ -16,7 +16,7 @@ from sqlalchemy.pool import StaticPool
 
 from models import Base, Trivia, TriviaCandidate
 from routers import line_admin
-from routers.line_admin import _parse_collect_command, _parse_generate_command
+from routers.line_admin import _approve_candidate_from_line, _parse_collect_command, _parse_generate_command
 from services.trivia_generation import build_generation_prompt
 from services.trivia_collection import (
     CollectedTrivia,
@@ -28,12 +28,14 @@ from services.trivia_collection import (
     get_incomplete_reason,
     get_discovery_domains,
     get_max_search_calls,
+    has_complete_map_fields,
     parse_collection_output,
     remove_existing_duplicates,
     select_diverse_items,
     validate_collected_items,
 )
 from services.line_bot import make_editor_token, read_editor_token, verify_signature
+from services.trivia_map import build_trivia_spot, format_trivia_spot_block, parse_trivia_spot_block
 from services.trivia_candidates import (
     CandidateError,
     DuplicateCandidateError,
@@ -206,6 +208,46 @@ class TriviaWorkflowTests(unittest.TestCase):
 
         self.assertEqual(candidate.title, "タコの血液は青い")
 
+    def test_map_spot_keeps_explanation(self):
+        spot = build_trivia_spot(
+            title="東京タワーの色",
+            description="東京タワーは赤白に見えますが、正式にはインターナショナルオレンジと白です。",
+            explanation="航空機から目立つようにするため、航空法に基づく昼間障害標識として塗り分けられています。",
+            prefecture="東京都",
+            address="東京タワー / 東京都港区芝公園4-2-8",
+            latitude=35.658581,
+            longitude=139.745433,
+            category="観光",
+            spot_id="test_tokyo_tower_color",
+        )
+        block = format_trivia_spot_block(spot)
+        parsed = parse_trivia_spot_block(block)
+
+        self.assertIn("explanation", block)
+        self.assertEqual(parsed["explanation"], spot["explanation"])
+
+    def test_line_approve_map_candidate_publishes_to_map_only(self):
+        candidate = create_candidate(self.db, {
+            "title": "東京タワーの色",
+            "content": "東京タワーは赤白に見えますが、正式にはインターナショナルオレンジと白です。",
+            "explanation": "航空機から目立つようにするため、航空法に基づく昼間障害標識として塗り分けられています。",
+            "category": "観光",
+            "map_prefecture": "東京都",
+            "map_address": "東京タワー / 東京都港区芝公園4-2-8",
+            "map_latitude": 35.658581,
+            "map_longitude": 139.745433,
+            "map_radius": 300,
+        })
+
+        with patch.object(line_admin, "append_trivia_spot_to_file", return_value="tokyo_tower_color") as append:
+            message = _approve_candidate_from_line(self.db, candidate.id, "line-user")
+
+        append.assert_called_once()
+        refreshed = self.db.query(TriviaCandidate).filter_by(id=candidate.id).one()
+        self.assertEqual(refreshed.status, "rejected")
+        self.assertIn("MAPに公開しました", message)
+        self.assertEqual(self.db.query(Trivia).count(), 0)
+
 
 class LineSecurityTests(unittest.TestCase):
     def setUp(self):
@@ -263,9 +305,17 @@ class LineSecurityTests(unittest.TestCase):
         self.assertIn("歴史、生物、食べ物", prompt)
 
     def test_collection_commands(self):
-        self.assertEqual(_parse_collect_command("収集"), ("", 3))
-        self.assertEqual(_parse_collect_command("収集 5"), ("", 5))
-        self.assertEqual(_parse_collect_command("収集 食べ物 5"), ("食べ物", 5))
+        self.assertEqual(_parse_collect_command("収集"), ("", 3, False))
+        self.assertEqual(_parse_collect_command("収集 5"), ("", 5, False))
+        self.assertEqual(_parse_collect_command("収集 食べ物 5"), ("食べ物", 5, False))
+        self.assertEqual(_parse_collect_command("地図収集"), ("", 3, True))
+        self.assertEqual(_parse_collect_command("地図収集 5"), ("", 5, True))
+        self.assertEqual(_parse_collect_command("地図収集 京都 5"), ("京都", 5, True))
+        self.assertEqual(_parse_collect_command("MAP収集 東京タワー 2"), ("東京タワー", 2, True))
+        self.assertEqual(_parse_collect_command("収集(地図用)"), ("", 3, True))
+        self.assertEqual(_parse_collect_command("収集(地図用) 5"), ("", 5, True))
+        self.assertEqual(_parse_collect_command("収集(地図用) 京都 5"), ("京都", 5, True))
+        self.assertEqual(_parse_collect_command("収集 地図用 京都 5"), ("京都", 5, True))
         self.assertIsNone(_parse_collect_command("生成 5"))
 
     def test_collection_prompt_forbids_copying(self):
@@ -291,6 +341,32 @@ class LineSecurityTests(unittest.TestCase):
         self.assertIn(f"最大{DEFAULT_MAX_SEARCH_CALLS}回まで", prompt)
         self.assertIn("検索語や切り口を変えて複数回", prompt)
         self.assertIn("回数を使い切る必要はありません", prompt)
+
+    def test_map_collection_prompt_requires_place_fields(self):
+        prompt = build_collection_prompt("京都", 3, [], map_mode=True)
+        self.assertIn("雑学MAPへ登録する候補だけ", prompt)
+        self.assertIn("現地に行ける具体的な場所", prompt)
+        self.assertIn("map_address、map_prefecture、map_latitude、map_longitude、map_radiusは全件必ず", prompt)
+        self.assertNotIn("map_hintは全件必ず", prompt)
+
+    def test_map_collection_requires_complete_map_fields(self):
+        complete = CollectedTrivia(
+            subject_key="東京タワー",
+            title="東京タワーは戦車由来の鉄も使った",
+            content="東京タワーには、朝鮮戦争後の米軍戦車のスクラップ鉄も使われました。",
+            explanation="建設当時は大量の鉄が必要で、入手しやすいスクラップ鉄も資材として活用されました。",
+            category="歴史",
+            source="https://example.com/tokyo-tower",
+            map_address="東京タワー / 東京都港区芝公園4-2-8",
+            map_prefecture="東京都",
+            map_latitude=35.658581,
+            map_longitude=139.745433,
+            map_radius=300,
+        )
+        incomplete = complete.model_copy(update={"map_address": ""})
+
+        self.assertTrue(has_complete_map_fields(complete))
+        self.assertFalse(has_complete_map_fields(incomplete))
 
     def test_collection_uses_trivia_sites_by_default(self):
         with patch.dict(os.environ, {}, clear=False):
@@ -616,6 +692,55 @@ class MobileEditorIntegrationTests(unittest.TestCase):
         })
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["status"], "pending")
+
+    def test_new_map_candidate_page_opens_with_map_fields(self):
+        token = make_editor_token(0)
+        page = self.client.get("/admin/candidates/new", params={"token": token, "map": "1"})
+
+        self.assertEqual(page.status_code, 200)
+        self.assertIn("新しい地図用雑学を登録", page.text)
+        self.assertIn('id="add_to_map" type="checkbox" checked', page.text)
+        self.assertIn('id="add_to_normal" type="checkbox">', page.text)
+
+    def test_new_map_candidate_requires_address(self):
+        token = make_editor_token(0)
+        response = self.client.post("/admin/candidates/new", json={
+            "token": token,
+            "title": "地図用手入力テスト",
+            "content": "地図用として新しく入力した雑学の本文です。",
+            "explanation": "",
+            "category": "歴史",
+            "source": "",
+            "image_url": "",
+            "publish": False,
+            "add_to_normal": False,
+            "add_to_map": True,
+            "map_prefecture": "東京都",
+            "map_address": "",
+        })
+
+        self.assertEqual(response.status_code, 400)
+
+    def test_existing_map_candidate_shows_collected_location_info(self):
+        candidate = create_candidate(self.db, {
+            "title": "地図候補編集テスト",
+            "content": "地図候補として収集した雑学の本文です。",
+            "explanation": "地図候補として収集した雑学の解説です。",
+            "category": "歴史",
+            "map_prefecture": "東京都",
+            "map_address": "東京タワー / 東京都港区芝公園4-2-8",
+            "map_latitude": 35.658581,
+            "map_longitude": 139.745433,
+            "map_radius": 300,
+        })
+        token = make_editor_token(candidate.id)
+
+        page = self.client.get(f"/admin/candidates/{candidate.id}/edit", params={"token": token})
+
+        self.assertEqual(page.status_code, 200)
+        self.assertIn("収集済みMAP情報", page.text)
+        self.assertIn("東京タワー / 東京都港区芝公園4-2-8", page.text)
+        self.assertIn('id="add_to_map" type="checkbox" checked', page.text)
 
     def test_image_upload_returns_uploaded_url(self):
         token = make_editor_token(0)

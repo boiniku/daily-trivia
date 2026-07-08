@@ -1,0 +1,73 @@
+import { TriviaSpot } from '../models/TriviaSpot';
+
+const initialTriviaSpots: TriviaSpot[] = [
+    {
+        id: 'tokyo_001',
+        title: '東京タワーの色の雑学',
+        description: '東京タワーの赤と白の塗り分けは、航空法で定められた昼間障害標識として目立たせるためのものです。現在の正式な色名はインターナショナルオレンジと白です。',
+        explanation: '高さのある建造物は航空機から見つけやすい配色が求められます。東京タワーの色は景観だけでなく、空の安全を守るための目印として機能しています。',
+        latitude: 35.6586,
+        longitude: 139.7454,
+        unlockRadiusMeters: 300,
+        isUnlocked: false,
+        unlockedAt: null,
+        prefecture: '東京都',
+        category: '観光',
+    },
+    {
+        id: 'kyoto_001',
+        title: '伏見稲荷の鳥居の雑学',
+        description: '伏見稲荷大社の千本鳥居は、願いが通る、通ったという意味から奉納されてきました。鳥居の数は境内全体で数千基にのぼります。',
+        explanation: '鳥居は願いごとが成就した感謝や祈願のしるしとして奉納されてきました。参道に連なる朱色の鳥居は、長い信仰の積み重ねを目で見られる景色です。',
+        latitude: 34.9671,
+        longitude: 135.7727,
+        unlockRadiusMeters: 350,
+        isUnlocked: false,
+        unlockedAt: null,
+        prefecture: '京都府',
+        category: '歴史',
+    },
+    {
+        id: 'osaka_001',
+        title: '通天閣とビリケンさんの雑学',
+        description: '通天閣の展望台にいるビリケンさんは、足の裏をなでると幸運が訪れるといわれています。初代通天閣は1912年に建てられました。',
+        explanation: 'ビリケン像はもともとアメリカ生まれの幸運の神様として広まりました。大阪では通天閣の名物として親しまれ、足の裏をなでる習慣が観光体験になっています。',
+        latitude: 34.6525,
+        longitude: 135.5063,
+        unlockRadiusMeters: 300,
+        isUnlocked: false,
+        unlockedAt: null,
+        prefecture: '大阪府',
+        category: '観光',
+    },
+    {
+        id: 'hokkaido_001',
+        title: '札幌時計台の雑学',
+        description: '札幌市時計台は、もともと札幌農学校の演武場として建てられました。現在も街の中心部で時を刻む、北海道開拓期を伝える建物です。',
+        explanation: '演武場は学生の兵式訓練や式典に使われた施設でした。時計台は単なる時計の建物ではなく、札幌農学校と北海道開拓の歴史を残す文化財です。',
+        latitude: 43.0626,
+        longitude: 141.3537,
+        unlockRadiusMeters: 300,
+        isUnlocked: false,
+        unlockedAt: null,
+        prefecture: '北海道',
+        category: '歴史',
+    },
+    {
+        id: 'okinawa_001',
+        title: '首里城の赤瓦の雑学',
+        description: '首里城の赤瓦は沖縄の強い日差しに映えるだけでなく、琉球王国時代の建築文化を象徴する意匠として知られています。',
+        explanation: '赤瓦は沖縄の土や気候、建築文化と結びついた素材です。首里城の色彩は中国や日本の影響を受けつつ、琉球独自の美意識を伝えています。',
+        latitude: 26.2170,
+        longitude: 127.7194,
+        unlockRadiusMeters: 400,
+        isUnlocked: false,
+        unlockedAt: null,
+        prefecture: '沖縄県',
+        category: '文化',
+    },
+];
+
+export const getTriviaSpots = async (): Promise<TriviaSpot[]> => {
+    return initialTriviaSpots.map((spot) => ({ ...spot }));
+};

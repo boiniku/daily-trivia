@@ -63,6 +63,18 @@ export default function TabLayout() {
                 }}
             />
             <Tabs.Screen
+                name="map"
+                options={{
+                    title: 'MAP',
+                    tabBarIcon: ({ color, focused }) => (
+                        <View style={{ alignItems: 'center', justifyContent: 'center', height: 46 }}>
+                            <Ionicons name={focused ? "map" : "map-outline"} size={32} color={color} />
+                            {focused && <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: color, position: 'absolute', bottom: 0 }} />}
+                        </View>
+                    ),
+                }}
+            />
+            <Tabs.Screen
                 name="settings"
                 options={{
                     title: 'Settings',

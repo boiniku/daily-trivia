@@ -43,8 +43,15 @@ def build_generation_prompt(
 - explanation: 根拠や背景を100〜150文字程度
 - category: 次から1つ選択: {categories}
 - source: 根拠を確認できるhttpまたはhttpsのURL
+- map_address: 雑学MAPに置ける具体的な住所や施設名。場所に関係しない雑学なら空文字
+- map_prefecture: 都道府県。場所に関係しない雑学なら空文字
+- map_latitude: 緯度。場所に関係しない雑学なら null
+- map_longitude: 経度。場所に関係しない雑学なら null
+- map_radius: 解放半径メートル。場所に関係しない雑学なら null。通常は300
+- map_hint: 空文字
 
 URLを提示できない事実は生成しないでください。同じ事実の言い換えは禁止です。
+地名、建物、史跡、駅、観光地、地域文化など場所に紐づく雑学では、雑学MAP用の情報もできるだけ正確に入れてください。
 指定されたカテゴリ同士で、題材や内容が重ならないようにしてください。
 既存または承認待ちのタイトル:
 {exclusion}

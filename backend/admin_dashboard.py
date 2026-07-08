@@ -21,7 +21,8 @@ except ImportError:
     ImageOps = None
     UnidentifiedImageError = Exception
 from sqlalchemy.orm import Session
-from sqlalchemy import and_, or_
+from sqlalchemy import and_, or_, text
+from sqlalchemy.exc import OperationalError, SQLAlchemyError
 from database import SessionLocal
 from models import Trivia, TriviaCandidate, DailyAssignment, CollectionItem, TriviaHee
 from services.trivia_candidates import (
@@ -29,6 +30,14 @@ from services.trivia_candidates import (
     create_candidates,
     reject_candidate,
     update_candidate,
+)
+from services.trivia_map import (
+    append_trivia_spot_to_file,
+    append_trivia_to_map,
+    build_trivia_spot,
+    delete_trivia_spot,
+    load_trivia_spots,
+    save_trivia_spot,
 )
 from datetime import datetime
 
@@ -407,6 +416,128 @@ def get_db():
         db.close()
 
 db = next(get_db())
+try:
+    db.execute(text("SELECT 1"))
+    from migrate_trivia_candidates import migrate as migrate_trivia_candidates
+    migrate_trivia_candidates()
+except OperationalError:
+    st.error("データベースに接続できません。NeonのDATABASE_URLのパスワードが違う、または古い可能性があります。")
+    st.info("Neonダッシュボードで現在の接続文字列をコピーし、backend/.env の DATABASE_URL を更新してから Streamlit を再起動してください。")
+    st.stop()
+except SQLAlchemyError as e:
+    st.error(f"データベース接続の確認に失敗しました: {e}")
+    st.stop()
+
+
+def render_trivia_map_admin():
+    st.subheader("雑学MAPを管理")
+    try:
+        spots = load_trivia_spots()
+    except Exception as e:
+        st.error(f"MAPデータを読み込めません: {e}")
+        return
+
+    search_query = st.text_input("🔍 MAP検索 (タイトル・本文・住所)", "", key="map_search")
+    if search_query:
+        needle = search_query.lower()
+        spots = [
+            spot for spot in spots
+            if needle in " ".join(str(spot.get(key) or "") for key in ["title", "description", "explanation", "prefecture", "address", "category"]).lower()
+        ]
+
+    st.write(f"全 {len(spots)} 件")
+    if not spots:
+        st.info("雑学MAPのデータが見つかりません。")
+        return
+
+    labels = {
+        f"{spot.get('id')}: {spot.get('title', '無題')} ({spot.get('prefecture') or '未設定'})": spot
+        for spot in spots
+    }
+    selected_label = st.selectbox("編集するMAP雑学", list(labels.keys()), key="map_edit_select")
+    spot = labels[selected_label]
+    original_id = str(spot.get("id") or "")
+
+    st.subheader(f"MAP編集: {original_id}")
+    m_title = st.text_input("タイトル", value=str(spot.get("title") or ""), key=f"map_title_{original_id}")
+    m_description = st.text_area("本文", value=str(spot.get("description") or ""), key=f"map_description_{original_id}")
+    m_explanation = st.text_area("解説", value=str(spot.get("explanation") or ""), key=f"map_explanation_{original_id}")
+    map_col1, map_col2 = st.columns(2)
+    with map_col1:
+        m_id = st.text_input("MAP ID", value=original_id, key=f"map_id_{original_id}")
+        m_prefecture = st.text_input("都道府県", value=str(spot.get("prefecture") or ""), key=f"map_prefecture_{original_id}")
+        m_latitude = st.number_input(
+            "緯度",
+            min_value=-90.0,
+            max_value=90.0,
+            value=float(spot.get("latitude") or 35.6812),
+            format="%.6f",
+            key=f"map_latitude_{original_id}",
+        )
+    with map_col2:
+        m_category = st.selectbox(
+            "カテゴリ",
+            TRIVIA_CATEGORIES,
+            index=TRIVIA_CATEGORIES.index(spot.get("category")) if spot.get("category") in TRIVIA_CATEGORIES else TRIVIA_CATEGORIES.index("その他"),
+            key=f"map_category_{original_id}",
+        )
+        m_address = st.text_input("住所・施設名", value=str(spot.get("address") or ""), key=f"map_address_{original_id}")
+        m_longitude = st.number_input(
+            "経度",
+            min_value=-180.0,
+            max_value=180.0,
+            value=float(spot.get("longitude") or 139.7671),
+            format="%.6f",
+            key=f"map_longitude_{original_id}",
+        )
+    m_radius = st.number_input(
+        "解放半径（メートル）",
+        min_value=10,
+        max_value=5000,
+        value=int(spot.get("unlockRadiusMeters") or 300),
+        step=10,
+        key=f"map_radius_{original_id}",
+    )
+
+    action_col1, action_col2, action_col3 = st.columns([1, 1, 3])
+    with action_col1:
+        update_map = st.button("MAP更新", type="primary", key=f"map_update_{original_id}")
+    with action_col2:
+        delete_map = st.button("MAP削除", key=f"map_delete_{original_id}")
+
+    if update_map:
+        try:
+            if not m_id.strip():
+                raise ValueError("MAP IDは必須です。")
+            existing_ids = {str(item.get("id") or "") for item in load_trivia_spots()}
+            if m_id != original_id and m_id in existing_ids:
+                raise ValueError(f"MAP ID '{m_id}' は既に使われています。")
+            save_trivia_spot(original_id, {
+                "id": m_id.strip(),
+                "title": m_title,
+                "description": m_description,
+                "explanation": m_explanation,
+                "latitude": float(m_latitude),
+                "longitude": float(m_longitude),
+                "unlockRadiusMeters": int(m_radius),
+                "prefecture": m_prefecture,
+                "address": m_address,
+                "category": m_category,
+                "hint": "",
+            })
+            st.success("雑学MAPを更新しました。")
+            st.rerun()
+        except Exception as e:
+            st.error(f"MAP更新エラー: {e}")
+
+    if delete_map:
+        try:
+            delete_trivia_spot(original_id)
+            st.warning("雑学MAPから削除しました。")
+            st.rerun()
+        except Exception as e:
+            st.error(f"MAP削除エラー: {e}")
+
 
 # Tabs
 tab1, tab2, tab3 = st.tabs(["🆕 新規登録", "🤖 AI収集", "🛠️ 管理・編集"])
@@ -416,12 +547,41 @@ with tab1:
     st.header("新しい雑学を登録")
     
     with st.form("register_form", clear_on_submit=True):
+        register_target = st.radio(
+            "登録先",
+            ["通常の雑学", "新規作成（地図用）", "通常 + 地図"],
+            horizontal=True,
+            key="new_register_target",
+        )
+        add_to_normal_trivia = register_target in {"通常の雑学", "通常 + 地図"}
+        add_to_trivia_map = register_target in {"新規作成（地図用）", "通常 + 地図"}
         col1, col2 = st.columns([2, 1])
         
         with col1:
             title = st.text_input("タイトル (必須)", max_chars=50, placeholder="例: 富士山の高さ")
             content = st.text_area("本文 (必須)", max_chars=100, height=80, placeholder="雑学のメインコンテンツ。50〜80文字程度で簡潔に。")
             explanation = st.text_area("解説・詳細", height=120, placeholder="詳細な背景や理由など。100〜150文字程度。")
+
+            if add_to_trivia_map:
+                st.subheader("雑学MAPの場所")
+                map_col1, map_col2 = st.columns(2)
+                with map_col1:
+                    map_prefecture = st.text_input("都道府県", placeholder="東京都")
+                    map_latitude = st.number_input("緯度", min_value=-90.0, max_value=90.0, value=35.6812, format="%.6f")
+                with map_col2:
+                    map_spot_id = st.text_input("MAP ID（空欄なら自動生成）", placeholder="tokyo_001")
+                    map_longitude = st.number_input("経度", min_value=-180.0, max_value=180.0, value=139.7671, format="%.6f")
+                map_address = st.text_input("住所・施設名", placeholder="東京都港区芝公園4-2-8 / 東京タワー")
+                map_radius = st.number_input("解放半径（メートル）", min_value=10, max_value=5000, value=300, step=10)
+                map_hint = ""
+            else:
+                map_address = ""
+                map_prefecture = ""
+                map_spot_id = ""
+                map_latitude = 0.0
+                map_longitude = 0.0
+                map_radius = 300
+                map_hint = ""
         
         with col2:
             category = st.selectbox("カテゴリ", TRIVIA_CATEGORIES)
@@ -454,24 +614,55 @@ with tab1:
         if submitted:
             if not title or not content:
                 st.error("タイトルと本文は必須です。")
+            elif not add_to_normal_trivia and not add_to_trivia_map:
+                st.error("通常の雑学、雑学MAPのどちらかは選択してください。")
+            elif add_to_trivia_map and not map_prefecture:
+                st.error("雑学MAPに追加する場合は都道府県を入力してください。")
+            elif add_to_trivia_map and not map_address:
+                st.error("雑学MAPに追加する場合は住所・施設名を入力してください。")
             else:
                 try:
+                    messages = []
+                    map_spot = None
+                    if add_to_trivia_map:
+                        map_spot = build_trivia_spot(
+                            title=title,
+                            description=content,
+                            explanation=explanation,
+                            spot_id=map_spot_id,
+                            latitude=float(map_latitude),
+                            longitude=float(map_longitude),
+                            unlock_radius_meters=int(map_radius),
+                            prefecture=map_prefecture,
+                            address=map_address,
+                            category=category,
+                            hint="",
+                        )
+
                     final_image_url = normalize_image_url(image_url)
-                    if image_to_upload:
-                        final_image_url = upload_image_to_r2(image_to_upload, crop_mode=None if image_to_upload is not uploaded_image else image_crop_mode)
-                    new_trivia = Trivia(
-                        title=title,
-                        content=content,
-                        explanation=explanation,
-                        source=source,
-                        category=category,
-                        image_url=final_image_url,
-                        # embedding is null for manual entry
-                    )
-                    db.add(new_trivia)
-                    db.commit()
-                    st.success(f"登録しました: {title}")
+                    if add_to_normal_trivia:
+                        if image_to_upload:
+                            final_image_url = upload_image_to_r2(image_to_upload, crop_mode=None if image_to_upload is not uploaded_image else image_crop_mode)
+                        new_trivia = Trivia(
+                            title=title,
+                            content=content,
+                            explanation=explanation,
+                            source=source,
+                            category=category,
+                            image_url=final_image_url,
+                            # embedding is null for manual entry
+                        )
+                        db.add(new_trivia)
+                        db.commit()
+                        messages.append("通常の雑学")
+
+                    if map_spot:
+                        spot_id = append_trivia_spot_to_file(map_spot)
+                        messages.append(f"雑学MAP（{spot_id}）")
+
+                    st.success(f"登録しました: {title} → {' / '.join(messages)}")
                 except Exception as e:
+                    db.rollback()
                     st.error(f"エラーが発生しました: {e}")
 
 # --- Tab 2: AI Collection ---
@@ -497,11 +688,24 @@ with tab2:
                 "source": candidate.source,
                 "category": candidate.category,
                 "image_url": candidate.image_url,
+                "map_address": candidate.map_address,
+                "map_prefecture": candidate.map_prefecture,
+                "map_latitude": candidate.map_latitude,
+                "map_longitude": candidate.map_longitude,
+                "map_radius": candidate.map_radius,
+                "map_hint": candidate.map_hint,
+                "map_collection": False,
             }
             for candidate in pending_candidates
         ]
 
         with st.form("ai_gen_form"):
+            collection_target = st.radio(
+                "収集タイプ",
+                ["収集（通常）", "収集（地図用）"],
+                horizontal=True,
+                key="ai_collection_target",
+            )
             col_ai1, col_ai2 = st.columns([3, 1])
             with col_ai1:
                 topic = st.text_input("トピック (例: 宇宙, 猫, 歴史)", placeholder="何についての雑学を集めますか？")
@@ -511,8 +715,9 @@ with tab2:
             generate_submitted = st.form_submit_button("生成開始", type="primary")
 
         if generate_submitted:
+            map_collection = collection_target == "収集（地図用）"
             target_topic = topic if topic else "ランダムで幅広いジャンル"
-            with st.spinner(f"「{target_topic}」に関する雑学・豆知識を {count} 件生成中..."):
+            with st.spinner(f"「{target_topic}」に関する{'地図用' if map_collection else '雑学・豆知識'}を {count} 件生成中..."):
                 try:
                     # 1. Fetch ALL existing trivia titles to prevent duplicates
                     all_existing_data = db.query(Trivia.title, Trivia.content).all()
@@ -525,6 +730,17 @@ with tab2:
                     exclusion_text = ""
                     if exclusion_titles:
                         exclusion_text = f"\n\n【除外リスト】以下の雑学は既にデータベースに存在します。これらと重複する内容（タイトルやネタ被り、同じ事実の言い換え）は絶対に避けてください：\n" + "\n".join([f"- {t}" for t in exclusion_titles])
+                    map_collection_instruction = ""
+                    if map_collection:
+                        map_collection_instruction = """
+                    【最重要：雑学MAP用に収集】
+                    - 今回は雑学MAPへ登録できる候補だけを生成してください。
+                    - 地名、建物、史跡、駅、橋、公園、神社仏閣、城跡、観光地、地域文化、特定の店や施設など、現地に行ける具体的な場所に紐づく雑学だけを採用してください。
+                    - 場所に紐づかない一般雑学は採用しないでください。
+                    - map_address、map_prefecture、map_latitude、map_longitude、map_radiusは全件必ず入れてください。
+                    - map_addressは「施設名 / 住所」の形を優先してください。
+                    - 座標が分からない候補は出力しないでください。
+                    """
 
                     prompt = f"""
                     「{target_topic}」に関する面白い雑学・豆知識を{count}件生成してください。
@@ -561,6 +777,9 @@ with tab2:
                     【重要】ソース（出典）は**必ず「http://」または「https://」で始まる有効なURL**にしてください。
                     書籍名だけや、「不明」などの単語はNGです。
                     URLが存在しない場合は、その雑学自体を生成しないでください。
+                    地名、建物、史跡、駅、観光地、地域文化など場所に紐づく雑学では、雑学MAP用の住所・都道府県・座標も入れてください。
+                    場所に関係しない雑学では、map_address/map_prefectureは空文字、map_latitude/map_longitude/map_radiusはnullにしてください。
+                    {map_collection_instruction}
                     
                     【重要】生成する{count}件の雑学は互いに全く異なるテーマ・事実にしてください。同じ事実の言い換えや類似ネタは禁止です。
                     {exclusion_text}
@@ -572,7 +791,13 @@ with tab2:
                                 "content": "本文（です・ます調。50〜80文字程度。改行は含めないでください）",
                                 "explanation": "詳細な解説や背景（100〜150文字程度）",
                                 "category": f"カテゴリ（{CATEGORIES_STR} から選択）",
-                                "source": "https://example.com/article... (必須。http/httpsから始まるURL)"
+                                "source": "https://example.com/article... (必須。http/httpsから始まるURL)",
+                                "map_address": "雑学MAPに置ける具体的な住所や施設名。場所に関係しない雑学なら空文字",
+                                "map_prefecture": "都道府県。場所に関係しない雑学なら空文字",
+                                "map_latitude": 35.6812,
+                                "map_longitude": 139.7671,
+                                "map_radius": 300,
+                                "map_hint": ""
                             }}
                         ]
                     }}
@@ -641,7 +866,17 @@ with tab2:
                                     break
                         
                         if not is_duplicate:
-                             unique_items.append(item)
+                            if map_collection and not (
+                                item.get("map_address")
+                                and item.get("map_prefecture")
+                                and item.get("map_latitude") is not None
+                                and item.get("map_longitude") is not None
+                                and item.get("map_radius") is not None
+                            ):
+                                duplicates_count += 1
+                                continue
+                            item["map_collection"] = map_collection
+                            unique_items.append(item)
                         else:
                             duplicates_count += 1
                     
@@ -655,6 +890,13 @@ with tab2:
                             "source": candidate.source,
                             "category": candidate.category,
                             "image_url": candidate.image_url,
+                            "map_address": candidate.map_address,
+                            "map_prefecture": candidate.map_prefecture,
+                            "map_latitude": candidate.map_latitude,
+                            "map_longitude": candidate.map_longitude,
+                            "map_radius": candidate.map_radius,
+                            "map_hint": candidate.map_hint,
+                            "map_collection": map_collection,
                         }
                         for candidate in saved_candidates
                     ])
@@ -740,15 +982,74 @@ with tab2:
                             a_preview_url = normalize_image_url(a_image_url)
                             if a_preview_url:
                                 st.image(a_preview_url, caption="写真プレビュー", use_container_width=True)
+
+                        st.divider()
+                        item_map_collection = bool(item.get("map_collection"))
+                        a_add_to_normal = st.checkbox("通常の雑学に追加する", value=not item_map_collection, key=f"ai_normal_{i}")
+                        a_add_to_map = st.checkbox(
+                            "雑学MAPに追加する",
+                            value=item_map_collection or bool(item.get("map_prefecture") and item.get("map_latitude") and item.get("map_longitude")),
+                            key=f"ai_map_{i}",
+                        )
+                        if a_add_to_map:
+                            map_ai1, map_ai2 = st.columns(2)
+                            with map_ai1:
+                                a_map_prefecture = st.text_input("都道府県", value=item.get("map_prefecture") or "", key=f"ai_map_prefecture_{i}")
+                                a_map_latitude = st.number_input(
+                                    "緯度",
+                                    min_value=-90.0,
+                                    max_value=90.0,
+                                    value=float(item.get("map_latitude") or 35.6812),
+                                    format="%.6f",
+                                    key=f"ai_map_latitude_{i}",
+                                )
+                            with map_ai2:
+                                a_map_spot_id = st.text_input("MAP ID（空欄なら自動生成）", key=f"ai_map_spot_id_{i}", placeholder="tokyo_001")
+                                a_map_longitude = st.number_input(
+                                    "経度",
+                                    min_value=-180.0,
+                                    max_value=180.0,
+                                    value=float(item.get("map_longitude") or 139.7671),
+                                    format="%.6f",
+                                    key=f"ai_map_longitude_{i}",
+                                )
+                            a_map_address = st.text_input("住所・施設名", value=item.get("map_address") or "", key=f"ai_map_address_{i}")
+                            a_map_radius = st.number_input("解放半径（メートル）", min_value=10, max_value=5000, value=int(item.get("map_radius") or 300), step=10, key=f"ai_map_radius_{i}")
+                            a_map_hint = ""
+                        else:
+                            a_map_prefecture = ""
+                            a_map_latitude = 0.0
+                            a_map_spot_id = ""
+                            a_map_longitude = 0.0
+                            a_map_address = ""
+                            a_map_radius = 300
+                            a_map_hint = ""
                         
                         btn_col1, btn_col2 = st.columns(2)
                         with btn_col1:
-                            approve = st.form_submit_button("✅ 承認してDBに追加", type="primary")
+                            approve = st.form_submit_button("✅ 選択した保存先に登録", type="primary")
                         with btn_col2:
                             reject = st.form_submit_button("🗑️ 削除（却下）")
 
                         if approve:
                             try:
+                                if not a_add_to_normal and not a_add_to_map:
+                                    raise ValueError("通常の雑学、雑学MAPのどちらかは選択してください。")
+                                map_spot = None
+                                if a_add_to_map:
+                                    map_spot = build_trivia_spot(
+                                        title=a_title,
+                                        description=a_content,
+                                        explanation=a_explanation,
+                                        prefecture=a_map_prefecture,
+                                        address=a_map_address,
+                                        latitude=float(a_map_latitude),
+                                        longitude=float(a_map_longitude),
+                                        category=a_category,
+                                        spot_id=a_map_spot_id,
+                                        unlock_radius_meters=int(a_map_radius),
+                                        hint=a_map_hint,
+                                    )
                                 final_image_url = normalize_image_url(a_image_url)
                                 if a_image_to_upload:
                                     final_image_url = upload_image_to_r2(a_image_to_upload, crop_mode=None if a_image_to_upload is not a_uploaded_image else a_image_crop_mode)
@@ -761,6 +1062,12 @@ with tab2:
                                         "source": a_source,
                                         "category": a_category,
                                         "image_url": final_image_url,
+                                        "map_address": a_map_address,
+                                        "map_prefecture": a_map_prefecture,
+                                        "map_latitude": a_map_latitude if a_add_to_map else None,
+                                        "map_longitude": a_map_longitude if a_add_to_map else None,
+                                        "map_radius": a_map_radius if a_add_to_map else None,
+                                        "map_hint": a_map_hint,
                                     }])
                                     candidate_id = saved[0].id
                                 update_candidate(
@@ -772,10 +1079,24 @@ with tab2:
                                     source=a_source,
                                     category=a_category,
                                     image_url=final_image_url,
+                                    map_address=a_map_address,
+                                    map_prefecture=a_map_prefecture,
+                                    map_latitude=a_map_latitude if a_add_to_map else None,
+                                    map_longitude=a_map_longitude if a_add_to_map else None,
+                                    map_radius=a_map_radius if a_add_to_map else None,
+                                    map_hint=a_map_hint,
                                 )
-                                approve_candidate(db, candidate_id, "streamlit")
+                                messages = []
+                                if a_add_to_normal:
+                                    approve_candidate(db, candidate_id, "streamlit")
+                                    messages.append("通常の雑学")
+                                elif candidate_id:
+                                    reject_candidate(db, candidate_id, "streamlit:map-only")
+                                if map_spot:
+                                    spot_id = append_trivia_spot_to_file(map_spot)
+                                    messages.append(f"雑学MAP（{spot_id}）")
                                 st.session_state.ai_trivia_list.pop(i)
-                                st.success("承認・保存しました！")
+                                st.success(f"登録しました: {' / '.join(messages)}")
                                 st.rerun()
                             except Exception as e:
                                 st.error(f"保存エラー: {e}")
@@ -791,6 +1112,15 @@ with tab2:
 # --- Tab 3: Manage ---
 with tab3:
     st.header("既存の雑学を管理")
+    manage_target = st.radio(
+        "管理対象",
+        ["通常の雑学", "雑学MAP"],
+        horizontal=True,
+        key="manage_target",
+    )
+    if manage_target == "雑学MAP":
+        render_trivia_map_admin()
+        st.stop()
     
     # --- Maintenance Section ---
     with st.expander("🔧 データメンテナンス (ソースURL修正)", expanded=False):
@@ -931,6 +1261,19 @@ with tab3:
                             except Exception as e:
                                 st.error(f"既存写真の読み込みエラー: {e}")
 
+                with st.expander("この雑学を雑学MAPに登録"):
+                    map_e1, map_e2 = st.columns(2)
+                    with map_e1:
+                        e_map_prefecture = st.text_input("都道府県", key=f"edit_map_prefecture_{trivia.id}", placeholder="東京都")
+                        e_map_latitude = st.number_input("緯度", min_value=-90.0, max_value=90.0, value=35.6812, format="%.6f", key=f"edit_map_latitude_{trivia.id}")
+                    with map_e2:
+                        e_map_spot_id = st.text_input("MAP ID（空欄なら自動生成）", key=f"edit_map_spot_id_{trivia.id}", placeholder="tokyo_001")
+                        e_map_longitude = st.number_input("経度", min_value=-180.0, max_value=180.0, value=139.7671, format="%.6f", key=f"edit_map_longitude_{trivia.id}")
+                    e_map_address = st.text_input("住所・施設名", key=f"edit_map_address_{trivia.id}", placeholder="東京都港区芝公園4-2-8 / 東京タワー")
+                    e_map_radius = st.number_input("解放半径（メートル）", min_value=10, max_value=5000, value=300, step=10, key=f"edit_map_radius_{trivia.id}")
+                    e_map_hint = ""
+                    map_register_submit = st.button("雑学MAPに登録", key=f"map_register_{trivia.id}")
+
                 col_act1, col_act2, col_act3, col_act4 = st.columns([1, 1.7, 1, 3])
                 with col_act1:
                     update_submit = st.button("更新", key=f"update_{trivia.id}")
@@ -940,6 +1283,25 @@ with tab3:
                     image_delete_submit = st.button("写真削除", key=f"image_delete_{trivia.id}")
                 with col_act4:
                     delete_submit = st.button("削除", type="primary", key=f"delete_{trivia.id}")
+
+                if map_register_submit:
+                    try:
+                        spot_id = append_trivia_to_map(
+                            title=e_title,
+                            description=e_content,
+                            explanation=e_explanation,
+                            prefecture=e_map_prefecture,
+                            address=e_map_address,
+                            latitude=float(e_map_latitude),
+                            longitude=float(e_map_longitude),
+                            category=e_category,
+                            spot_id=e_map_spot_id,
+                            unlock_radius_meters=int(e_map_radius),
+                            hint=e_map_hint,
+                        )
+                        st.success(f"雑学MAPに登録しました: {spot_id}")
+                    except Exception as e:
+                        st.error(f"MAP登録エラー: {e}")
 
                 if update_submit:
                     try:
