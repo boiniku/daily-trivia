@@ -127,6 +127,22 @@ class CollectionSchema(BaseModel):
     class Config:
         from_attributes = True
 
+
+class TriviaMapSpotSchema(BaseModel):
+    id: str
+    title: str
+    description: str
+    explanation: str
+    latitude: float
+    longitude: float
+    unlockRadiusMeters: int
+    isUnlocked: bool = False
+    unlockedAt: Optional[datetime.datetime] = None
+    prefecture: Optional[str] = None
+    address: Optional[str] = None
+    category: Optional[str] = None
+    hint: Optional[str] = None
+
 @app.get("/")
 def read_root():
     return {"message": "Hello from Daily Trivia Backend with Neon DB!"}
@@ -139,6 +155,39 @@ def get_app_version():
         "latest_version": LATEST_APP_VERSION,
         "app_store_url": APP_STORE_URL,
     }
+
+
+@app.get("/trivia/map", response_model=List[TriviaMapSpotSchema])
+def get_map_trivia(db: Session = Depends(get_db)):
+    items = (
+        db.query(Trivia)
+        .filter(
+            Trivia.map_prefecture.isnot(None),
+            Trivia.map_address.isnot(None),
+            Trivia.map_latitude.isnot(None),
+            Trivia.map_longitude.isnot(None),
+        )
+        .order_by(Trivia.id.desc())
+        .all()
+    )
+    return [
+        {
+            "id": f"trivia_{item.id}",
+            "title": item.title,
+            "description": item.content,
+            "explanation": item.explanation or "",
+            "latitude": float(item.map_latitude),
+            "longitude": float(item.map_longitude),
+            "unlockRadiusMeters": int(item.map_radius or 300),
+            "isUnlocked": False,
+            "unlockedAt": None,
+            "prefecture": item.map_prefecture,
+            "address": item.map_address,
+            "category": item.category,
+            "hint": item.map_hint or "",
+        }
+        for item in items
+    ]
 
 @app.get("/trivia/today", response_model=List[TriviaSchema])
 def get_todays_trivia(

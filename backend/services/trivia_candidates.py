@@ -287,6 +287,12 @@ def approve_candidate(db: Session, candidate_id: int, reviewed_by: str) -> Trivi
         source=candidate.source,
         category=candidate.category,
         image_url=candidate.image_url,
+        map_address=candidate.map_address,
+        map_prefecture=candidate.map_prefecture,
+        map_latitude=candidate.map_latitude,
+        map_longitude=candidate.map_longitude,
+        map_radius=candidate.map_radius,
+        map_hint=candidate.map_hint,
         embedding=candidate.embedding,
     )
     db.add(trivia)

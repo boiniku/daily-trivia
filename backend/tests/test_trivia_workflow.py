@@ -226,7 +226,7 @@ class TriviaWorkflowTests(unittest.TestCase):
         self.assertIn("explanation", block)
         self.assertEqual(parsed["explanation"], spot["explanation"])
 
-    def test_line_approve_map_candidate_publishes_to_map_only(self):
+    def test_line_approve_map_candidate_publishes_to_trivia_with_map_fields(self):
         candidate = create_candidate(self.db, {
             "title": "東京タワーの色",
             "content": "東京タワーは赤白に見えますが、正式にはインターナショナルオレンジと白です。",
@@ -239,14 +239,18 @@ class TriviaWorkflowTests(unittest.TestCase):
             "map_radius": 300,
         })
 
-        with patch.object(line_admin, "append_trivia_spot_to_file", return_value="tokyo_tower_color") as append:
-            message = _approve_candidate_from_line(self.db, candidate.id, "line-user")
-
-        append.assert_called_once()
+        message = _approve_candidate_from_line(self.db, candidate.id, "line-user")
         refreshed = self.db.query(TriviaCandidate).filter_by(id=candidate.id).one()
-        self.assertEqual(refreshed.status, "rejected")
-        self.assertIn("MAPに公開しました", message)
-        self.assertEqual(self.db.query(Trivia).count(), 0)
+        published = self.db.query(Trivia).filter_by(id=refreshed.published_trivia_id).one()
+        self.assertEqual(refreshed.status, "approved")
+        self.assertIn("公開しました", message)
+        self.assertIn("[MAP]", message)
+        self.assertEqual(self.db.query(Trivia).count(), 1)
+        self.assertEqual(published.map_prefecture, "東京都")
+        self.assertEqual(published.map_address, "東京タワー / 東京都港区芝公園4-2-8")
+        self.assertAlmostEqual(published.map_latitude, 35.658581)
+        self.assertAlmostEqual(published.map_longitude, 139.745433)
+        self.assertEqual(published.map_radius, 300)
 
     def test_delete_published_trivia_requires_unlinking_candidate(self):
         candidate = create_candidate(self.db, {

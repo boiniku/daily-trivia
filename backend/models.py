@@ -13,6 +13,12 @@ class Trivia(Base):
     source = Column(String)
     category = Column(String)
     image_url = Column(String, nullable=True)
+    map_address = Column(String, nullable=True)
+    map_prefecture = Column(String, nullable=True)
+    map_latitude = Column(Float, nullable=True)
+    map_longitude = Column(Float, nullable=True)
+    map_radius = Column(Integer, nullable=True)
+    map_hint = Column(String, nullable=True)
     hee_count = Column(Integer, default=0) # Added for "Hee" button
     embedding = Column(JSON, nullable=True) # Vector for similarity check
 

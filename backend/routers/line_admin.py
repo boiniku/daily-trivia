@@ -30,7 +30,6 @@ from services.trivia_candidates import (
 from services.image_storage import upload_trivia_image
 from services.trivia_collection import collect_trivia
 from services.trivia_generation import TRIVIA_CATEGORIES, generate_trivia
-from services.trivia_map import append_trivia_spot_to_file, build_trivia_spot
 
 
 router = APIRouter()
@@ -60,24 +59,6 @@ def _text_message(text: str) -> dict:
     return {"type": "text", "text": text[:5000]}
 
 
-def _map_spot_from_request(request: CandidateUpdateRequest) -> dict | None:
-    if not request.add_to_map:
-        return None
-    return build_trivia_spot(
-        title=request.title,
-        description=request.content,
-        explanation=request.explanation,
-        prefecture=request.map_prefecture,
-        address=request.map_address,
-        latitude=request.map_latitude,
-        longitude=request.map_longitude,
-        category=request.category,
-        spot_id=request.map_spot_id,
-        unlock_radius_meters=request.map_radius,
-        hint="",
-    )
-
-
 def _candidate_has_complete_map(candidate: TriviaCandidate) -> bool:
     return bool(
         candidate.map_address
@@ -87,34 +68,13 @@ def _candidate_has_complete_map(candidate: TriviaCandidate) -> bool:
         and candidate.map_radius is not None
     )
 
-
-def _map_spot_from_candidate(candidate: TriviaCandidate) -> dict:
-    return build_trivia_spot(
-        title=candidate.title,
-        description=candidate.content,
-        explanation=candidate.explanation,
-        prefecture=candidate.map_prefecture or "",
-        address=candidate.map_address or "",
-        latitude=float(candidate.map_latitude),
-        longitude=float(candidate.map_longitude),
-        category=candidate.category,
-        unlock_radius_meters=int(candidate.map_radius or 300),
-        hint="",
-    )
-
-
 def _approve_candidate_from_line(db, candidate_id: int, user_id: str) -> str:
     candidate = db.query(TriviaCandidate).filter(TriviaCandidate.id == candidate_id).first()
     if not candidate:
         raise CandidateError("Candidate not found")
-    if _candidate_has_complete_map(candidate):
-        map_spot = _map_spot_from_candidate(candidate)
-        spot_id = append_trivia_spot_to_file(map_spot)
-        reject_candidate(db, candidate_id, f"line:{user_id}:map-only")
-        return f"MAPに公開しました: {spot_id} {candidate.title}"
-
     trivia = approve_candidate(db, candidate_id, f"line:{user_id}")
-    return f"公開しました: #{trivia.id} {trivia.title}"
+    suffix = " [MAP]" if _candidate_has_complete_map(candidate) else ""
+    return f"公開しました: #{trivia.id} {trivia.title}{suffix}"
 
 
 def _validate_map_request(request: CandidateUpdateRequest) -> None:
@@ -404,22 +364,16 @@ def save_new_candidate(request: CandidateUpdateRequest):
             "map_hint": request.map_hint,
         })
         trivia_id = None
-        map_spot_id = None
         if request.publish:
-            map_spot = _map_spot_from_request(request)
-            if request.add_to_normal:
+            if request.add_to_normal or request.add_to_map:
                 trivia_id = approve_candidate(db, candidate.id, "mobile-editor")
-            elif map_spot:
-                reject_candidate(db, candidate.id, "mobile-editor:map-only")
-            if map_spot:
-                map_spot_id = append_trivia_spot_to_file(map_spot)
             trivia_id = trivia_id.id if trivia_id else None
         return {
             "ok": True,
             "candidate_id": candidate.id,
             "status": "approved" if trivia_id else candidate.status,
             "trivia_id": trivia_id,
-            "map_spot_id": map_spot_id,
+            "map_spot_id": None,
         }
     except CandidateError as exc:
         raise HTTPException(status_code=409, detail=str(exc))
@@ -476,16 +430,10 @@ def save_candidate(candidate_id: int, request: CandidateUpdateRequest):
             map_hint=request.map_hint,
         )
         trivia_id = None
-        map_spot_id = None
         if request.publish:
-            map_spot = _map_spot_from_request(request)
-            trivia = approve_candidate(db, candidate_id, "mobile-editor") if request.add_to_normal else None
-            if not request.add_to_normal and map_spot:
-                reject_candidate(db, candidate_id, "mobile-editor:map-only")
-            if map_spot:
-                map_spot_id = append_trivia_spot_to_file(map_spot)
+            trivia = approve_candidate(db, candidate_id, "mobile-editor") if (request.add_to_normal or request.add_to_map) else None
             trivia_id = trivia.id if trivia else None
-        return {"ok": True, "status": "approved" if trivia_id else candidate.status, "trivia_id": trivia_id, "map_spot_id": map_spot_id}
+        return {"ok": True, "status": "approved" if trivia_id else candidate.status, "trivia_id": trivia_id, "map_spot_id": None}
     except CandidateError as exc:
         raise HTTPException(status_code=409, detail=str(exc))
     except ValueError as exc:
