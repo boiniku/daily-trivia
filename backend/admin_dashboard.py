@@ -1357,6 +1357,14 @@ with tab3:
                         db.query(DailyAssignment).filter(DailyAssignment.trivia_id == trivia.id).delete()
                         db.query(CollectionItem).filter(CollectionItem.trivia_id == trivia.id).delete()
                         db.query(TriviaHee).filter(TriviaHee.trivia_id == trivia.id).delete()
+                        db.query(TriviaCandidate).filter(
+                            TriviaCandidate.published_trivia_id == trivia.id
+                        ).update(
+                            {
+                                TriviaCandidate.published_trivia_id: None,
+                            },
+                            synchronize_session=False,
+                        )
                         db.delete(trivia)
                         db.commit()
                         st.warning("削除しました。")

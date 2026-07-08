@@ -248,6 +248,28 @@ class TriviaWorkflowTests(unittest.TestCase):
         self.assertIn("MAPに公開しました", message)
         self.assertEqual(self.db.query(Trivia).count(), 0)
 
+    def test_delete_published_trivia_requires_unlinking_candidate(self):
+        candidate = create_candidate(self.db, {
+            "title": "削除対象の公開済み雑学",
+            "content": "削除前に候補からの参照を外す必要がある本文です。",
+            "explanation": "削除テスト用の解説です。",
+            "category": "その他",
+        })
+        trivia = approve_candidate(self.db, candidate.id, "test")
+
+        self.db.query(TriviaCandidate).filter(
+            TriviaCandidate.published_trivia_id == trivia.id
+        ).update(
+            {TriviaCandidate.published_trivia_id: None},
+            synchronize_session=False,
+        )
+        self.db.delete(trivia)
+        self.db.commit()
+
+        refreshed = self.db.query(TriviaCandidate).filter_by(id=candidate.id).one()
+        self.assertIsNone(refreshed.published_trivia_id)
+        self.assertIsNone(self.db.query(Trivia).filter_by(id=trivia.id).first())
+
 
 class LineSecurityTests(unittest.TestCase):
     def setUp(self):
