@@ -429,13 +429,126 @@ except SQLAlchemyError as e:
     st.stop()
 
 
-def render_trivia_map_admin():
-    st.subheader("雑学MAPを管理")
+def _candidate_has_complete_map(candidate: TriviaCandidate) -> bool:
+    return bool(
+        candidate.map_address
+        and candidate.map_prefecture
+        and candidate.map_latitude is not None
+        and candidate.map_longitude is not None
+    )
+
+
+def _candidate_to_admin_map_spot(candidate: TriviaCandidate) -> dict:
+    return {
+        "id": f"candidate_{candidate.id}",
+        "title": candidate.title or "",
+        "description": candidate.content or "",
+        "explanation": candidate.explanation or "",
+        "latitude": float(candidate.map_latitude),
+        "longitude": float(candidate.map_longitude),
+        "unlockRadiusMeters": int(candidate.map_radius or 300),
+        "isUnlocked": False,
+        "unlockedAt": None,
+        "prefecture": candidate.map_prefecture or "",
+        "address": candidate.map_address or "",
+        "category": candidate.category or "その他",
+        "hint": candidate.map_hint or "",
+        "_source": "db-candidate",
+        "_candidate_id": candidate.id,
+    }
+
+
+def _map_spot_identity(spot: dict) -> tuple:
+    def normalize(value):
+        return str(value or "").strip().lower()
+
+    return (
+        normalize(spot.get("title")),
+        normalize(spot.get("address")),
+        round(float(spot.get("latitude") or 0), 6),
+        round(float(spot.get("longitude") or 0), 6),
+    )
+
+
+def _load_published_candidate_map_spots(db_session: Session) -> list[dict]:
+    candidates = (
+        db_session.query(TriviaCandidate)
+        .filter(
+            TriviaCandidate.status == "rejected",
+            TriviaCandidate.reviewed_by.like("%map-only%"),
+            TriviaCandidate.map_address.isnot(None),
+            TriviaCandidate.map_prefecture.isnot(None),
+            TriviaCandidate.map_latitude.isnot(None),
+            TriviaCandidate.map_longitude.isnot(None),
+        )
+        .order_by(TriviaCandidate.reviewed_at.desc().nullslast(), TriviaCandidate.created_at.desc())
+        .all()
+    )
+    return [
+        _candidate_to_admin_map_spot(candidate)
+        for candidate in candidates
+        if _candidate_has_complete_map(candidate)
+    ]
+
+
+def _load_admin_map_spots(db_session: Session) -> tuple[list[dict], str | None]:
+    file_warning = None
     try:
         spots = load_trivia_spots()
     except Exception as e:
-        st.error(f"MAPデータを読み込めません: {e}")
-        return
+        spots = []
+        file_warning = f"MAPデータファイルを読み込めませんでした。DBに残っているLINE公開分だけ表示します: {e}"
+
+    seen = {_map_spot_identity(spot) for spot in spots}
+    for spot in _load_published_candidate_map_spots(db_session):
+        identity = _map_spot_identity(spot)
+        if identity not in seen:
+            spots.append(spot)
+            seen.add(identity)
+    return spots, file_warning
+
+
+def _is_db_candidate_map_spot(spot: dict) -> bool:
+    return spot.get("_source") == "db-candidate" and spot.get("_candidate_id") is not None
+
+
+def _update_candidate_map_spot(db_session: Session, candidate_id: int, values: dict) -> None:
+    candidate = db_session.query(TriviaCandidate).filter(TriviaCandidate.id == candidate_id).first()
+    if not candidate:
+        raise ValueError("DB候補が見つかりません。")
+
+    candidate.title = values["title"]
+    candidate.content = values["description"]
+    candidate.explanation = values["explanation"]
+    candidate.category = values["category"]
+    candidate.map_prefecture = values["prefecture"]
+    candidate.map_address = values["address"]
+    candidate.map_latitude = values["latitude"]
+    candidate.map_longitude = values["longitude"]
+    candidate.map_radius = values["unlockRadiusMeters"]
+    candidate.map_hint = values.get("hint") or ""
+    db_session.commit()
+
+
+def _hide_candidate_map_spot(db_session: Session, candidate_id: int) -> None:
+    candidate = db_session.query(TriviaCandidate).filter(TriviaCandidate.id == candidate_id).first()
+    if not candidate:
+        raise ValueError("DB候補が見つかりません。")
+
+    candidate.map_address = None
+    candidate.map_prefecture = None
+    candidate.map_latitude = None
+    candidate.map_longitude = None
+    candidate.map_radius = None
+    candidate.map_hint = None
+    db_session.commit()
+
+
+def render_trivia_map_admin():
+    st.subheader("雑学MAPを管理")
+    spots, file_warning = _load_admin_map_spots(db)
+    if file_warning:
+        st.warning(file_warning)
 
     search_query = st.text_input("🔍 MAP検索 (タイトル・本文・住所)", "", key="map_search")
     if search_query:
@@ -450,21 +563,24 @@ def render_trivia_map_admin():
         st.info("雑学MAPのデータが見つかりません。")
         return
 
-    labels = {
-        f"{spot.get('id')}: {spot.get('title', '無題')} ({spot.get('prefecture') or '未設定'})": spot
-        for spot in spots
-    }
+    labels = {}
+    for spot in spots:
+        source_label = "DB/LINE" if _is_db_candidate_map_spot(spot) else "ファイル"
+        labels[f"{spot.get('id')}: {spot.get('title', '無題')} ({spot.get('prefecture') or '未設定'} / {source_label})"] = spot
     selected_label = st.selectbox("編集するMAP雑学", list(labels.keys()), key="map_edit_select")
     spot = labels[selected_label]
     original_id = str(spot.get("id") or "")
+    is_db_candidate_spot = _is_db_candidate_map_spot(spot)
 
     st.subheader(f"MAP編集: {original_id}")
+    if is_db_candidate_spot:
+        st.info("LINEやスマホ編集からMAP公開されたDB候補です。管理画面で編集できますが、アプリ内の静的MAPデータへ反映するには別途ファイルへの同期が必要です。")
     m_title = st.text_input("タイトル", value=str(spot.get("title") or ""), key=f"map_title_{original_id}")
     m_description = st.text_area("本文", value=str(spot.get("description") or ""), key=f"map_description_{original_id}")
     m_explanation = st.text_area("解説", value=str(spot.get("explanation") or ""), key=f"map_explanation_{original_id}")
     map_col1, map_col2 = st.columns(2)
     with map_col1:
-        m_id = st.text_input("MAP ID", value=original_id, key=f"map_id_{original_id}")
+        m_id = st.text_input("MAP ID", value=original_id, disabled=is_db_candidate_spot, key=f"map_id_{original_id}")
         m_prefecture = st.text_input("都道府県", value=str(spot.get("prefecture") or ""), key=f"map_prefecture_{original_id}")
         m_latitude = st.number_input(
             "緯度",
@@ -509,10 +625,7 @@ def render_trivia_map_admin():
         try:
             if not m_id.strip():
                 raise ValueError("MAP IDは必須です。")
-            existing_ids = {str(item.get("id") or "") for item in load_trivia_spots()}
-            if m_id != original_id and m_id in existing_ids:
-                raise ValueError(f"MAP ID '{m_id}' は既に使われています。")
-            save_trivia_spot(original_id, {
+            spot_values = {
                 "id": m_id.strip(),
                 "title": m_title,
                 "description": m_description,
@@ -524,7 +637,14 @@ def render_trivia_map_admin():
                 "address": m_address,
                 "category": m_category,
                 "hint": "",
-            })
+            }
+            if is_db_candidate_spot:
+                _update_candidate_map_spot(db, int(spot["_candidate_id"]), spot_values)
+            else:
+                existing_ids = {str(item.get("id") or "") for item in load_trivia_spots()}
+                if m_id != original_id and m_id in existing_ids:
+                    raise ValueError(f"MAP ID '{m_id}' は既に使われています。")
+                save_trivia_spot(original_id, spot_values)
             st.success("雑学MAPを更新しました。")
             st.rerun()
         except Exception as e:
@@ -532,7 +652,10 @@ def render_trivia_map_admin():
 
     if delete_map:
         try:
-            delete_trivia_spot(original_id)
+            if is_db_candidate_spot:
+                _hide_candidate_map_spot(db, int(spot["_candidate_id"]))
+            else:
+                delete_trivia_spot(original_id)
             st.warning("雑学MAPから削除しました。")
             st.rerun()
         except Exception as e:
