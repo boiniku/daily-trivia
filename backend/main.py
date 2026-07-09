@@ -4,7 +4,7 @@ from typing import List, Optional
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 from database import get_db, AppSessionLocal
-from models import Trivia, Collection, CollectionItem, DailyAssignment, TriviaHee
+from models import Trivia, MapTrivia, Collection, CollectionItem, DailyAssignment, TriviaHee
 import random
 import datetime
 import os
@@ -160,19 +160,13 @@ def get_app_version():
 @app.get("/trivia/map", response_model=List[TriviaMapSpotSchema])
 def get_map_trivia(db: Session = Depends(get_db)):
     items = (
-        db.query(Trivia)
-        .filter(
-            Trivia.map_prefecture.isnot(None),
-            Trivia.map_address.isnot(None),
-            Trivia.map_latitude.isnot(None),
-            Trivia.map_longitude.isnot(None),
-        )
-        .order_by(Trivia.id.desc())
+        db.query(MapTrivia)
+        .order_by(MapTrivia.id.desc())
         .all()
     )
     return [
         {
-            "id": f"trivia_{item.id}",
+            "id": f"map_{item.id}",
             "title": item.title,
             "description": item.content,
             "explanation": item.explanation or "",

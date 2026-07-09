@@ -8,7 +8,7 @@ from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
 from database import SessionLocal
-from models import TriviaCandidate
+from models import Trivia, TriviaCandidate
 from services.line_bot import (
     candidate_flex_message,
     is_allowed_user,
@@ -28,6 +28,7 @@ from services.trivia_candidates import (
     update_candidate,
 )
 from services.image_storage import upload_trivia_image
+from services.map_trivia import create_map_trivia, create_map_trivia_from_candidate
 from services.trivia_collection import collect_trivia
 from services.trivia_generation import TRIVIA_CATEGORIES, generate_trivia
 
@@ -72,9 +73,12 @@ def _approve_candidate_from_line(db, candidate_id: int, user_id: str) -> str:
     candidate = db.query(TriviaCandidate).filter(TriviaCandidate.id == candidate_id).first()
     if not candidate:
         raise CandidateError("Candidate not found")
+    if _candidate_has_complete_map(candidate):
+        create_map_trivia_from_candidate(db, candidate)
+        reject_candidate(db, candidate_id, f"line:{user_id}:map-published")
+        return f"MAPに公開しました: {candidate.title}"
     trivia = approve_candidate(db, candidate_id, f"line:{user_id}")
-    suffix = " [MAP]" if _candidate_has_complete_map(candidate) else ""
-    return f"公開しました: #{trivia.id} {trivia.title}{suffix}"
+    return f"公開しました: #{trivia.id} {trivia.title}"
 
 
 def _validate_map_request(request: CandidateUpdateRequest) -> None:
@@ -84,6 +88,35 @@ def _validate_map_request(request: CandidateUpdateRequest) -> None:
         raise HTTPException(status_code=400, detail="雑学MAPには都道府県が必要です。")
     if not request.map_address.strip():
         raise HTTPException(status_code=400, detail="雑学MAPには住所・施設名が必要です。")
+
+
+def _validate_publish_target(request: CandidateUpdateRequest) -> None:
+    if not request.add_to_normal and not request.add_to_map:
+        raise HTTPException(status_code=400, detail="通常の雑学、雑学MAPのどちらかは選択してください。")
+
+
+def _create_normal_trivia(
+    db,
+    *,
+    title: str,
+    content: str,
+    explanation: str,
+    source: str,
+    category: str,
+    image_url: str,
+):
+    trivia = Trivia(
+        title=title.strip(),
+        content=content.strip(),
+        explanation=(explanation or "").strip(),
+        source=(source or "").strip(),
+        category=(category or "その他").strip(),
+        image_url=(image_url or "").strip() or None,
+    )
+    db.add(trivia)
+    db.commit()
+    db.refresh(trivia)
+    return trivia
 
 
 def _parse_generate_command(text: str) -> tuple[str, int] | None:
@@ -344,34 +377,41 @@ def new_candidate_editor(token: str, map: str = ""):
 @router.post("/admin/candidates/new")
 def save_new_candidate(request: CandidateUpdateRequest):
     _validate_editor_token(0, request.token)
-    if request.publish and not request.add_to_normal and not request.add_to_map:
-        raise HTTPException(status_code=400, detail="通常の雑学、雑学MAPのどちらかは選択してください。")
+    _validate_publish_target(request)
     _validate_map_request(request)
     db = SessionLocal()
     try:
-        candidate = create_candidate(db, {
-            "title": request.title,
-            "content": request.content,
-            "explanation": request.explanation,
-            "source": request.source,
-            "category": request.category,
-            "image_url": request.image_url,
-            "map_address": request.map_address,
-            "map_prefecture": request.map_prefecture,
-            "map_latitude": request.map_latitude if request.add_to_map else None,
-            "map_longitude": request.map_longitude if request.add_to_map else None,
-            "map_radius": request.map_radius if request.add_to_map else None,
-            "map_hint": request.map_hint,
-        })
         trivia_id = None
-        if request.publish:
-            if request.add_to_normal or request.add_to_map:
-                trivia_id = approve_candidate(db, candidate.id, "mobile-editor")
-            trivia_id = trivia_id.id if trivia_id else None
+        if request.add_to_normal:
+            trivia = _create_normal_trivia(
+                db,
+                title=request.title,
+                content=request.content,
+                explanation=request.explanation,
+                source=request.source,
+                category=request.category,
+                image_url=request.image_url,
+            )
+            trivia_id = trivia.id
+        if request.add_to_map:
+            create_map_trivia(
+                db,
+                title=request.title,
+                content=request.content,
+                explanation=request.explanation,
+                source=request.source,
+                category=request.category,
+                image_url=request.image_url,
+                map_address=request.map_address,
+                map_prefecture=request.map_prefecture,
+                map_latitude=request.map_latitude,
+                map_longitude=request.map_longitude,
+                map_radius=request.map_radius,
+                map_hint=request.map_hint,
+            )
         return {
             "ok": True,
-            "candidate_id": candidate.id,
-            "status": "approved" if trivia_id else candidate.status,
+            "status": "approved",
             "trivia_id": trivia_id,
             "map_spot_id": None,
         }
@@ -408,8 +448,7 @@ async def upload_candidate_image(
 @router.put("/admin/candidates/{candidate_id}/edit")
 def save_candidate(candidate_id: int, request: CandidateUpdateRequest):
     _validate_editor_token(candidate_id, request.token)
-    if request.publish and not request.add_to_normal and not request.add_to_map:
-        raise HTTPException(status_code=400, detail="通常の雑学、雑学MAPのどちらかは選択してください。")
+    _validate_publish_target(request)
     _validate_map_request(request)
     db = SessionLocal()
     try:
@@ -430,10 +469,14 @@ def save_candidate(candidate_id: int, request: CandidateUpdateRequest):
             map_hint=request.map_hint,
         )
         trivia_id = None
-        if request.publish:
-            trivia = approve_candidate(db, candidate_id, "mobile-editor") if (request.add_to_normal or request.add_to_map) else None
-            trivia_id = trivia.id if trivia else None
-        return {"ok": True, "status": "approved" if trivia_id else candidate.status, "trivia_id": trivia_id, "map_spot_id": None}
+        if request.add_to_normal:
+            trivia = approve_candidate(db, candidate_id, "mobile-editor")
+            trivia_id = trivia.id
+        if request.add_to_map:
+            create_map_trivia_from_candidate(db, candidate)
+            if not request.add_to_normal:
+                reject_candidate(db, candidate_id, "mobile-editor:map-published")
+        return {"ok": True, "status": "approved", "trivia_id": trivia_id, "map_spot_id": None}
     except CandidateError as exc:
         raise HTTPException(status_code=409, detail=str(exc))
     except ValueError as exc:
@@ -523,8 +566,7 @@ button{{border:0;border-radius:11px;padding:14px;font-size:16px;font-weight:700}
 <label>解放半径（m）<input id="map_radius" inputmode="numeric" value="{int(map_radius_value)}"></label>
 <label>MAP ID（空欄なら自動生成）<input id="map_spot_id" placeholder="tokyo_001"></label>
 </div>
-<div class="actions"><button class="save" onclick="submitCandidate(false)">下書き保存</button>
-<button class="publish" onclick="submitCandidate(true)">保存して公開</button></div><div id="message"></div>
+<div class="actions"><button class="publish" onclick="submitCandidate()">登録する</button></div><div id="message"></div>
 </div></main><script>
 const editorToken={json.dumps(token)};
 function toggleMap(){{
@@ -545,7 +587,7 @@ document.getElementById("image_file").addEventListener("change",event=>{{
  if(!file){{preview.style.display="none";return}}
  preview.src=URL.createObjectURL(file);preview.style.display="block";
 }});
-async function submitCandidate(publish){{
+async function submitCandidate(){{
  const message=document.getElementById("message");message.textContent="保存中...";
  let imageUrl=document.getElementById("image_url").value;
  const imageFile=document.getElementById("image_file").files[0];
@@ -560,13 +602,13 @@ async function submitCandidate(publish){{
  message.textContent="保存中...";
  const addToMap=document.getElementById("add_to_map").checked;
  const addToNormal=document.getElementById("add_to_normal").checked;
- if(publish&&!addToNormal&&!addToMap){{message.textContent="通常の雑学、雑学MAPのどちらかは選択してください。";return}}
+ if(!addToNormal&&!addToMap){{message.textContent="通常の雑学、雑学MAPのどちらかは選択してください。";return}}
  if(addToMap&&!document.getElementById("map_prefecture").value.trim()){{message.textContent="雑学MAPには都道府県が必要です。";return}}
  if(addToMap&&!document.getElementById("map_address").value.trim()){{message.textContent="雑学MAPには住所・施設名が必要です。";return}}
  const response=await fetch(window.location.pathname,{{method:"{method}",headers:{{"Content-Type":"application/json"}},body:JSON.stringify({{
  token:editorToken,title:document.getElementById("title").value,content:document.getElementById("content").value,
  explanation:document.getElementById("explanation").value,category:document.getElementById("category").value,add_to_normal:addToNormal,
- source:document.getElementById("source").value,image_url:imageUrl,publish,add_to_map:addToMap,
+ source:document.getElementById("source").value,image_url:imageUrl,publish:true,add_to_map:addToMap,
  map_spot_id:document.getElementById("map_spot_id").value,
  map_address:document.getElementById("map_address").value,
  map_prefecture:document.getElementById("map_prefecture").value,
@@ -574,6 +616,6 @@ async function submitCandidate(publish){{
  map_longitude:Number(document.getElementById("map_longitude").value),
  map_radius:Number(document.getElementById("map_radius").value),
  map_hint:""}})}});
- const data=await response.json();message.textContent=response.ok?(publish?(data.map_spot_id?`登録しました。MAP: ${{data.map_spot_id}}`:"登録しました。LINEへ戻ってください。"):"下書きを保存しました。"):(data.detail||"保存できませんでした。");
+ const data=await response.json();message.textContent=response.ok?"登録しました。LINEへ戻ってください。":(data.detail||"保存できませんでした。");
 }}
 </script></body></html>"""

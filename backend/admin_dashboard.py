@@ -24,21 +24,14 @@ from sqlalchemy.orm import Session
 from sqlalchemy import and_, or_, text
 from sqlalchemy.exc import OperationalError, SQLAlchemyError
 from database import SessionLocal
-from models import Trivia, TriviaCandidate, DailyAssignment, CollectionItem, TriviaHee
+from models import Trivia, TriviaCandidate, MapTrivia, DailyAssignment, CollectionItem, TriviaHee
 from services.trivia_candidates import (
     approve_candidate,
     create_candidates,
     reject_candidate,
     update_candidate,
 )
-from services.trivia_map import (
-    append_trivia_spot_to_file,
-    append_trivia_to_map,
-    build_trivia_spot,
-    delete_trivia_spot,
-    load_trivia_spots,
-    save_trivia_spot,
-)
+from services.map_trivia import create_map_trivia, create_map_trivia_from_candidate
 from datetime import datetime
 
 # Load env vars
@@ -429,7 +422,7 @@ except SQLAlchemyError as e:
     st.stop()
 
 
-def _trivia_has_complete_map(trivia: Trivia) -> bool:
+def _map_trivia_has_complete_map(trivia: MapTrivia) -> bool:
     return bool(
         trivia.map_address
         and trivia.map_prefecture
@@ -438,9 +431,9 @@ def _trivia_has_complete_map(trivia: Trivia) -> bool:
     )
 
 
-def _trivia_to_admin_map_spot(trivia: Trivia) -> dict:
+def _map_trivia_to_admin_spot(trivia: MapTrivia) -> dict:
     return {
-        "id": f"trivia_{trivia.id}",
+        "id": f"map_{trivia.id}",
         "title": trivia.title or "",
         "description": trivia.content or "",
         "explanation": trivia.explanation or "",
@@ -453,8 +446,8 @@ def _trivia_to_admin_map_spot(trivia: Trivia) -> dict:
         "address": trivia.map_address or "",
         "category": trivia.category or "その他",
         "hint": trivia.map_hint or "",
-        "_source": "db-trivia",
-        "_trivia_id": trivia.id,
+        "_source": "db-map-trivia",
+        "_map_trivia_id": trivia.id,
     }
 
 
@@ -472,46 +465,27 @@ def _map_spot_identity(spot: dict) -> tuple:
 
 def _load_published_trivia_map_spots(db_session: Session) -> list[dict]:
     trivias = (
-        db_session.query(Trivia)
-        .filter(
-            Trivia.map_address.isnot(None),
-            Trivia.map_prefecture.isnot(None),
-            Trivia.map_latitude.isnot(None),
-            Trivia.map_longitude.isnot(None),
-        )
-        .order_by(Trivia.id.desc())
+        db_session.query(MapTrivia)
+        .order_by(MapTrivia.id.desc())
         .all()
     )
     return [
-        _trivia_to_admin_map_spot(trivia)
+        _map_trivia_to_admin_spot(trivia)
         for trivia in trivias
-        if _trivia_has_complete_map(trivia)
+        if _map_trivia_has_complete_map(trivia)
     ]
 
 
 def _load_admin_map_spots(db_session: Session) -> tuple[list[dict], str | None]:
-    file_warning = None
-    try:
-        spots = load_trivia_spots()
-    except Exception as e:
-        spots = []
-        file_warning = f"MAPデータファイルを読み込めませんでした。DBに保存されている公開済みMAPだけ表示します: {e}"
-
-    seen = {_map_spot_identity(spot) for spot in spots}
-    for spot in _load_published_trivia_map_spots(db_session):
-        identity = _map_spot_identity(spot)
-        if identity not in seen:
-            spots.append(spot)
-            seen.add(identity)
-    return spots, file_warning
+    return _load_published_trivia_map_spots(db_session), None
 
 
 def _is_db_trivia_map_spot(spot: dict) -> bool:
-    return spot.get("_source") == "db-trivia" and spot.get("_trivia_id") is not None
+    return spot.get("_source") == "db-map-trivia" and spot.get("_map_trivia_id") is not None
 
 
 def _update_trivia_map_spot(db_session: Session, trivia_id: int, values: dict) -> None:
-    trivia = db_session.query(Trivia).filter(Trivia.id == trivia_id).first()
+    trivia = db_session.query(MapTrivia).filter(MapTrivia.id == trivia_id).first()
     if not trivia:
         raise ValueError("公開済み雑学が見つかりません。")
 
@@ -529,16 +503,10 @@ def _update_trivia_map_spot(db_session: Session, trivia_id: int, values: dict) -
 
 
 def _hide_trivia_map_spot(db_session: Session, trivia_id: int) -> None:
-    trivia = db_session.query(Trivia).filter(Trivia.id == trivia_id).first()
+    trivia = db_session.query(MapTrivia).filter(MapTrivia.id == trivia_id).first()
     if not trivia:
         raise ValueError("公開済み雑学が見つかりません。")
-
-    trivia.map_address = None
-    trivia.map_prefecture = None
-    trivia.map_latitude = None
-    trivia.map_longitude = None
-    trivia.map_radius = None
-    trivia.map_hint = None
+    db_session.delete(trivia)
     db_session.commit()
 
 
@@ -563,7 +531,7 @@ def render_trivia_map_admin():
 
     labels = {}
     for spot in spots:
-        source_label = "DB" if _is_db_trivia_map_spot(spot) else "ファイル"
+        source_label = "DB"
         labels[f"{spot.get('id')}: {spot.get('title', '無題')} ({spot.get('prefecture') or '未設定'} / {source_label})"] = spot
     selected_label = st.selectbox("編集するMAP雑学", list(labels.keys()), key="map_edit_select")
     spot = labels[selected_label]
@@ -578,7 +546,7 @@ def render_trivia_map_admin():
     m_explanation = st.text_area("解説", value=str(spot.get("explanation") or ""), key=f"map_explanation_{original_id}")
     map_col1, map_col2 = st.columns(2)
     with map_col1:
-        m_id = st.text_input("MAP ID", value=original_id, disabled=is_db_trivia_spot, key=f"map_id_{original_id}")
+        m_id = st.text_input("MAP ID", value=original_id, disabled=True, key=f"map_id_{original_id}")
         m_prefecture = st.text_input("都道府県", value=str(spot.get("prefecture") or ""), key=f"map_prefecture_{original_id}")
         m_latitude = st.number_input(
             "緯度",
@@ -637,12 +605,7 @@ def render_trivia_map_admin():
                 "hint": "",
             }
             if is_db_trivia_spot:
-                _update_trivia_map_spot(db, int(spot["_trivia_id"]), spot_values)
-            else:
-                existing_ids = {str(item.get("id") or "") for item in load_trivia_spots()}
-                if m_id != original_id and m_id in existing_ids:
-                    raise ValueError(f"MAP ID '{m_id}' は既に使われています。")
-                save_trivia_spot(original_id, spot_values)
+                _update_trivia_map_spot(db, int(spot["_map_trivia_id"]), spot_values)
             st.success("雑学MAPを更新しました。")
             st.rerun()
         except Exception as e:
@@ -651,9 +614,7 @@ def render_trivia_map_admin():
     if delete_map:
         try:
             if is_db_trivia_spot:
-                _hide_trivia_map_spot(db, int(spot["_trivia_id"]))
-            else:
-                delete_trivia_spot(original_id)
+                _hide_trivia_map_spot(db, int(spot["_map_trivia_id"]))
             st.warning("雑学MAPから削除しました。")
             st.rerun()
         except Exception as e:
@@ -744,22 +705,6 @@ with tab1:
             else:
                 try:
                     messages = []
-                    map_spot = None
-                    if add_to_trivia_map:
-                        map_spot = build_trivia_spot(
-                            title=title,
-                            description=content,
-                            explanation=explanation,
-                            spot_id=map_spot_id,
-                            latitude=float(map_latitude),
-                            longitude=float(map_longitude),
-                            unlock_radius_meters=int(map_radius),
-                            prefecture=map_prefecture,
-                            address=map_address,
-                            category=category,
-                            hint="",
-                        )
-
                     final_image_url = normalize_image_url(image_url)
                     if add_to_normal_trivia:
                         if image_to_upload:
@@ -777,9 +722,23 @@ with tab1:
                         db.commit()
                         messages.append("通常の雑学")
 
-                    if map_spot:
-                        spot_id = append_trivia_spot_to_file(map_spot)
-                        messages.append(f"雑学MAP（{spot_id}）")
+                    if add_to_trivia_map:
+                        map_item = create_map_trivia(
+                            db,
+                            title=title,
+                            content=content,
+                            explanation=explanation,
+                            source=source,
+                            category=category,
+                            image_url=final_image_url,
+                            map_address=map_address,
+                            map_prefecture=map_prefecture,
+                            map_latitude=float(map_latitude),
+                            map_longitude=float(map_longitude),
+                            map_radius=int(map_radius),
+                            map_hint="",
+                        )
+                        messages.append(f"雑学MAP（#{map_item.id}）")
 
                     st.success(f"登録しました: {title} → {' / '.join(messages)}")
                 except Exception as e:
@@ -1156,21 +1115,6 @@ with tab2:
                             try:
                                 if not a_add_to_normal and not a_add_to_map:
                                     raise ValueError("通常の雑学、雑学MAPのどちらかは選択してください。")
-                                map_spot = None
-                                if a_add_to_map:
-                                    map_spot = build_trivia_spot(
-                                        title=a_title,
-                                        description=a_content,
-                                        explanation=a_explanation,
-                                        prefecture=a_map_prefecture,
-                                        address=a_map_address,
-                                        latitude=float(a_map_latitude),
-                                        longitude=float(a_map_longitude),
-                                        category=a_category,
-                                        spot_id=a_map_spot_id,
-                                        unlock_radius_meters=int(a_map_radius),
-                                        hint=a_map_hint,
-                                    )
                                 final_image_url = normalize_image_url(a_image_url)
                                 if a_image_to_upload:
                                     final_image_url = upload_image_to_r2(a_image_to_upload, crop_mode=None if a_image_to_upload is not a_uploaded_image else a_image_crop_mode)
@@ -1211,11 +1155,14 @@ with tab2:
                                 if a_add_to_normal:
                                     approve_candidate(db, candidate_id, "streamlit")
                                     messages.append("通常の雑学")
-                                elif candidate_id:
-                                    reject_candidate(db, candidate_id, "streamlit:map-only")
-                                if map_spot:
-                                    spot_id = append_trivia_spot_to_file(map_spot)
-                                    messages.append(f"雑学MAP（{spot_id}）")
+                                if a_add_to_map:
+                                    map_item = create_map_trivia_from_candidate(
+                                        db,
+                                        db.query(TriviaCandidate).filter(TriviaCandidate.id == candidate_id).first(),
+                                    )
+                                    messages.append(f"雑学MAP（#{map_item.id}）")
+                                if candidate_id and not a_add_to_normal:
+                                    reject_candidate(db, candidate_id, "streamlit:map-published")
                                 st.session_state.ai_trivia_list.pop(i)
                                 st.success(f"登録しました: {' / '.join(messages)}")
                                 st.rerun()
@@ -1233,6 +1180,29 @@ with tab2:
 # --- Tab 3: Manage ---
 with tab3:
     st.header("既存の雑学を管理")
+    pending_manage_candidates = (
+        db.query(TriviaCandidate)
+        .filter(TriviaCandidate.status == "pending")
+        .order_by(TriviaCandidate.created_at.desc())
+        .all()
+    )
+    with st.expander(f"承認待ち候補 ({len(pending_manage_candidates)}件)", expanded=bool(pending_manage_candidates)):
+        if not pending_manage_candidates:
+            st.caption("LINEやAIから登録された承認待ち候補はありません。")
+        else:
+            st.caption("LINE/スマホ/AIから登録された候補です。承認や公開は「AI収集」タブの承認待ちリストから行えます。")
+            for candidate in pending_manage_candidates:
+                parts = [
+                    f"#{candidate.id}",
+                    candidate.title or "無題",
+                    candidate.category or "その他",
+                ]
+                if candidate.map_prefecture or candidate.map_address:
+                    parts.append(f"MAP: {(candidate.map_prefecture or '').strip()} {(candidate.map_address or '').strip()}".strip())
+                if candidate.created_at:
+                    parts.append(candidate.created_at.strftime("%Y-%m-%d %H:%M"))
+                st.write(" / ".join(part for part in parts if part))
+
     manage_target = st.radio(
         "管理対象",
         ["通常の雑学", "雑学MAP"],

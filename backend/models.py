@@ -13,14 +13,28 @@ class Trivia(Base):
     source = Column(String)
     category = Column(String)
     image_url = Column(String, nullable=True)
-    map_address = Column(String, nullable=True)
-    map_prefecture = Column(String, nullable=True)
-    map_latitude = Column(Float, nullable=True)
-    map_longitude = Column(Float, nullable=True)
-    map_radius = Column(Integer, nullable=True)
-    map_hint = Column(String, nullable=True)
     hee_count = Column(Integer, default=0) # Added for "Hee" button
     embedding = Column(JSON, nullable=True) # Vector for similarity check
+
+
+class MapTrivia(Base):
+    __tablename__ = "map_trivia"
+
+    id = Column(Integer, primary_key=True, index=True)
+    title = Column(String, index=True)
+    content = Column(Text)
+    explanation = Column(Text)
+    source = Column(String)
+    category = Column(String)
+    image_url = Column(String, nullable=True)
+    map_address = Column(String, nullable=False)
+    map_prefecture = Column(String, nullable=False)
+    map_latitude = Column(Float, nullable=False)
+    map_longitude = Column(Float, nullable=False)
+    map_radius = Column(Integer, nullable=False, default=300)
+    map_hint = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 class Collection(Base):
     __tablename__ = "collections"

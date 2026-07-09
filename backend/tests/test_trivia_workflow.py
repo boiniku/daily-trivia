@@ -14,7 +14,7 @@ from sqlalchemy import inspect
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from models import Base, Trivia, TriviaCandidate
+from models import Base, Trivia, TriviaCandidate, MapTrivia
 from routers import line_admin
 from routers.line_admin import _approve_candidate_from_line, _parse_collect_command, _parse_generate_command
 from services.trivia_generation import build_generation_prompt
@@ -226,7 +226,7 @@ class TriviaWorkflowTests(unittest.TestCase):
         self.assertIn("explanation", block)
         self.assertEqual(parsed["explanation"], spot["explanation"])
 
-    def test_line_approve_map_candidate_publishes_to_trivia_with_map_fields(self):
+    def test_line_approve_map_candidate_publishes_to_map_trivia(self):
         candidate = create_candidate(self.db, {
             "title": "東京タワーの色",
             "content": "東京タワーは赤白に見えますが、正式にはインターナショナルオレンジと白です。",
@@ -241,11 +241,11 @@ class TriviaWorkflowTests(unittest.TestCase):
 
         message = _approve_candidate_from_line(self.db, candidate.id, "line-user")
         refreshed = self.db.query(TriviaCandidate).filter_by(id=candidate.id).one()
-        published = self.db.query(Trivia).filter_by(id=refreshed.published_trivia_id).one()
-        self.assertEqual(refreshed.status, "approved")
-        self.assertIn("公開しました", message)
-        self.assertIn("[MAP]", message)
-        self.assertEqual(self.db.query(Trivia).count(), 1)
+        published = self.db.query(MapTrivia).one()
+        self.assertEqual(refreshed.status, "rejected")
+        self.assertIn("MAPに公開しました", message)
+        self.assertEqual(self.db.query(Trivia).count(), 0)
+        self.assertEqual(self.db.query(MapTrivia).count(), 1)
         self.assertEqual(published.map_prefecture, "東京都")
         self.assertEqual(published.map_address, "東京タワー / 東京都港区芝公園4-2-8")
         self.assertAlmostEqual(published.map_latitude, 35.658581)
@@ -658,7 +658,7 @@ class MobileEditorIntegrationTests(unittest.TestCase):
             "category": "その他",
         })
 
-    def test_existing_candidate_can_load_save_and_publish(self):
+    def test_existing_candidate_publishs_immediately_from_mobile_editor(self):
         candidate = self._create_candidate("A")
         token = make_editor_token(candidate.id)
         path = f"/admin/candidates/{candidate.id}/edit"
@@ -677,20 +677,7 @@ class MobileEditorIntegrationTests(unittest.TestCase):
             "publish": False,
         })
         self.assertEqual(saved.status_code, 200)
-        self.assertEqual(saved.json()["status"], "pending")
-
-        published = self.client.put(path, json={
-            "token": token,
-            "title": "編集後タイトルA",
-            "content": "編集後の本文として保存しますA",
-            "explanation": "編集後解説",
-            "category": "科学",
-            "source": "",
-            "image_url": "",
-            "publish": True,
-        })
-        self.assertEqual(published.status_code, 200)
-        self.assertEqual(published.json()["status"], "approved")
+        self.assertEqual(saved.json()["status"], "approved")
 
         verify_db = self.session_factory()
         try:
@@ -701,7 +688,7 @@ class MobileEditorIntegrationTests(unittest.TestCase):
         finally:
             verify_db.close()
 
-    def test_new_candidate_can_save_as_draft(self):
+    def test_new_candidate_publishes_immediately_from_mobile_editor(self):
         token = make_editor_token(0)
         page = self.client.get("/admin/candidates/new", params={"token": token})
         self.assertEqual(page.status_code, 200)
@@ -717,7 +704,13 @@ class MobileEditorIntegrationTests(unittest.TestCase):
             "publish": False,
         })
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json()["status"], "pending")
+        self.assertEqual(response.json()["status"], "approved")
+        verify_db = self.session_factory()
+        try:
+            self.assertEqual(verify_db.query(Trivia).count(), 1)
+            self.assertEqual(verify_db.query(TriviaCandidate).count(), 0)
+        finally:
+            verify_db.close()
 
     def test_new_map_candidate_page_opens_with_map_fields(self):
         token = make_editor_token(0)
@@ -746,6 +739,44 @@ class MobileEditorIntegrationTests(unittest.TestCase):
         })
 
         self.assertEqual(response.status_code, 400)
+
+    def test_mobile_editor_page_does_not_offer_draft_save(self):
+        token = make_editor_token(0)
+        page = self.client.get("/admin/candidates/new", params={"token": token})
+
+        self.assertEqual(page.status_code, 200)
+        self.assertNotIn("下書き保存", page.text)
+        self.assertIn("登録する", page.text)
+
+    def test_new_map_candidate_publishes_to_map_trivia_directly(self):
+        token = make_editor_token(0)
+        response = self.client.post("/admin/candidates/new", json={
+            "token": token,
+            "title": "地図用直接公開テスト",
+            "content": "東京タワーに関する地図雑学です。",
+            "explanation": "公開先を map_trivia に分離したテストです。",
+            "category": "歴史",
+            "source": "",
+            "image_url": "",
+            "publish": True,
+            "add_to_normal": False,
+            "add_to_map": True,
+            "map_prefecture": "東京都",
+            "map_address": "東京タワー / 東京都港区芝公園4-2-8",
+            "map_latitude": 35.658581,
+            "map_longitude": 139.745433,
+            "map_radius": 300,
+        })
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["status"], "approved")
+        verify_db = self.session_factory()
+        try:
+            self.assertEqual(verify_db.query(MapTrivia).count(), 1)
+            self.assertEqual(verify_db.query(TriviaCandidate).count(), 0)
+            self.assertEqual(verify_db.query(Trivia).count(), 0)
+        finally:
+            verify_db.close()
 
     def test_existing_map_candidate_shows_collected_location_info(self):
         candidate = create_candidate(self.db, {
