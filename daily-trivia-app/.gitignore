@@ -41,4 +41,23 @@ yarn-error.*
 /ios
 /android
 ios/
-ios/
+
+# local signing credentials
+/credentials/
+
+# native module build caches
+/modules/*/android/.gradle/
+
+# local diagnostics and EAS command output
+/autolink*.json
+/resolve.json
+/build_info.*
+/build_log.txt
+/builds.txt
+/error_log.txt
+/latest_build.*
+/prebuild_log.txt
+/raw_*logs.txt
+/recent_builds.*
+/recent_builds_extended.txt
+/recent_submissions.txt

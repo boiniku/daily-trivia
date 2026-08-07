@@ -14,6 +14,8 @@
     "build:production": "eas build --platform ios --profile production",
     "submit:testflight": "eas submit --platform ios --profile testflight",
     "submit:production": "eas submit --platform ios --profile production",
+    "check:r2-themes": "node scripts/check_r2_themes.js",
+    "generate:widget-mocks": "python scripts/generate_widget_mocks.py",
     "eas-build-pre-install": "bash scripts/install-widget-profile.sh"
   },
   "dependencies": {
