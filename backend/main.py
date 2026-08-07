@@ -76,6 +76,8 @@ TRIVIA_IMAGE_R2_BASE_URL = os.getenv("TRIVIA_IMAGE_R2_BASE_URL", "").strip().rst
 MINIMUM_SUPPORTED_APP_VERSION = os.getenv("MINIMUM_SUPPORTED_APP_VERSION", "1.0.5").strip()
 LATEST_APP_VERSION = os.getenv("LATEST_APP_VERSION", "1.0.5").strip()
 APP_STORE_URL = os.getenv("APP_STORE_URL", "https://apps.apple.com/app/id6758872525").strip()
+APP_ENV = os.getenv("APP_ENV", "production").strip()
+API_VERSION = "1"
 
 
 def build_trivia_image_url(raw_value: Optional[str]) -> Optional[str]:
@@ -148,12 +150,19 @@ def read_root():
     return {"message": "Hello from Daily Trivia Backend with Neon DB!"}
 
 
+@app.get("/health")
+def health_check():
+    return {"status": "ok", "environment": APP_ENV, "api_version": API_VERSION}
+
+
 @app.get("/app/version")
 def get_app_version():
     return {
         "minimum_supported_version": MINIMUM_SUPPORTED_APP_VERSION,
         "latest_version": LATEST_APP_VERSION,
         "app_store_url": APP_STORE_URL,
+        "environment": APP_ENV,
+        "api_version": API_VERSION,
     }
 
 

@@ -1,4 +1,5 @@
 import auth from '@react-native-firebase/auth';
+import { Config } from '../constants/Config';
 
 const withTimeout = async <T,>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> => {
     let timeoutId: ReturnType<typeof setTimeout> | null = null;
@@ -21,6 +22,9 @@ export async function fetchWithToken(url: string, options: RequestInit = {}) {
     // 1. Prepare headers
     const headers: Record<string, string> = {
         'Content-Type': 'application/json',
+        'X-Daily-Trivia-App-Version': Config.APP_VERSION,
+        'X-Daily-Trivia-App-Environment': Config.APP_ENV,
+        'X-Daily-Trivia-API-Version': Config.API_VERSION,
         ...(options.headers as Record<string, string> || {})
     };
 

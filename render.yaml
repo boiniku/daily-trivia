@@ -3,6 +3,8 @@ services:
     name: daily-trivia-backend
     env: python
     rootDir: backend
+    autoDeploy: false
+    healthCheckPath: /health
     buildCommand: pip install -r requirements.txt
     startCommand: python migrate_trivia_candidates.py && uvicorn main:app --host 0.0.0.0 --port $PORT
     envVars:
@@ -22,5 +24,66 @@ services:
         generateValue: true
       - key: PUBLIC_BASE_URL
         sync: false
+      - key: PYTHON_VERSION
+        value: 3.13.0
+      - key: APP_ENV
+        value: production
+      - key: MINIMUM_SUPPORTED_APP_VERSION
+        sync: false
+      - key: LATEST_APP_VERSION
+        sync: false
+      - key: FIREBASE_SERVICE_ACCOUNT_JSON
+        sync: false
+
+  # Staging must use its own DATABASE_URL and APP_DATABASE_URL. Never copy the
+  # production database URLs into this service: startup runs migrations.
+  - type: web
+    name: daily-trivia-backend-staging
+    env: python
+    rootDir: backend
+    branch: develop
+    autoDeploy: true
+    healthCheckPath: /health
+    buildCommand: pip install -r requirements.txt
+    startCommand: python migrate_trivia_candidates.py && uvicorn main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: APP_ENV
+        value: staging
+      - key: DATABASE_URL
+        sync: false
+      - key: APP_DATABASE_URL
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: FIREBASE_SERVICE_ACCOUNT_JSON
+        sync: false
+      - key: LINE_CHANNEL_SECRET
+        sync: false
+      - key: LINE_CHANNEL_ACCESS_TOKEN
+        sync: false
+      - key: LINE_ADMIN_USER_IDS
+        sync: false
+      - key: CANDIDATE_EDITOR_SECRET
+        generateValue: true
+      - key: PUBLIC_BASE_URL
+        value: https://daily-trivia-backend-staging.onrender.com
+      - key: R2_ENDPOINT_URL
+        sync: false
+      - key: R2_ACCESS_KEY_ID
+        sync: false
+      - key: R2_SECRET_ACCESS_KEY
+        sync: false
+      - key: R2_BUCKET_NAME
+        sync: false
+      - key: TRIVIA_IMAGE_R2_BASE_URL
+        sync: false
+      - key: R2_TRIVIA_IMAGE_PREFIX
+        value: staging
+      - key: MINIMUM_SUPPORTED_APP_VERSION
+        value: 0.0.0
+      - key: LATEST_APP_VERSION
+        value: 1.0.37
+      - key: APP_STORE_URL
+        value: https://apps.apple.com/app/id6758872525
       - key: PYTHON_VERSION
         value: 3.13.0

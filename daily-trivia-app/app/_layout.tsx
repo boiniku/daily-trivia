@@ -30,7 +30,13 @@ const checkAppVersion = async () => {
   if (hasShownUpdatePrompt) return;
 
   try {
-    const response = await fetch(`${getBackendUrl()}/app/version`);
+    const response = await fetch(`${getBackendUrl()}/app/version`, {
+      headers: {
+        'X-Daily-Trivia-App-Version': Config.APP_VERSION,
+        'X-Daily-Trivia-App-Environment': Config.APP_ENV,
+        'X-Daily-Trivia-API-Version': Config.API_VERSION,
+      },
+    });
     if (!response.ok) return;
 
     const data = await response.json();

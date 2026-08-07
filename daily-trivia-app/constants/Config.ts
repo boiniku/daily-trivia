@@ -1,13 +1,35 @@
-import { Platform } from 'react-native';
 import Constants from 'expo-constants';
 
+export type AppEnvironment = 'development' | 'staging' | 'production';
+
+const rawAppEnvironment = process.env.EXPO_PUBLIC_APP_ENV;
+const appEnvironment: AppEnvironment =
+    rawAppEnvironment === 'production' || rawAppEnvironment === 'staging' || rawAppEnvironment === 'development'
+        ? rawAppEnvironment
+        : (__DEV__ ? 'development' : 'production');
+
+const productionBackendUrl = 'https://daily-trivia-e7ge.onrender.com';
+const localBackendUrl = 'http://127.0.0.1:8000';
+const configuredBackendUrl = process.env.EXPO_PUBLIC_BACKEND_URL?.trim().replace(/\/+$/, '');
+
+if (appEnvironment !== 'production' && configuredBackendUrl === productionBackendUrl) {
+    throw new Error('Safety check: a non-production build cannot use the production backend.');
+}
+
+if (appEnvironment === 'production' && configuredBackendUrl && configuredBackendUrl !== productionBackendUrl) {
+    throw new Error('Safety check: a production build cannot use a non-production backend.');
+}
+
 export const Config = {
-    // Backend URL
-    // Use Render URL for production/testing on device
-    // If you want to use local backend, change this to your local IP or localhost logic
-    BACKEND_URL: 'https://daily-trivia-e7ge.onrender.com',
+    APP_ENV: appEnvironment,
+    IS_PRODUCTION: appEnvironment === 'production',
+    // Production is the only environment allowed to fall back to the production API.
+    // Development intentionally falls back to localhost so an incomplete test setup
+    // cannot accidentally write to production.
+    BACKEND_URL: configuredBackendUrl || (appEnvironment === 'production' ? productionBackendUrl : localBackendUrl),
+    API_VERSION: process.env.EXPO_PUBLIC_API_VERSION || '1',
     TRIVIA_IMAGE_R2_BASE_URL: process.env.EXPO_PUBLIC_TRIVIA_IMAGE_R2_BASE_URL || '',
-    APP_VERSION: '1.0.5',
+    APP_VERSION: Constants.expoConfig?.version || '0.0.0',
 
     // API Keys (loaded from env or fallback)
     REVENUECAT_IOS_KEY: process.env.EXPO_PUBLIC_REVENUECAT_IOS_API_KEY || '',
