@@ -9,6 +9,7 @@ import { TriviaNotificationManager } from '../../managers/TriviaNotificationMana
 import { TriviaUnlockManager, calculateDistanceMeters } from '../../managers/TriviaUnlockManager';
 import { Coordinates, TriviaSpot } from '../../models/TriviaSpot';
 import { Colors, Theme } from '../../constants/Colors';
+import { JAPAN_REGIONS, JapanRegionId, getPrefecturesFromLabel } from '../../constants/JapanRegions';
 import { getFloatingTabBarBottom, FLOATING_TAB_BAR_HEIGHT } from '../../constants/Layout';
 
 const JAPAN_REGION = {
@@ -52,6 +53,7 @@ export default function TriviaMapScreen() {
     const [locationStatus, setLocationStatus] = useState<TriviaLocationStatus>('unknown');
     const [isLoading, setIsLoading] = useState(true);
     const [viewMode, setViewMode] = useState<'map' | 'collection'>('map');
+    const [selectedRegion, setSelectedRegion] = useState<JapanRegionId | 'all'>('all');
     const [selectedPrefecture, setSelectedPrefecture] = useState<string>('すべて');
     const [nearbyOnly, setNearbyOnly] = useState(false);
     const [unlockPulseId, setUnlockPulseId] = useState<string | null>(null);
@@ -64,21 +66,35 @@ export default function TriviaMapScreen() {
     );
 
     const unlockedCount = spots.filter((spot) => spot.isUnlocked).length;
-    const prefectures = useMemo(() => {
-        const values = spots.map((spot) => spot.prefecture).filter(Boolean) as string[];
-        return ['すべて', ...Array.from(new Set(values))];
+    const availablePrefectures = useMemo(() => {
+        return new Set(spots.flatMap((spot) => getPrefecturesFromLabel(spot.prefecture)));
     }, [spots]);
+
+    const activeRegion = useMemo(
+        () => JAPAN_REGIONS.find((region) => region.id === selectedRegion) ?? null,
+        [selectedRegion]
+    );
+
+    const regionPrefectures = useMemo(
+        () => activeRegion?.prefectures.filter((prefecture) => availablePrefectures.has(prefecture)) ?? [],
+        [activeRegion, availablePrefectures]
+    );
 
     const visibleSpots = useMemo(() => {
         return spots.filter((spot) => {
-            if (selectedPrefecture !== 'すべて' && spot.prefecture !== selectedPrefecture) return false;
+            const spotPrefectures = getPrefecturesFromLabel(spot.prefecture);
+            if (selectedPrefecture !== 'すべて') {
+                if (!spotPrefectures.includes(selectedPrefecture)) return false;
+            } else if (activeRegion && !spotPrefectures.some((prefecture) => activeRegion.prefectures.includes(prefecture))) {
+                return false;
+            }
             if (nearbyOnly) {
                 const distance = getSpotDistance(spot, userLocation);
                 return distance != null && distance <= 5000;
             }
             return true;
         });
-    }, [nearbyOnly, selectedPrefecture, spots, userLocation]);
+    }, [activeRegion, nearbyOnly, selectedPrefecture, spots, userLocation]);
 
     const collectionSpots = useMemo(
         () => spots.filter((spot) => spot.isUnlocked).sort((a, b) => (b.unlockedAt?.getTime() ?? 0) - (a.unlockedAt?.getTime() ?? 0)),
@@ -222,6 +238,11 @@ export default function TriviaMapScreen() {
         setSelectedSpotId(null);
         setIsPreviewVisible(false);
         setIsDetailVisible(false);
+    };
+
+    const handleRegionChange = (regionId: JapanRegionId | 'all') => {
+        setSelectedRegion(regionId);
+        handlePrefectureChange('すべて');
     };
 
     const toggleNearbyOnly = () => {
@@ -405,27 +426,61 @@ export default function TriviaMapScreen() {
                 </View>
             )}
 
-            <View style={styles.filterRow}>
-                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterContent}>
-                    {prefectures.map((prefecture) => (
+            <View style={styles.filterPanel}>
+                <View style={styles.filterRow}>
+                    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterContent}>
                         <Pressable
-                            key={prefecture}
-                            style={[styles.filterChip, selectedPrefecture === prefecture && styles.filterChipActive]}
-                            onPress={() => handlePrefectureChange(prefecture)}
+                            style={[styles.filterChip, selectedRegion === 'all' && styles.filterChipActive]}
+                            onPress={() => handleRegionChange('all')}
                         >
-                            <Text style={[styles.filterText, selectedPrefecture === prefecture && styles.filterTextActive]}>
-                                {prefecture}
+                            <Text style={[styles.filterText, selectedRegion === 'all' && styles.filterTextActive]}>
+                                全国
                             </Text>
                         </Pressable>
-                    ))}
-                </ScrollView>
-                <Pressable
-                    style={[styles.nearbyButton, nearbyOnly && styles.nearbyButtonActive]}
-                    onPress={toggleNearbyOnly}
-                >
-                    <Ionicons name="locate" size={16} color={nearbyOnly ? '#FFFFFF' : Colors.light.primary} />
-                    <Text style={[styles.nearbyButtonText, nearbyOnly && styles.nearbyButtonTextActive]}>近く</Text>
-                </Pressable>
+                        {JAPAN_REGIONS.map((region) => (
+                            <Pressable
+                                key={region.id}
+                                style={[styles.filterChip, selectedRegion === region.id && styles.filterChipActive]}
+                                onPress={() => handleRegionChange(region.id)}
+                            >
+                                <Text style={[styles.filterText, selectedRegion === region.id && styles.filterTextActive]}>
+                                    {region.label}
+                                </Text>
+                            </Pressable>
+                        ))}
+                    </ScrollView>
+                    <Pressable
+                        style={[styles.nearbyButton, nearbyOnly && styles.nearbyButtonActive]}
+                        onPress={toggleNearbyOnly}
+                    >
+                        <Ionicons name="locate" size={16} color={nearbyOnly ? '#FFFFFF' : Colors.light.primary} />
+                        <Text style={[styles.nearbyButtonText, nearbyOnly && styles.nearbyButtonTextActive]}>近く</Text>
+                    </Pressable>
+                </View>
+
+                {activeRegion ? (
+                    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.prefectureFilterContent}>
+                        <Pressable
+                            style={[styles.prefectureChip, selectedPrefecture === 'すべて' && styles.prefectureChipActive]}
+                            onPress={() => handlePrefectureChange('すべて')}
+                        >
+                            <Text style={[styles.prefectureText, selectedPrefecture === 'すべて' && styles.prefectureTextActive]}>
+                                {activeRegion.label}全体
+                            </Text>
+                        </Pressable>
+                        {regionPrefectures.map((prefecture) => (
+                            <Pressable
+                                key={prefecture}
+                                style={[styles.prefectureChip, selectedPrefecture === prefecture && styles.prefectureChipActive]}
+                                onPress={() => handlePrefectureChange(prefecture)}
+                            >
+                                <Text style={[styles.prefectureText, selectedPrefecture === prefecture && styles.prefectureTextActive]}>
+                                    {prefecture}
+                                </Text>
+                            </Pressable>
+                        ))}
+                    </ScrollView>
+                ) : null}
             </View>
 
             {viewMode === 'map' ? (
@@ -574,12 +629,15 @@ const styles = StyleSheet.create({
         fontWeight: '700',
         color: Colors.light.text,
     },
+    filterPanel: {
+        paddingBottom: 10,
+        gap: 8,
+    },
     filterRow: {
         flexDirection: 'row',
         alignItems: 'center',
         paddingLeft: 20,
         paddingRight: 16,
-        paddingBottom: 10,
         gap: 10,
     },
     filterContent: {
@@ -606,6 +664,29 @@ const styles = StyleSheet.create({
         color: Colors.light.text,
     },
     filterTextActive: {
+        color: '#FFFFFF',
+    },
+    prefectureFilterContent: {
+        gap: 8,
+        paddingHorizontal: 20,
+    },
+    prefectureChip: {
+        height: 30,
+        paddingHorizontal: 12,
+        borderRadius: 15,
+        backgroundColor: '#F2F4F5',
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    prefectureChipActive: {
+        backgroundColor: Colors.light.secondary,
+    },
+    prefectureText: {
+        fontSize: 12,
+        fontWeight: '800',
+        color: Colors.light.subtext,
+    },
+    prefectureTextActive: {
         color: '#FFFFFF',
     },
     nearbyButton: {
