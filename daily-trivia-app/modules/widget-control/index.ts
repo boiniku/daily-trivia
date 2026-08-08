@@ -61,5 +61,3 @@ export async function getSavedWidgetFiles(): Promise<any[]> {
     console.warn("WidgetControl.getSavedWidgetFiles is not available");
     return [];
 }
-
-export { default as WidgetPreviewView } from './WidgetPreviewView';

@@ -91,7 +91,8 @@ export default function WidgetSetupScreen() {
                     <Ionicons name="close" size={28} color={Colors.light.text} />
                 </Pressable>
                 <Text style={styles.headerTitle}>ウィジェットの設定方法</Text>
-                <View style={{ width: 44 }} /> {/* Spacer for centering */}
+                {/* Spacer for centering */}
+                <View style={{ width: 44 }} />
             </View>
 
             <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>

@@ -577,7 +577,8 @@ export default function HomeScreen() {
     return (
         <SafeAreaView style={styles.container}>
             <View style={styles.header}>
-                <View style={{ width: 44 }} /> {/* Spacer to balance the right icon */}
+                {/* Spacer to balance the right icon */}
+                <View style={{ width: 44 }} />
                 <Text style={styles.headerTitle}>毎日雑学</Text>
 
                 {/* Info Button for Widget Setup Guide */}
@@ -587,11 +588,11 @@ export default function HomeScreen() {
                     hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
                 >
                     <Ionicons name="information-circle-outline" size={28} color={Colors.light.text} />
-                    {!hasSeenWidgetGuide && (
+                    {!hasSeenWidgetGuide ? (
                         <View style={styles.badge}>
                             <Text style={styles.badgeText}>!</Text>
                         </View>
-                    )}
+                    ) : null}
                 </Pressable>
             </View>
 
@@ -599,7 +600,7 @@ export default function HomeScreen() {
                 {!isLimitReached ? (
                     <>
                         {/* Next Card (Background) */}
-                        {triviaList[currentIndex + 1] && (
+                        {triviaList[currentIndex + 1] ? (
                             <TriviaCard
                                 key={`next-${triviaList[currentIndex + 1].id}`}
                                 item={triviaList[currentIndex + 1]}
@@ -608,7 +609,7 @@ export default function HomeScreen() {
                                 enabled={false}
                                 style={{ zIndex: 0, transform: [{ scale: 0.95 }, { translateY: 10 }] }}
                             />
-                        )}
+                        ) : null}
 
                         {/* Current Card (Foreground) */}
                         {currentItem ? (
@@ -640,26 +641,26 @@ export default function HomeScreen() {
                         )}
 
                         {/* Swipe Guide Overlay */}
-                        {showGuideMode && triviaList.length > 0 && (
+                        {showGuideMode && triviaList.length > 0 ? (
                             <SwipeGuide mode={showGuideMode} />
-                        )}
+                        ) : null}
                     </>
                 ) : (
                     <View style={styles.finishedContainer}>
                         <Text style={styles.finishedText}>今日の雑学は以上です！</Text>
                         <Text style={styles.subText}>また明日見に来てください。</Text>
-                        {!isPro && (
+                        {!isPro ? (
                             <Pressable style={styles.upgradeButton} onPress={() => router.push('/settings')}>
                                 <Text style={styles.upgradeText}>サブスクで無制限に見る</Text>
                             </Pressable>
-                        )}
+                        ) : null}
                     </View>
                 )}
             </View>
 
             <View style={[styles.adsContainer, { marginBottom: getTabScreenAdBottomMargin(insets) }]}>
                 {/* Banner Ad */}
-                {!isPro && (
+                {!isPro ? (
                     <BannerAd
                         unitId={Platform.OS === 'ios' ? Config.BANNER_ID_IOS : Config.BANNER_ID_ANDROID}
                         size={BannerAdSize.ANCHORED_ADAPTIVE_BANNER}
@@ -667,7 +668,7 @@ export default function HomeScreen() {
                             requestNonPersonalizedAdsOnly: true,
                         }}
                     />
-                )}
+                ) : null}
             </View>
         </SafeAreaView>
     );
