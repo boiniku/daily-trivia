@@ -65,6 +65,21 @@ def migrate():
                   )
             """))
 
+    # PostgreSQL's standard full-text parser does not segment Japanese well.
+    # Trigram indexes accelerate the substring search used by collection history.
+    if engine.dialect.name == "postgresql":
+        try:
+            with engine.begin() as conn:
+                conn.execute(text("CREATE EXTENSION IF NOT EXISTS pg_trgm"))
+                for column in ("title", "content", "explanation", "category"):
+                    conn.execute(text(
+                        f"CREATE INDEX IF NOT EXISTS ix_trivia_{column}_trgm "
+                        f"ON trivia USING gin ({column} gin_trgm_ops)"
+                    ))
+        except Exception as exc:
+            # Search remains correct without these optional performance indexes.
+            print(f"Warning: could not create trivia search indexes: {exc}")
+
 
 if __name__ == "__main__":
     migrate()

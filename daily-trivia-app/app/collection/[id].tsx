@@ -1,6 +1,6 @@
 import { useLocalSearchParams, useRouter, useFocusEffect } from 'expo-router';
-import { View, Text, StyleSheet, FlatList, Pressable, ActivityIndicator, Alert, Platform, ScrollView } from 'react-native';
-import React, { useState, useEffect, useCallback } from 'react';
+import { View, Text, StyleSheet, FlatList, Pressable, ActivityIndicator, Alert, Platform, ScrollView, TextInput } from 'react-native';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { Config } from '../../constants/Config';
@@ -41,6 +41,12 @@ export default function CollectionDetailsScreen() {
     const [items, setItems] = useState<TriviaItem[]>([]);
     const [filteredItems, setFilteredItems] = useState<TriviaItem[]>([]);
     const [loading, setLoading] = useState(true);
+    const [loadingMore, setLoadingMore] = useState(false);
+    const [searchText, setSearchText] = useState('');
+    const [debouncedSearch, setDebouncedSearch] = useState('');
+    const [total, setTotal] = useState(0);
+    const [hasMore, setHasMore] = useState(false);
+    const searchRequestId = useRef(0);
     const { isPro } = useRevenueCat();
 
     // Filtering & Sorting
@@ -76,12 +82,6 @@ export default function CollectionDetailsScreen() {
             console.error("Ad cooldown error", e);
         }
     }, [adLoaded, isHistoryCollection, isPro]);
-
-    useFocusEffect(
-        useCallback(() => {
-            fetchCollectionItems();
-        }, [normalizedCollectionId])
-    );
 
     useEffect(() => {
         // Ad Logic
@@ -183,6 +183,69 @@ export default function CollectionDetailsScreen() {
         }
     };
 
+    const fetchHistoryItems = async (reset: boolean) => {
+        if (!normalizedCollectionId) return;
+        if (!reset && (loadingMore || !hasMore)) return;
+
+        const requestId = reset ? ++searchRequestId.current : searchRequestId.current;
+        const offset = reset ? 0 : items.length;
+        reset ? setLoading(true) : setLoadingMore(true);
+
+        try {
+            const params = [
+                `q=${encodeURIComponent(debouncedSearch.trim())}`,
+                `sort=${encodeURIComponent(sortType)}`,
+                `limit=30`,
+                `offset=${offset}`,
+            ];
+            if (selectedCategory) {
+                params.push(`category=${encodeURIComponent(selectedCategory)}`);
+            }
+
+            const apiUrl = `${getBackendUrl()}/collections/${normalizedCollectionId}/items/search?${params.join('&')}`;
+            const response = await fetchWithToken(apiUrl);
+            if (!response.ok) throw new Error('Network error');
+            const rawData = await response.json();
+            if (requestId !== searchRequestId.current) return;
+
+            const nextItems = normalizeTriviaItems(rawData?.items);
+            setItems((current) => {
+                if (reset) return nextItems;
+                const existingIds = new Set(current.map((item) => item.id));
+                return [...current, ...nextItems.filter((item) => !existingIds.has(item.id))];
+            });
+            setCategories(Array.isArray(rawData?.categories)
+                ? rawData.categories.filter((value: unknown): value is string => typeof value === 'string' && value.length > 0)
+                : []);
+            setTotal(Number.isFinite(Number(rawData?.total)) ? Number(rawData.total) : nextItems.length);
+            setHasMore(Boolean(rawData?.has_more));
+        } catch (error) {
+            if (reset && requestId === searchRequestId.current) {
+                Alert.alert('エラー', '検索結果の取得に失敗しました');
+            }
+        } finally {
+            if (requestId === searchRequestId.current) {
+                setLoading(false);
+                setLoadingMore(false);
+            }
+        }
+    };
+
+    useEffect(() => {
+        const timer = setTimeout(() => setDebouncedSearch(searchText), 300);
+        return () => clearTimeout(timer);
+    }, [searchText]);
+
+    useFocusEffect(
+        useCallback(() => {
+            if (isHistoryCollection) {
+                fetchHistoryItems(true);
+            } else {
+                fetchCollectionItems();
+            }
+        }, [normalizedCollectionId, isHistoryCollection, debouncedSearch, selectedCategory, sortType])
+    );
+
     const applySortAndFilter = (cat: string | null, sort: 'default' | 'total' | 'user', data: TriviaItem[]) => {
         let result = [...data];
         if (cat) {
@@ -197,17 +260,21 @@ export default function CollectionDetailsScreen() {
     };
 
     useEffect(() => {
-        applySortAndFilter(selectedCategory, sortType, items);
-    }, [items, selectedCategory, sortType]);
+        if (isHistoryCollection) {
+            setFilteredItems(items);
+        } else {
+            applySortAndFilter(selectedCategory, sortType, items);
+        }
+    }, [items, selectedCategory, sortType, isHistoryCollection]);
 
     const handleFilter = (category: string | null) => {
         setSelectedCategory(category);
-        applySortAndFilter(category, sortType, items);
+        if (!isHistoryCollection) applySortAndFilter(category, sortType, items);
     };
 
     const handleSort = (sort: 'default' | 'total' | 'user') => {
         setSortType(sort);
-        applySortAndFilter(selectedCategory, sort, items);
+        if (!isHistoryCollection) applySortAndFilter(selectedCategory, sort, items);
     };
 
     const renderItem = ({ item }: { item: TriviaItem }) => (
@@ -256,6 +323,31 @@ export default function CollectionDetailsScreen() {
                 <Text style={styles.headerTitle} numberOfLines={1}>{normalizedTitle || 'フォルダの中身'}</Text>
                 <View style={{ width: 40 }} />
             </View>
+            {isHistoryCollection && (
+                <View style={styles.searchSection}>
+                    <View style={styles.searchContainer}>
+                        <Ionicons name="search" size={20} color={Colors.light.subtext} />
+                        <TextInput
+                            value={searchText}
+                            onChangeText={setSearchText}
+                            placeholder="見た雑学を検索"
+                            placeholderTextColor={Colors.light.subtext}
+                            style={styles.searchInput}
+                            returnKeyType="search"
+                            autoCorrect={false}
+                            maxLength={100}
+                        />
+                        {searchText.length > 0 && (
+                            <Pressable onPress={() => setSearchText('')} hitSlop={10}>
+                                <Ionicons name="close-circle" size={20} color={Colors.light.subtext} />
+                            </Pressable>
+                        )}
+                    </View>
+                    {!loading && (
+                        <Text style={styles.resultCount}>{total}件</Text>
+                    )}
+                </View>
+            )}
             {/* Category Filter */}
             {categories.length > 0 && (
                 <View style={styles.filterContainer}>
@@ -313,9 +405,20 @@ export default function CollectionDetailsScreen() {
                     renderItem={renderItem}
                     keyExtractor={item => String(item.id)}
                     contentContainerStyle={styles.listContent}
+                    onEndReached={() => {
+                        if (isHistoryCollection) fetchHistoryItems(false);
+                    }}
+                    onEndReachedThreshold={0.4}
+                    ListFooterComponent={loadingMore
+                        ? <ActivityIndicator style={styles.footerLoader} color={Colors.light.primary} />
+                        : null}
                     ListEmptyComponent={
                         <View style={styles.emptyContainer}>
-                            <Text style={styles.emptyText}>まだ保存された雑学はありません</Text>
+                            <Text style={styles.emptyText}>
+                                {isHistoryCollection && debouncedSearch.trim()
+                                    ? '検索に一致する雑学はありません'
+                                    : 'まだ保存された雑学はありません'}
+                            </Text>
                         </View>
                     }
                 />
@@ -356,6 +459,41 @@ const styles = StyleSheet.create({
     listContent: {
         padding: 20,
         paddingBottom: 100,
+    },
+    searchSection: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        paddingHorizontal: 20,
+        marginBottom: 12,
+        gap: 10,
+    },
+    searchContainer: {
+        flex: 1,
+        minHeight: 46,
+        flexDirection: 'row',
+        alignItems: 'center',
+        paddingHorizontal: 14,
+        borderRadius: 14,
+        backgroundColor: Colors.light.cardBackground,
+        borderWidth: 1,
+        borderColor: Colors.light.border,
+        gap: 10,
+    },
+    searchInput: {
+        flex: 1,
+        paddingVertical: 10,
+        fontSize: 16,
+        color: Colors.light.text,
+    },
+    resultCount: {
+        minWidth: 42,
+        textAlign: 'right',
+        color: Colors.light.subtext,
+        fontSize: 13,
+        fontWeight: '700',
+    },
+    footerLoader: {
+        marginVertical: 16,
     },
     itemContainer: {
         flexDirection: 'row',

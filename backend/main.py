@@ -1,8 +1,8 @@
 
-from fastapi import FastAPI, Depends, HTTPException, status, Request
+from fastapi import FastAPI, Depends, HTTPException, status, Request, Query
 from typing import List, Optional
 from sqlalchemy.orm import Session
-from sqlalchemy import text
+from sqlalchemy import text, and_, case, func, or_
 from database import get_db, AppSessionLocal
 from models import Trivia, MapTrivia, Collection, CollectionItem, DailyAssignment, TriviaHee
 import random
@@ -116,6 +116,13 @@ class TriviaSchema(BaseModel):
 
 class CollectionItemSchema(TriviaSchema):
     user_hee_count: int = 0
+
+
+class CollectionItemsSearchResponse(BaseModel):
+    items: List[CollectionItemSchema]
+    total: int
+    has_more: bool
+    categories: List[str]
 
 
 class CollectionSchema(BaseModel):
@@ -749,6 +756,121 @@ def create_collection(request: CreateCollectionRequest, user_id: str = Depends(g
         raise HTTPException(status_code=500, detail=f"Failed to create collection: {str(e)}")
     finally:
         db.close()
+
+def escape_like(value: str) -> str:
+    """Treat %, _ and backslash as ordinary search characters."""
+    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+@app.get(
+    "/collections/{collection_id}/items/search",
+    response_model=CollectionItemsSearchResponse,
+)
+def search_collection_items(
+    collection_id: int,
+    q: str = Query(default="", max_length=100),
+    category: Optional[str] = Query(default=None, max_length=100),
+    sort: str = Query(default="default", pattern="^(default|total|user)$"),
+    limit: int = Query(default=30, ge=1, le=50),
+    offset: int = Query(default=0, ge=0),
+    user_id: str = Depends(get_current_user_id),
+):
+    """Search one user's collection without loading its entire history."""
+    db = AppSessionLocal()
+    try:
+        db.execute(text("SET LOCAL app.current_user_id = :uid"), {"uid": user_id})
+        collection = db.query(Collection).filter(
+            Collection.id == collection_id,
+            Collection.user_id == user_id,
+        ).first()
+        if not collection:
+            raise HTTPException(status_code=404, detail="Collection not found")
+
+        tokens = q.strip().split()[:5]
+
+        def add_filters(query):
+            query = query.filter(CollectionItem.collection_id == collection_id)
+            if category:
+                query = query.filter(Trivia.category == category)
+            for token in tokens:
+                pattern = f"%{escape_like(token)}%"
+                query = query.filter(or_(
+                    Trivia.title.ilike(pattern, escape="\\"),
+                    Trivia.content.ilike(pattern, escape="\\"),
+                    Trivia.explanation.ilike(pattern, escape="\\"),
+                    Trivia.category.ilike(pattern, escape="\\"),
+                ))
+            return query
+
+        user_hee = db.query(
+            TriviaHee.trivia_id.label("trivia_id"),
+            func.max(TriviaHee.count).label("count"),
+        ).filter(
+            TriviaHee.user_id == user_id,
+        ).group_by(
+            TriviaHee.trivia_id,
+        ).subquery()
+
+        result_query = db.query(
+            Trivia,
+            func.coalesce(user_hee.c.count, 0).label("user_hee_count"),
+        ).join(
+            CollectionItem, Trivia.id == CollectionItem.trivia_id,
+        ).outerjoin(
+            user_hee, Trivia.id == user_hee.c.trivia_id,
+        )
+        result_query = add_filters(result_query)
+
+        total_query = db.query(func.count(CollectionItem.id)).join(
+            Trivia, Trivia.id == CollectionItem.trivia_id,
+        )
+        total = int(add_filters(total_query).scalar() or 0)
+
+        if tokens:
+            normalized_query = " ".join(tokens)
+            escaped_query = escape_like(normalized_query)
+            relevance = case(
+                (func.lower(Trivia.title) == normalized_query.lower(), 0),
+                (Trivia.title.ilike(f"{escaped_query}%", escape="\\"), 1),
+                (Trivia.title.ilike(f"%{escaped_query}%", escape="\\"), 2),
+                else_=3,
+            )
+            result_query = result_query.order_by(relevance.asc())
+
+        if sort == "total":
+            result_query = result_query.order_by(Trivia.hee_count.desc(), CollectionItem.id.desc())
+        elif sort == "user":
+            result_query = result_query.order_by(
+                func.coalesce(user_hee.c.count, 0).desc(),
+                CollectionItem.id.desc(),
+            )
+        else:
+            result_query = result_query.order_by(CollectionItem.id.desc())
+
+        results = result_query.offset(offset).limit(limit).all()
+        items = []
+        for trivia, user_hee_count in results:
+            item = {column.name: getattr(trivia, column.name) for column in trivia.__table__.columns}
+            item["user_hee_count"] = int(user_hee_count or 0)
+            items.append(item)
+
+        categories = [row[0] for row in db.query(Trivia.category).join(
+            CollectionItem, Trivia.id == CollectionItem.trivia_id,
+        ).filter(
+            CollectionItem.collection_id == collection_id,
+            Trivia.category.isnot(None),
+            Trivia.category != "",
+        ).distinct().order_by(Trivia.category.asc()).all()]
+
+        return {
+            "items": items,
+            "total": total,
+            "has_more": offset + len(items) < total,
+            "categories": categories,
+        }
+    finally:
+        db.close()
+
 
 @app.get("/collections/{collection_id}/items", response_model=List[CollectionItemSchema])
 def get_collection_items(collection_id: int, user_id: str = Depends(get_current_user_id)):
