@@ -34,7 +34,15 @@ app_engine = create_engine(
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 # App session (for main.py - RLS enforced)
-AppSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=app_engine)
+# API handlers commonly commit and then return ORM objects for response-model
+# serialization. Keep already-loaded values available after commit so closing
+# the request session does not leave FastAPI with expired/detached instances.
+AppSessionLocal = sessionmaker(
+    autocommit=False,
+    autoflush=False,
+    expire_on_commit=False,
+    bind=app_engine,
+)
 
 Base = declarative_base()
 
