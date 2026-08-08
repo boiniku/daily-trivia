@@ -9,7 +9,7 @@ import TriviaCard from '../../components/TriviaCard';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Crypto from 'expo-crypto';
 import { syncTriviaToWidget } from '../../utils/widgetSync';
-import { BannerAd, BannerAdSize, TestIds } from 'react-native-google-mobile-ads';
+import { BannerAd, BannerAdSize, TestIds, useRewardedAd } from 'react-native-google-mobile-ads';
 import SwipeGuide from '../../components/SwipeGuide';
 import { useRevenueCat } from '../../contexts/RevenueCatContext';
 import { Config } from '../../constants/Config';
@@ -17,6 +17,10 @@ import { fetchWithToken } from '../../utils/apiClient';
 import { Theme, Colors } from '../../constants/Colors';
 import { BANNER_RESERVED_HEIGHT, getTabScreenAdBottomMargin } from '../../constants/Layout';
 import { checkAndRequestReview } from '../../utils/reviewHandler';
+
+const DAILY_LIMIT = 3;
+const REWARDED_BONUS_LIMIT = 3;
+const REWARDED_BONUS_DATE_KEY = 'triviaRewardedBonusDate';
 
 // Helper to determine backend URL
 const getBackendUrl = () => {
@@ -42,10 +46,22 @@ export default function HomeScreen() {
     const [loading, setLoading] = useState(true);
     const [showGuideMode, setShowGuideMode] = useState<'tap' | 'swipe' | null>(null);
     const [hasSeenWidgetGuide, setHasSeenWidgetGuide] = useState(true); // Default true, updated accurately on mount and focus
-    const DAILY_LIMIT = 3;
     const { isPro, currentOffering, purchasePackage } = useRevenueCat();
     const { userId } = useAuth(); // Use AuthContext
     const insets = useSafeAreaInsets();
+    const rewardedAdUnitId = Config.IS_PRODUCTION
+        ? (Platform.OS === 'ios' ? Config.REWARDED_ID_IOS : Config.REWARDED_ID_ANDROID)
+        : TestIds.REWARDED;
+    const {
+        isLoaded: isRewardedAdLoaded,
+        isEarnedReward,
+        isClosed: isRewardedAdClosed,
+        error: rewardedAdError,
+        load: loadRewardedAd,
+        show: showRewardedAd,
+    } = useRewardedAd(rewardedAdUnitId, { requestNonPersonalizedAdsOnly: true });
+    const [bonusUnlocked, setBonusUnlocked] = useState(false);
+    const [isLoadingRewardedTrivia, setIsLoadingRewardedTrivia] = useState(false);
 
     const appState = useRef(AppState.currentState);
     const isFetchingRef = useRef(false);
@@ -53,6 +69,8 @@ export default function HomeScreen() {
     const [errorFetchingMore, setErrorFetchingMore] = useState(false); // New state for fetchMoreTrivia errors
     const currentIndexRef = useRef(currentIndex); // Ensures saveState uses exact latest index during async fetch
     const shouldShowSwipeAfterTapGuideRef = useRef(true);
+    const rewardHandledRef = useRef(false);
+    const rewardRequestPendingRef = useRef(false);
 
     // Helper to get effective date (changes at 2:00 AM)
     const getEffectiveDate = useCallback(() => {
@@ -69,6 +87,25 @@ export default function HomeScreen() {
     useEffect(() => {
         currentIndexRef.current = currentIndex;
     }, [currentIndex]);
+
+    useEffect(() => {
+        if (!isPro && !bonusUnlocked) {
+            loadRewardedAd();
+        }
+    }, [bonusUnlocked, isPro, loadRewardedAd]);
+
+    useEffect(() => {
+        if (rewardedAdError && rewardRequestPendingRef.current) {
+            rewardRequestPendingRef.current = false;
+            Alert.alert('広告を読み込めませんでした', '通信状態を確認して、もう一度お試しください。');
+        }
+    }, [rewardedAdError]);
+
+    useEffect(() => {
+        if (isRewardedAdClosed && !isEarnedReward) {
+            rewardRequestPendingRef.current = false;
+        }
+    }, [isEarnedReward, isRewardedAdClosed]);
 
     const checkTutorial = async () => {
         try {
@@ -250,13 +287,19 @@ export default function HomeScreen() {
                 return;
             }
             console.log('User ID from Context:', userId);
+            const today = getEffectiveDate();
+            const rewardedBonusDate = await AsyncStorage.getItem(REWARDED_BONUS_DATE_KEY);
+            const hasRewardedBonusToday = rewardedBonusDate === today;
+            setBonusUnlocked(hasRewardedBonusToday);
+            rewardHandledRef.current = hasRewardedBonusToday;
+            if (rewardedBonusDate && !hasRewardedBonusToday) {
+                await AsyncStorage.removeItem(REWARDED_BONUS_DATE_KEY);
+            }
 
             // --- Resume Logic ---
             const savedStateJson = await AsyncStorage.getItem('triviaState');
             if (savedStateJson) {
                 const savedState = JSON.parse(savedStateJson);
-                const today = getEffectiveDate();
-
                 if (savedState.date === today && Array.isArray(savedState.list) && savedState.list.length > 0) {
                     console.log('Restoring state for date:', today);
                     // Set the dataDateRef to match the cached date we are restoring
@@ -351,18 +394,20 @@ export default function HomeScreen() {
         }
     };
 
-    const fetchMoreTrivia = async () => {
-        if (isFetchingMoreRef.current) return;
+    const fetchMoreTrivia = async (limit = 7): Promise<boolean> => {
+        if (isFetchingMoreRef.current) return false;
+        let fetchedItems = false;
         try {
             isFetchingMoreRef.current = true;
             setErrorFetchingMore(false); // Reset error state on new attempt
-            if (!userId) return;
+            if (!userId) return false;
             // Fetch 7 more items, ensure they match the logical date, AND disable daily assignment prepending
-            const apiUrl = `${getBackendUrl()}/trivia/today?limit=7&date=${dataDateRef.current}&include_assignments=false&user_id=${encodeURIComponent(userId)}`;
+            const apiUrl = `${getBackendUrl()}/trivia/today?limit=${limit}&date=${dataDateRef.current}&include_assignments=false&user_id=${encodeURIComponent(userId)}`;
             const response = await fetchWithToken(apiUrl);
             if (response.ok) {
                 const data = await response.json();
                 if (Array.isArray(data) && data.length > 0) {
+                    fetchedItems = true;
                     // Append new items (filtering out duplicates that are already in the list to prevent buffer overlap logic loop)
                     setTriviaList(prev => {
                         const existingIds = new Set(prev.map(item => item.id));
@@ -390,7 +435,42 @@ export default function HomeScreen() {
         } finally {
             isFetchingMoreRef.current = false;
         }
+        return fetchedItems;
     };
+
+    useEffect(() => {
+        if (!isEarnedReward || rewardHandledRef.current) return;
+
+        rewardHandledRef.current = true;
+        rewardRequestPendingRef.current = false;
+        const grantRewardedBonus = async () => {
+            setBonusUnlocked(true);
+            setIsLoadingRewardedTrivia(true);
+            await AsyncStorage.setItem(REWARDED_BONUS_DATE_KEY, dataDateRef.current);
+            const fetched = await fetchMoreTrivia(REWARDED_BONUS_LIMIT);
+            setIsLoadingRewardedTrivia(false);
+            if (!fetched) {
+                Alert.alert('追加の雑学を取得できませんでした', '「再試行」を押して、もう一度お試しください。');
+            }
+        };
+
+        void grantRewardedBonus();
+    }, [isEarnedReward]);
+
+    useEffect(() => {
+        const shouldResumeRewardedFetch =
+            !isPro &&
+            bonusUnlocked &&
+            !loading &&
+            !isLoadingRewardedTrivia &&
+            !errorFetchingMore &&
+            currentIndex >= triviaList.length &&
+            currentIndex < DAILY_LIMIT + REWARDED_BONUS_LIMIT;
+
+        if (!shouldResumeRewardedFetch) return;
+        setIsLoadingRewardedTrivia(true);
+        fetchMoreTrivia(REWARDED_BONUS_LIMIT).finally(() => setIsLoadingRewardedTrivia(false));
+    }, [bonusUnlocked, currentIndex, errorFetchingMore, isLoadingRewardedTrivia, isPro, loading, triviaList.length]);
 
     const addToHistory = async (triviaId: number) => {
         try {
@@ -449,6 +529,25 @@ export default function HomeScreen() {
         }, 200);
     };
 
+    const handleUndoSwipe = () => {
+        if (currentIndex <= 0) return;
+        const previousIndex = currentIndex - 1;
+        currentIndexRef.current = previousIndex;
+        setCurrentIndex(previousIndex);
+        saveState(previousIndex, triviaList);
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    };
+
+    const handleWatchRewardedAd = () => {
+        if (!isRewardedAdLoaded) {
+            loadRewardedAd();
+            Alert.alert('広告を準備しています', '少し待ってから、もう一度押してください。');
+            return;
+        }
+        rewardRequestPendingRef.current = true;
+        showRewardedAd();
+    };
+
     const handlePressDetails = () => {
         const item = triviaList[currentIndex];
         router.push({
@@ -488,7 +587,9 @@ export default function HomeScreen() {
         }
     };
 
-    const isLimitReached = !isPro && currentIndex >= DAILY_LIMIT;
+    const freeDailyLimit = DAILY_LIMIT + (bonusUnlocked ? REWARDED_BONUS_LIMIT : 0);
+    const isLimitReached = !isPro && currentIndex >= freeDailyLimit;
+    const canUnlockRewardedBonus = !isPro && !bonusUnlocked && currentIndex >= DAILY_LIMIT;
     const currentItem = triviaList[currentIndex];
 
     // --- New Refresh Logic ---
@@ -577,8 +678,15 @@ export default function HomeScreen() {
     return (
         <SafeAreaView style={styles.container}>
             <View style={styles.header}>
-                {/* Spacer to balance the right icon */}
-                <View style={{ width: 44 }} />
+                <Pressable
+                    style={[styles.undoButton, currentIndex <= 0 && styles.undoButtonDisabled]}
+                    onPress={handleUndoSwipe}
+                    disabled={currentIndex <= 0}
+                    accessibilityRole="button"
+                    accessibilityLabel="ひとつ前の雑学に戻る"
+                >
+                    <Ionicons name="arrow-undo" size={24} color={currentIndex > 0 ? Colors.light.primary : '#C8C8C8'} />
+                </Pressable>
                 <Text style={styles.headerTitle}>毎日雑学</Text>
 
                 {/* Info Button for Widget Setup Guide */}
@@ -627,14 +735,19 @@ export default function HomeScreen() {
                                 {errorFetchingMore ? (
                                     <>
                                         <Text style={[styles.subText, { marginTop: 16 }]}>読み込みに失敗しました。</Text>
-                                        <Pressable style={styles.upgradeButton} onPress={() => fetchMoreTrivia()}>
+                                        <Pressable
+                                            style={styles.upgradeButton}
+                                            onPress={() => fetchMoreTrivia(isPro ? 7 : REWARDED_BONUS_LIMIT)}
+                                        >
                                             <Text style={styles.upgradeText}>再試行</Text>
                                         </Pressable>
                                     </>
                                 ) : (
                                     <>
                                         <ActivityIndicator size="large" color={Colors.light.primary} />
-                                        <Text style={[styles.subText, { marginTop: 16 }]}>新しい雑学を準備中...</Text>
+                                        <Text style={[styles.subText, { marginTop: 16 }]}>
+                                            {isLoadingRewardedTrivia ? '広告特典の雑学を準備中...' : '新しい雑学を準備中...'}
+                                        </Text>
                                     </>
                                 )}
                             </View>
@@ -647,13 +760,29 @@ export default function HomeScreen() {
                     </>
                 ) : (
                     <View style={styles.finishedContainer}>
-                        <Text style={styles.finishedText}>今日の雑学は以上です！</Text>
-                        <Text style={styles.subText}>また明日見に来てください。</Text>
-                        {!isPro ? (
-                            <Pressable style={styles.upgradeButton} onPress={() => router.push('/settings')}>
-                                <Text style={styles.upgradeText}>サブスクで無制限に見る</Text>
-                            </Pressable>
-                        ) : null}
+                        {canUnlockRewardedBonus ? (
+                            <>
+                                <Ionicons name="play-circle" size={52} color={Colors.light.accent} />
+                                <Text style={styles.finishedText}>もう3つ見られます！</Text>
+                                <Text style={styles.subText}>広告を最後まで見ると、今日の雑学を3つ追加します。</Text>
+                                <Pressable style={styles.rewardedButton} onPress={handleWatchRewardedAd}>
+                                    <Ionicons name="play" size={18} color="#FFFFFF" />
+                                    <Text style={styles.rewardedButtonText}>
+                                        {isRewardedAdLoaded ? '広告を見て3つ追加' : '広告を準備する'}
+                                    </Text>
+                                </Pressable>
+                            </>
+                        ) : (
+                            <>
+                                <Text style={styles.finishedText}>今日の雑学は以上です！</Text>
+                                <Text style={styles.subText}>また明日見に来てください。</Text>
+                                {!isPro ? (
+                                    <Pressable style={styles.upgradeButton} onPress={() => router.push('/settings')}>
+                                        <Text style={styles.upgradeText}>サブスクで無制限に見る</Text>
+                                    </Pressable>
+                                ) : null}
+                            </>
+                        )}
                     </View>
                 )}
             </View>
@@ -705,6 +834,20 @@ const styles = StyleSheet.create({
         justifyContent: 'center',
         alignItems: 'center',
         position: 'relative',
+    },
+    undoButton: {
+        width: 44,
+        height: 44,
+        justifyContent: 'center',
+        alignItems: 'center',
+        borderRadius: 22,
+        backgroundColor: '#FFFFFF',
+        ...Theme.shadow.small,
+    },
+    undoButtonDisabled: {
+        opacity: 0.55,
+        shadowOpacity: 0,
+        elevation: 0,
     },
     badge: {
         position: 'absolute',
@@ -770,6 +913,22 @@ const styles = StyleSheet.create({
         color: '#8B4500', // Darker text for yellow bg
         fontWeight: 'bold',
         fontSize: 18,
+    },
+    rewardedButton: {
+        minHeight: 54,
+        paddingHorizontal: 24,
+        borderRadius: 27,
+        backgroundColor: Colors.light.primary,
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 8,
+        ...Theme.shadow.small,
+    },
+    rewardedButtonText: {
+        color: '#FFFFFF',
+        fontSize: 16,
+        fontWeight: '900',
     },
     adsContainer: {
         minHeight: BANNER_RESERVED_HEIGHT,
