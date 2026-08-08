@@ -123,15 +123,6 @@
                       "group.com.dailytrivia.app"
                     ]
                   }
-                },
-                {
-                  "bundleIdentifier": "com.dailytrivia.app.TriviaWidgetExtension",
-                  "targetName": "TriviaWidget",
-                  "entitlements": {
-                    "com.apple.security.application-groups": [
-                      "group.com.dailytrivia.app"
-                    ]
-                  }
                 }
               ]
             }

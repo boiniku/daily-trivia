@@ -1,6 +1,6 @@
 import DefaultPreference from 'react-native-default-preference';
 import { Platform } from 'react-native';
-import auth from '@react-native-firebase/auth';
+import { getAuth, getIdToken } from '@react-native-firebase/auth';
 
 const APP_GROUP_IDENTIFIER = 'group.com.dailytrivia.app';
 
@@ -17,10 +17,10 @@ export const syncTriviaToWidget = async (trivias: any[], userId?: string) => {
         }
 
         // Extract Firebase token
-        const currentUser = auth().currentUser;
+        const currentUser = getAuth().currentUser;
         if (currentUser) {
             try {
-                const idToken = await currentUser.getIdToken(false);
+                const idToken = await getIdToken(currentUser, false);
                 if (idToken) {
                     await DefaultPreference.set('firebase_token', idToken);
                 }

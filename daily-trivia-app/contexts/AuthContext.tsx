@@ -1,6 +1,14 @@
 
 import React, { createContext, useContext, useEffect, useState } from 'react';
-import auth, { FirebaseAuthTypes } from '@react-native-firebase/auth';
+import {
+    AppleAuthProvider,
+    FirebaseAuthTypes,
+    getAuth,
+    onAuthStateChanged,
+    signInAnonymously,
+    signInWithCredential,
+    signOut as firebaseSignOut,
+} from '@react-native-firebase/auth';
 import * as AppleAuthentication from 'expo-apple-authentication';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Crypto from 'expo-crypto';
@@ -20,6 +28,7 @@ interface AuthContextType {
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
+const firebaseAuth = getAuth();
 
 const withTimeout = async <T,>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> => {
     let timeoutId: ReturnType<typeof setTimeout> | null = null;
@@ -41,13 +50,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const { logIn, logOut: rcLogOut } = useRevenueCat(); // Destructure logIn/logOut
 
     // Handle user state changes
-    function onAuthStateChanged(user: FirebaseAuthTypes.User | null) {
+    function handleAuthStateChanged(user: FirebaseAuthTypes.User | null) {
         setUser(user);
         if (loading) setLoading(false);
     }
 
     useEffect(() => {
-        const subscriber = auth().onAuthStateChanged(onAuthStateChanged);
+        const subscriber = onAuthStateChanged(firebaseAuth, handleAuthStateChanged);
         // We wait for Firebase's initial onAuthStateChanged event instead of manually calling initializeUser().
         // This prevents an unnecessary anonymous signin from taking place before the cached user is parsed.
         return subscriber; // unsubscribe on unmount
@@ -77,9 +86,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             await syncUserIdToStorage(user.uid);
         } else {
             // Guest mode: We need a Firebase Token for the backend, so use Anonymous Auth
-            if (!auth().currentUser) {
+            if (!firebaseAuth.currentUser) {
                 try {
-                    const anonCred = await withTimeout(auth().signInAnonymously(), 2500, 'Anonymous sign-in');
+                    const anonCred = await withTimeout(signInAnonymously(firebaseAuth), 2500, 'Anonymous sign-in');
                     setUserId(anonCred.user.uid);
                     await syncUserIdToStorage(anonCred.user.uid);
                 } catch (e) {
@@ -97,7 +106,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             } else {
                 // If currentUser exists but `user` state was null (race condition or weird state),
                 // just use the current anonymous user's uid
-                setUserId(auth().currentUser!.uid);
+                setUserId(firebaseAuth.currentUser!.uid);
             }
         }
     };
@@ -141,13 +150,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
             // Create a Firebase credential with the token
             // Pass the RAW nonce to Firebase (it will verify against the hash in the token)
-            const firebaseCredential = auth.AppleAuthProvider.credential(identityToken, rawNonce);
+            const firebaseCredential = AppleAuthProvider.credential(identityToken, rawNonce);
 
             // Save guest ID before signing in
             const guestUserId = await AsyncStorage.getItem('user_id');
 
             // sign the node in with the credential
-            const userCredential = await auth().signInWithCredential(firebaseCredential);
+            const userCredential = await signInWithCredential(firebaseAuth, firebaseCredential);
             const authUser = userCredential.user;
 
             console.log("Apple Sign-In success:", authUser.uid);
@@ -207,7 +216,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const signOut = async () => {
         try {
             await AsyncStorage.removeItem('triviaState');
-            await auth().signOut();
+            await firebaseSignOut(firebaseAuth);
             await rcLogOut(); // Sync RevenueCat logout
             // User state becomes null -> useEffect triggers updateEffectiveUserId -> Generates new Guest ID
         } catch (e) {

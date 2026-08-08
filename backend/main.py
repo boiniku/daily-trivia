@@ -324,8 +324,10 @@ def get_todays_trivia(
                      is_locked=False
                  )
                  db.add(history_collection)
-                 db.commit()
-                 db.refresh(history_collection)
+                 # Keep the RLS context and all related writes in one transaction.
+                 # SET LOCAL is cleared by commit, which made this collection
+                 # invisible to app_user during the following refresh/query.
+                 db.flush()
 
              # We only create DailyAssignments for up to the first 3 items
              assignable_trivias = final_trivias[:3]
@@ -364,6 +366,7 @@ def get_todays_trivia(
 
     except Exception as e:
         import traceback
+        db.rollback()
         error_msg = traceback.format_exc()
         log(f"ERROR: {error_msg}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -465,8 +468,9 @@ def get_widget_trivia(
                 is_locked=False
             )
             db.add(history_collection)
-            db.commit()
-            db.refresh(history_collection)
+            # Keep SET LOCAL app.current_user_id active until assignments and
+            # history items have been written in the same transaction.
+            db.flush()
 
         for t in selected_trivias:
             exists = db.query(DailyAssignment).filter(
@@ -498,6 +502,7 @@ def get_widget_trivia(
 
     except Exception as e:
         import traceback
+        db.rollback()
         print(f"Widget endpoint error: {traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=str(e))
     finally:

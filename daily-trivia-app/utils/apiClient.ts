@@ -1,5 +1,7 @@
-import auth from '@react-native-firebase/auth';
+import { getAuth, getIdToken, signInAnonymously } from '@react-native-firebase/auth';
 import { Config } from '../constants/Config';
+
+const firebaseAuth = getAuth();
 
 const withTimeout = async <T,>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> => {
     let timeoutId: ReturnType<typeof setTimeout> | null = null;
@@ -29,14 +31,14 @@ export async function fetchWithToken(url: string, options: RequestInit = {}) {
     };
 
     // 2. Try to get token from Firebase Auth
-    let currentUser = auth().currentUser;
+    let currentUser = firebaseAuth.currentUser;
 
     // If there's no current user, it might be a fresh install that hasn't finished anon auth
     // Let's force an anonymous sign-in here just in case, to ensure we have a token
     if (!currentUser) {
         try {
             console.log("fetchWithToken: No currentUser found, attempting anonymous sign-in...");
-            const userCred = await withTimeout(auth().signInAnonymously(), 2500, 'Anonymous sign-in');
+            const userCred = await withTimeout(signInAnonymously(firebaseAuth), 2500, 'Anonymous sign-in');
             currentUser = userCred.user;
         } catch (error) {
             console.error("fetchWithToken: Failed to sign in anonymously:", error);
@@ -46,7 +48,7 @@ export async function fetchWithToken(url: string, options: RequestInit = {}) {
     if (currentUser) {
         try {
             // Force refresh is false (fetches from cache if valid)
-            const idToken = await withTimeout(currentUser.getIdToken(false), 2000, 'Firebase token fetch');
+            const idToken = await withTimeout(getIdToken(currentUser, false), 2000, 'Firebase token fetch');
             if (idToken) {
                 headers['Authorization'] = `Bearer ${idToken}`;
             } else {
