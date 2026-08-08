@@ -34,6 +34,8 @@ const interstitial = InterstitialAd.createForAdRequest(INTERSTITIAL_ID, {
     requestNonPersonalizedAdsOnly: true,
 });
 
+const HISTORY_PAGE_SIZE = 50;
+
 export default function CollectionDetailsScreen() {
     const { id, title } = useLocalSearchParams();
     const router = useRouter();
@@ -41,11 +43,10 @@ export default function CollectionDetailsScreen() {
     const [items, setItems] = useState<TriviaItem[]>([]);
     const [filteredItems, setFilteredItems] = useState<TriviaItem[]>([]);
     const [loading, setLoading] = useState(true);
-    const [loadingMore, setLoadingMore] = useState(false);
     const [searchText, setSearchText] = useState('');
     const [debouncedSearch, setDebouncedSearch] = useState('');
     const [total, setTotal] = useState(0);
-    const [hasMore, setHasMore] = useState(false);
+    const [currentPage, setCurrentPage] = useState(1);
     const searchRequestId = useRef(0);
     const { isPro } = useRevenueCat();
 
@@ -183,19 +184,18 @@ export default function CollectionDetailsScreen() {
         }
     };
 
-    const fetchHistoryItems = async (reset: boolean) => {
+    const fetchHistoryItems = async () => {
         if (!normalizedCollectionId) return;
-        if (!reset && (loadingMore || !hasMore)) return;
 
-        const requestId = reset ? ++searchRequestId.current : searchRequestId.current;
-        const offset = reset ? 0 : items.length;
-        reset ? setLoading(true) : setLoadingMore(true);
+        const requestId = ++searchRequestId.current;
+        const offset = (currentPage - 1) * HISTORY_PAGE_SIZE;
+        setLoading(true);
 
         try {
             const params = [
                 `q=${encodeURIComponent(debouncedSearch.trim())}`,
                 `sort=${encodeURIComponent(sortType)}`,
-                `limit=30`,
+                `limit=${HISTORY_PAGE_SIZE}`,
                 `offset=${offset}`,
             ];
             if (selectedCategory) {
@@ -209,24 +209,18 @@ export default function CollectionDetailsScreen() {
             if (requestId !== searchRequestId.current) return;
 
             const nextItems = normalizeTriviaItems(rawData?.items);
-            setItems((current) => {
-                if (reset) return nextItems;
-                const existingIds = new Set(current.map((item) => item.id));
-                return [...current, ...nextItems.filter((item) => !existingIds.has(item.id))];
-            });
+            setItems(nextItems);
             setCategories(Array.isArray(rawData?.categories)
                 ? rawData.categories.filter((value: unknown): value is string => typeof value === 'string' && value.length > 0)
                 : []);
             setTotal(Number.isFinite(Number(rawData?.total)) ? Number(rawData.total) : nextItems.length);
-            setHasMore(Boolean(rawData?.has_more));
         } catch (error) {
-            if (reset && requestId === searchRequestId.current) {
+            if (requestId === searchRequestId.current) {
                 Alert.alert('エラー', '検索結果の取得に失敗しました');
             }
         } finally {
             if (requestId === searchRequestId.current) {
                 setLoading(false);
-                setLoadingMore(false);
             }
         }
     };
@@ -239,11 +233,11 @@ export default function CollectionDetailsScreen() {
     useFocusEffect(
         useCallback(() => {
             if (isHistoryCollection) {
-                fetchHistoryItems(true);
+                fetchHistoryItems();
             } else {
                 fetchCollectionItems();
             }
-        }, [normalizedCollectionId, isHistoryCollection, debouncedSearch, selectedCategory, sortType])
+        }, [normalizedCollectionId, isHistoryCollection, debouncedSearch, selectedCategory, sortType, currentPage])
     );
 
     const applySortAndFilter = (cat: string | null, sort: 'default' | 'total' | 'user', data: TriviaItem[]) => {
@@ -268,14 +262,23 @@ export default function CollectionDetailsScreen() {
     }, [items, selectedCategory, sortType, isHistoryCollection]);
 
     const handleFilter = (category: string | null) => {
+        setCurrentPage(1);
         setSelectedCategory(category);
         if (!isHistoryCollection) applySortAndFilter(category, sortType, items);
     };
 
     const handleSort = (sort: 'default' | 'total' | 'user') => {
+        setCurrentPage(1);
         setSortType(sort);
         if (!isHistoryCollection) applySortAndFilter(selectedCategory, sort, items);
     };
+
+    const totalPages = Math.max(1, Math.ceil(total / HISTORY_PAGE_SIZE));
+    const firstVisiblePage = Math.max(1, Math.min(currentPage - 2, totalPages - 4));
+    const visiblePages = Array.from(
+        { length: Math.min(5, totalPages) },
+        (_, index) => firstVisiblePage + index,
+    );
 
     const renderItem = ({ item }: { item: TriviaItem }) => (
         <Pressable
@@ -329,7 +332,10 @@ export default function CollectionDetailsScreen() {
                         <Ionicons name="search" size={20} color={Colors.light.subtext} />
                         <TextInput
                             value={searchText}
-                            onChangeText={setSearchText}
+                            onChangeText={(value) => {
+                                setCurrentPage(1);
+                                setSearchText(value);
+                            }}
                             placeholder="見た雑学を検索"
                             placeholderTextColor={Colors.light.subtext}
                             style={styles.searchInput}
@@ -338,7 +344,10 @@ export default function CollectionDetailsScreen() {
                             maxLength={100}
                         />
                         {searchText.length > 0 && (
-                            <Pressable onPress={() => setSearchText('')} hitSlop={10}>
+                            <Pressable onPress={() => {
+                                setCurrentPage(1);
+                                setSearchText('');
+                            }} hitSlop={10}>
                                 <Ionicons name="close-circle" size={20} color={Colors.light.subtext} />
                             </Pressable>
                         )}
@@ -400,28 +409,50 @@ export default function CollectionDetailsScreen() {
                     <ActivityIndicator size="large" color={Colors.light.primary} />
                 </View>
             ) : (
-                <FlatList
-                    data={filteredItems}
-                    renderItem={renderItem}
-                    keyExtractor={item => String(item.id)}
-                    contentContainerStyle={styles.listContent}
-                    onEndReached={() => {
-                        if (isHistoryCollection) fetchHistoryItems(false);
-                    }}
-                    onEndReachedThreshold={0.4}
-                    ListFooterComponent={loadingMore
-                        ? <ActivityIndicator style={styles.footerLoader} color={Colors.light.primary} />
-                        : null}
-                    ListEmptyComponent={
-                        <View style={styles.emptyContainer}>
-                            <Text style={styles.emptyText}>
-                                {isHistoryCollection && debouncedSearch.trim()
-                                    ? '検索に一致する雑学はありません'
-                                    : 'まだ保存された雑学はありません'}
-                            </Text>
+                <View style={styles.listArea}>
+                    <FlatList
+                        data={filteredItems}
+                        renderItem={renderItem}
+                        keyExtractor={item => String(item.id)}
+                        contentContainerStyle={styles.listContent}
+                        ListEmptyComponent={
+                            <View style={styles.emptyContainer}>
+                                <Text style={styles.emptyText}>
+                                    {isHistoryCollection && debouncedSearch.trim()
+                                        ? '検索に一致する雑学はありません'
+                                        : 'まだ保存された雑学はありません'}
+                                </Text>
+                            </View>
+                        }
+                    />
+                    {isHistoryCollection && total > 0 && (
+                        <View style={styles.pagination}>
+                            <Pressable
+                                style={[styles.pageButton, currentPage === 1 && styles.pageButtonDisabled]}
+                                disabled={currentPage === 1}
+                                onPress={() => setCurrentPage((page) => Math.max(1, page - 1))}
+                            >
+                                <Ionicons name="chevron-back" size={18} color={currentPage === 1 ? '#BBB' : Colors.light.primary} />
+                            </Pressable>
+                            {visiblePages.map((page) => (
+                                <Pressable
+                                    key={page}
+                                    style={[styles.pageButton, currentPage === page && styles.pageButtonActive]}
+                                    onPress={() => setCurrentPage(page)}
+                                >
+                                    <Text style={[styles.pageButtonText, currentPage === page && styles.pageButtonTextActive]}>{page}</Text>
+                                </Pressable>
+                            ))}
+                            <Pressable
+                                style={[styles.pageButton, currentPage === totalPages && styles.pageButtonDisabled]}
+                                disabled={currentPage === totalPages}
+                                onPress={() => setCurrentPage((page) => Math.min(totalPages, page + 1))}
+                            >
+                                <Ionicons name="chevron-forward" size={18} color={currentPage === totalPages ? '#BBB' : Colors.light.primary} />
+                            </Pressable>
                         </View>
-                    }
-                />
+                    )}
+                </View>
             )}
         </SafeAreaView>
     );
@@ -458,7 +489,10 @@ const styles = StyleSheet.create({
     },
     listContent: {
         padding: 20,
-        paddingBottom: 100,
+        paddingBottom: 20,
+    },
+    listArea: {
+        flex: 1,
     },
     searchSection: {
         flexDirection: 'row',
@@ -492,8 +526,40 @@ const styles = StyleSheet.create({
         fontSize: 13,
         fontWeight: '700',
     },
-    footerLoader: {
-        marginVertical: 16,
+    pagination: {
+        minHeight: 62,
+        flexDirection: 'row',
+        justifyContent: 'center',
+        alignItems: 'center',
+        gap: 7,
+        paddingHorizontal: 12,
+        paddingBottom: 10,
+        backgroundColor: Colors.light.background,
+    },
+    pageButton: {
+        width: 36,
+        height: 36,
+        borderRadius: 18,
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: Colors.light.cardBackground,
+        borderWidth: 1,
+        borderColor: Colors.light.border,
+    },
+    pageButtonActive: {
+        backgroundColor: Colors.light.primary,
+        borderColor: Colors.light.primary,
+    },
+    pageButtonDisabled: {
+        opacity: 0.55,
+    },
+    pageButtonText: {
+        color: Colors.light.primary,
+        fontSize: 14,
+        fontWeight: '800',
+    },
+    pageButtonTextActive: {
+        color: 'white',
     },
     itemContainer: {
         flexDirection: 'row',
