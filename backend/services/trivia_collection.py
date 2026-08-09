@@ -211,7 +211,7 @@ Webサイトは題材を探すための情報源にすぎません。出力対�
       "map_prefecture": "都道府県。場所に関係しない雑学なら空文字",
       "map_latitude": 35.6812,
       "map_longitude": 139.7671,
-      "map_radius": 300,
+      "map_radius": 500,
       "map_hint": ""
     }}
   ]
@@ -222,7 +222,7 @@ Webサイトは題材を探すための情報源にすぎません。出力対�
 - 場所に関係しない雑学では、map_address/map_prefecture/map_hintは空文字、map_latitude/map_longitude/map_radiusはnullにする
 - map_addressはユーザーが現地へ向かえる具体的な施設名や住所にする
 - 緯度経度はその地点の代表座標にする
-- map_radiusは通常300、広い公園や城跡などは500〜800にする
+- map_radiusは通常500、広い公園や城跡などは500〜800にする
 {"- 地図用収集モードでは、場所情報が欠ける候補は出力しない" if map_mode else ""}
 
 【除外リスト】

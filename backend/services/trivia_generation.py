@@ -47,7 +47,7 @@ def build_generation_prompt(
 - map_prefecture: 都道府県。場所に関係しない雑学なら空文字
 - map_latitude: 緯度。場所に関係しない雑学なら null
 - map_longitude: 経度。場所に関係しない雑学なら null
-- map_radius: 解放半径メートル。場所に関係しない雑学なら null。通常は300
+- map_radius: 解放半径メートル。場所に関係しない雑学なら null。通常は500
 - map_hint: 空文字
 
 URLを提示できない事実は生成しないでください。同じ事実の言い換えは禁止です。

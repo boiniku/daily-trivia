@@ -439,7 +439,7 @@ def _map_trivia_to_admin_spot(trivia: MapTrivia) -> dict:
         "explanation": trivia.explanation or "",
         "latitude": float(trivia.map_latitude),
         "longitude": float(trivia.map_longitude),
-        "unlockRadiusMeters": int(trivia.map_radius or 300),
+        "unlockRadiusMeters": int(trivia.map_radius or 500),
         "isUnlocked": False,
         "unlockedAt": None,
         "prefecture": trivia.map_prefecture or "",
@@ -576,7 +576,7 @@ def render_trivia_map_admin():
         "解放半径（メートル）",
         min_value=10,
         max_value=5000,
-        value=int(spot.get("unlockRadiusMeters") or 300),
+        value=int(spot.get("unlockRadiusMeters") or 500),
         step=10,
         key=f"map_radius_{original_id}",
     )
@@ -654,7 +654,7 @@ with tab1:
                     map_spot_id = st.text_input("MAP ID（空欄なら自動生成）", placeholder="tokyo_001")
                     map_longitude = st.number_input("経度", min_value=-180.0, max_value=180.0, value=139.7671, format="%.6f")
                 map_address = st.text_input("住所・施設名", placeholder="東京都港区芝公園4-2-8 / 東京タワー")
-                map_radius = st.number_input("解放半径（メートル）", min_value=10, max_value=5000, value=300, step=10)
+                map_radius = st.number_input("解放半径（メートル）", min_value=10, max_value=5000, value=500, step=10)
                 map_hint = ""
             else:
                 map_address = ""
@@ -662,7 +662,7 @@ with tab1:
                 map_spot_id = ""
                 map_latitude = 0.0
                 map_longitude = 0.0
-                map_radius = 300
+                map_radius = 500
                 map_hint = ""
         
         with col2:
@@ -876,7 +876,7 @@ with tab2:
                                 "map_prefecture": "都道府県。場所に関係しない雑学なら空文字",
                                 "map_latitude": 35.6812,
                                 "map_longitude": 139.7671,
-                                "map_radius": 300,
+                                "map_radius": 500,
                                 "map_hint": ""
                             }}
                         ]
@@ -1094,7 +1094,7 @@ with tab2:
                                     key=f"ai_map_longitude_{i}",
                                 )
                             a_map_address = st.text_input("住所・施設名", value=item.get("map_address") or "", key=f"ai_map_address_{i}")
-                            a_map_radius = st.number_input("解放半径（メートル）", min_value=10, max_value=5000, value=int(item.get("map_radius") or 300), step=10, key=f"ai_map_radius_{i}")
+                            a_map_radius = st.number_input("解放半径（メートル）", min_value=10, max_value=5000, value=int(item.get("map_radius") or 500), step=10, key=f"ai_map_radius_{i}")
                             a_map_hint = ""
                         else:
                             a_map_prefecture = ""
@@ -1102,7 +1102,7 @@ with tab2:
                             a_map_spot_id = ""
                             a_map_longitude = 0.0
                             a_map_address = ""
-                            a_map_radius = 300
+                            a_map_radius = 500
                             a_map_hint = ""
                         
                         btn_col1, btn_col2 = st.columns(2)
@@ -1361,7 +1361,7 @@ with tab3:
                         e_map_spot_id = st.text_input("MAP ID（空欄なら自動生成）", key=f"edit_map_spot_id_{trivia.id}", placeholder="tokyo_001")
                         e_map_longitude = st.number_input("経度", min_value=-180.0, max_value=180.0, value=139.7671, format="%.6f", key=f"edit_map_longitude_{trivia.id}")
                     e_map_address = st.text_input("住所・施設名", key=f"edit_map_address_{trivia.id}", placeholder="東京都港区芝公園4-2-8 / 東京タワー")
-                    e_map_radius = st.number_input("解放半径（メートル）", min_value=10, max_value=5000, value=300, step=10, key=f"edit_map_radius_{trivia.id}")
+                    e_map_radius = st.number_input("解放半径（メートル）", min_value=10, max_value=5000, value=500, step=10, key=f"edit_map_radius_{trivia.id}")
                     e_map_hint = ""
                     map_register_submit = st.button("雑学MAPに登録", key=f"map_register_{trivia.id}")
 

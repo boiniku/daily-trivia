@@ -188,7 +188,7 @@ def get_map_trivia(db: Session = Depends(get_db)):
             "explanation": item.explanation or "",
             "latitude": float(item.map_latitude),
             "longitude": float(item.map_longitude),
-            "unlockRadiusMeters": int(item.map_radius or 300),
+            "unlockRadiusMeters": int(item.map_radius or 500),
             "isUnlocked": False,
             "unlockedAt": None,
             "prefecture": item.map_prefecture,

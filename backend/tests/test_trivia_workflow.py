@@ -236,7 +236,7 @@ class TriviaWorkflowTests(unittest.TestCase):
             "map_address": "東京タワー / 東京都港区芝公園4-2-8",
             "map_latitude": 35.658581,
             "map_longitude": 139.745433,
-            "map_radius": 300,
+            "map_radius": 500,
         })
 
         message = _approve_candidate_from_line(self.db, candidate.id, "line-user")
@@ -250,7 +250,7 @@ class TriviaWorkflowTests(unittest.TestCase):
         self.assertEqual(published.map_address, "東京タワー / 東京都港区芝公園4-2-8")
         self.assertAlmostEqual(published.map_latitude, 35.658581)
         self.assertAlmostEqual(published.map_longitude, 139.745433)
-        self.assertEqual(published.map_radius, 300)
+        self.assertEqual(published.map_radius, 500)
 
     def test_delete_published_trivia_requires_unlinking_candidate(self):
         candidate = create_candidate(self.db, {
@@ -387,7 +387,7 @@ class LineSecurityTests(unittest.TestCase):
             map_prefecture="東京都",
             map_latitude=35.658581,
             map_longitude=139.745433,
-            map_radius=300,
+            map_radius=500,
         )
         incomplete = complete.model_copy(update={"map_address": ""})
 
@@ -765,7 +765,7 @@ class MobileEditorIntegrationTests(unittest.TestCase):
             "map_address": "東京タワー / 東京都港区芝公園4-2-8",
             "map_latitude": 35.658581,
             "map_longitude": 139.745433,
-            "map_radius": 300,
+            "map_radius": 500,
         })
 
         self.assertEqual(response.status_code, 200)
@@ -788,7 +788,7 @@ class MobileEditorIntegrationTests(unittest.TestCase):
             "map_address": "東京タワー / 東京都港区芝公園4-2-8",
             "map_latitude": 35.658581,
             "map_longitude": 139.745433,
-            "map_radius": 300,
+            "map_radius": 500,
         })
         token = make_editor_token(candidate.id)
 

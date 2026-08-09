@@ -49,7 +49,7 @@ def migrate():
                 )
                 SELECT
                     t.title, t.content, t.explanation, t.source, t.category, t.image_url,
-                    t.map_address, t.map_prefecture, t.map_latitude, t.map_longitude, COALESCE(t.map_radius, 300), t.map_hint
+                    t.map_address, t.map_prefecture, t.map_latitude, t.map_longitude, COALESCE(t.map_radius, 500), t.map_hint
                 FROM trivia t
                 WHERE t.map_address IS NOT NULL
                   AND t.map_prefecture IS NOT NULL
