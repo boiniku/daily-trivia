@@ -80,9 +80,9 @@ TRIVIA_DISCOVERY_DOMAINS=example.com,zatsugaku.example.jp
 
 ## データベース
 
-Render起動時に`migrate_trivia_candidates.py`が実行され、候補テーブルへ必要な列が追加されます。ローカルで先に反映する場合:
+Render起動時に`scripts/migrations/migrate_trivia_candidates.py`が実行され、候補テーブルへ必要な列が追加されます。ローカルで先に反映する場合:
 
 ```powershell
-cd backend
-python migrate_trivia_candidates.py
+cd apps/api
+python -m scripts.migrations.migrate_trivia_candidates
 ```

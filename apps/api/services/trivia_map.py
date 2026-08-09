@@ -7,7 +7,7 @@ from datetime import datetime
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PROJECT_DIR = os.path.dirname(BASE_DIR)
-TRIVIA_SPOTS_PATH = os.path.join(PROJECT_DIR, "daily-trivia-app", "data", "triviaSpots.ts")
+TRIVIA_SPOTS_PATH = os.path.join(PROJECT_DIR, "mobile", "data", "triviaSpots.ts")
 
 
 def slugify_spot_part(value: str) -> str:

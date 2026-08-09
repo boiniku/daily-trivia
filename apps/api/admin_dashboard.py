@@ -411,11 +411,11 @@ def get_db():
 db = next(get_db())
 try:
     db.execute(text("SELECT 1"))
-    from migrate_trivia_candidates import migrate as migrate_trivia_candidates
+    from scripts.migrations.migrate_trivia_candidates import migrate as migrate_trivia_candidates
     migrate_trivia_candidates()
 except OperationalError:
     st.error("データベースに接続できません。NeonのDATABASE_URLのパスワードが違う、または古い可能性があります。")
-    st.info("Neonダッシュボードで現在の接続文字列をコピーし、backend/.env の DATABASE_URL を更新してから Streamlit を再起動してください。")
+    st.info("Neonダッシュボードで現在の接続文字列をコピーし、apps/api/.env の DATABASE_URL を更新してから Streamlit を再起動してください。")
     st.stop()
 except SQLAlchemyError as e:
     st.error(f"データベース接続の確認に失敗しました: {e}")

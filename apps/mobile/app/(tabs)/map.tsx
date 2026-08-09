@@ -19,6 +19,16 @@ const JAPAN_REGION = {
     longitudeDelta: 14,
 };
 
+const USER_LOCATION_REGION_DELTA = 0.05;
+const PREFECTURE_CLUSTER_LATITUDE_DELTA = 2.2;
+
+type PrefectureSummary = {
+    prefecture: string;
+    latitude: number;
+    longitude: number;
+    spots: TriviaSpot[];
+};
+
 const formatDistance = (distance?: number) => {
     if (distance == null) return '距離を取得中';
     if (distance < 1000) return `現在地から約${Math.round(distance)}m`;
@@ -47,6 +57,8 @@ export default function TriviaMapScreen() {
     const insets = useSafeAreaInsets();
     const mapRef = useRef<MapView | null>(null);
     const spotsRef = useRef<TriviaSpot[]>([]);
+    const hasCenteredOnUserRef = useRef(false);
+    const isClusterZoomingRef = useRef(false);
     const [spots, setSpots] = useState<TriviaSpot[]>([]);
     const [selectedSpotId, setSelectedSpotId] = useState<string | null>(null);
     const [userLocation, setUserLocation] = useState<Coordinates | null>(null);
@@ -59,6 +71,8 @@ export default function TriviaMapScreen() {
     const [unlockPulseId, setUnlockPulseId] = useState<string | null>(null);
     const [isPreviewVisible, setIsPreviewVisible] = useState(false);
     const [isDetailVisible, setIsDetailVisible] = useState(false);
+    const [isMapReady, setIsMapReady] = useState(false);
+    const [mapLatitudeDelta, setMapLatitudeDelta] = useState(JAPAN_REGION.latitudeDelta);
 
     const selectedSpot = useMemo(
         () => spots.find((spot) => spot.id === selectedSpotId) ?? null,
@@ -80,7 +94,7 @@ export default function TriviaMapScreen() {
         [activeRegion, availablePrefectures]
     );
 
-    const visibleSpots = useMemo(() => {
+    const filteredSpots = useMemo(() => {
         return spots.filter((spot) => {
             const spotPrefectures = getPrefecturesFromLabel(spot.prefecture);
             if (selectedPrefecture !== 'すべて') {
@@ -95,6 +109,38 @@ export default function TriviaMapScreen() {
             return true;
         });
     }, [activeRegion, nearbyOnly, selectedPrefecture, spots, userLocation]);
+
+    const visibleSpotIds = useMemo(
+        () => new Set(filteredSpots.map((spot) => spot.id)),
+        [filteredSpots]
+    );
+
+    const prefectureSummaries = useMemo<PrefectureSummary[]>(() => {
+        const grouped = new Map<string, TriviaSpot[]>();
+        spots.forEach((spot) => {
+            getPrefecturesFromLabel(spot.prefecture).forEach((prefecture) => {
+                const prefectureSpots = grouped.get(prefecture) ?? [];
+                prefectureSpots.push(spot);
+                grouped.set(prefecture, prefectureSpots);
+            });
+        });
+
+        return Array.from(grouped.entries()).map(([prefecture, prefectureSpots]) => ({
+            prefecture,
+            latitude: prefectureSpots.reduce((sum, spot) => sum + spot.latitude, 0) / prefectureSpots.length,
+            longitude: prefectureSpots.reduce((sum, spot) => sum + spot.longitude, 0) / prefectureSpots.length,
+            spots: prefectureSpots,
+        }));
+    }, [spots]);
+
+    const showPrefecturePins = mapLatitudeDelta >= PREFECTURE_CLUSTER_LATITUDE_DELTA;
+
+    // Keep native MapKit children mounted while filters change. Rapidly adding
+    // and removing Marker/Circle children can crash react-native-maps on iOS.
+    const selectedCircleCenter = selectedSpot
+        ? { latitude: selectedSpot.latitude, longitude: selectedSpot.longitude }
+        : { latitude: JAPAN_REGION.latitude, longitude: JAPAN_REGION.longitude };
+    const selectedCircleRadius = selectedSpot ? Math.max(1, selectedSpot.unlockRadiusMeters) : 1;
 
     const collectionSpots = useMemo(
         () => spots.filter((spot) => spot.isUnlocked).sort((a, b) => (b.unlockedAt?.getTime() ?? 0) - (a.unlockedAt?.getTime() ?? 0)),
@@ -150,7 +196,7 @@ export default function TriviaMapScreen() {
                 if (!isMounted) return;
 
                 setTriviaSpots(hydrated);
-                setSelectedSpotId(hydrated[0]?.id ?? null);
+                setSelectedSpotId(null);
 
                 TriviaNotificationManager.requestPermission().catch((error) => {
                     console.error('Trivia map notification permission failed:', error);
@@ -197,6 +243,27 @@ export default function TriviaMapScreen() {
     }, []);
 
     useEffect(() => {
+        if (!isMapReady || !userLocation || hasCenteredOnUserRef.current) return;
+
+        const frame = requestAnimationFrame(() => {
+            const map = mapRef.current;
+            if (!map) return;
+            map.animateToRegion(
+                {
+                    latitude: userLocation.latitude,
+                    longitude: userLocation.longitude,
+                    latitudeDelta: USER_LOCATION_REGION_DELTA,
+                    longitudeDelta: USER_LOCATION_REGION_DELTA,
+                },
+                550
+            );
+            hasCenteredOnUserRef.current = true;
+        });
+
+        return () => cancelAnimationFrame(frame);
+    }, [isMapReady, userLocation]);
+
+    useEffect(() => {
         if (!selectedSpot) return;
         mapRef.current?.animateToRegion(
             {
@@ -211,15 +278,35 @@ export default function TriviaMapScreen() {
 
     const moveToCurrentLocation = () => {
         if (!userLocation) return;
+        hasCenteredOnUserRef.current = true;
         mapRef.current?.animateToRegion(
             {
                 latitude: userLocation.latitude,
                 longitude: userLocation.longitude,
-                latitudeDelta: 0.025,
-                longitudeDelta: 0.025,
+                latitudeDelta: USER_LOCATION_REGION_DELTA,
+                longitudeDelta: USER_LOCATION_REGION_DELTA,
             },
             450
         );
+    };
+
+    const selectPrefectureSummary = (summary: PrefectureSummary) => {
+        if (isClusterZoomingRef.current) return;
+        isClusterZoomingRef.current = true;
+
+        // Let the native marker press finish before changing the map region.
+        // Hiding the pressed marker during its own iOS event can crash MapKit.
+        requestAnimationFrame(() => {
+            mapRef.current?.animateToRegion(
+                {
+                    latitude: summary.latitude,
+                    longitude: summary.longitude,
+                    latitudeDelta: 0.8,
+                    longitudeDelta: 0.8,
+                },
+                450
+            );
+        });
     };
 
     const selectFromCollection = (spot: TriviaSpot) => {
@@ -492,23 +579,60 @@ export default function TriviaMapScreen() {
                         provider={Platform.OS === 'android' ? PROVIDER_GOOGLE : undefined}
                         showsUserLocation={locationStatus === 'granted'}
                         showsMyLocationButton={false}
+                        onMapReady={() => setIsMapReady(true)}
+                        onRegionChangeComplete={(region) => {
+                            setMapLatitudeDelta(region.latitudeDelta);
+                            isClusterZoomingRef.current = false;
+                        }}
                     >
-                        {visibleSpots.map((spot) => (
-                            <Marker
-                                key={spot.id}
-                                coordinate={{ latitude: spot.latitude, longitude: spot.longitude }}
-                                pinColor={getPinColor(spot)}
-                                onPress={() => selectSpot(spot)}
-                            />
-                        ))}
-                        {selectedSpot && (
-                            <Circle
-                                center={{ latitude: selectedSpot.latitude, longitude: selectedSpot.longitude }}
-                                radius={selectedSpot.unlockRadiusMeters}
-                                strokeColor="rgba(230, 0, 18, 0.45)"
-                                fillColor="rgba(230, 0, 18, 0.08)"
-                            />
-                        )}
+                        {spots.map((spot) => {
+                            const isVisible = !showPrefecturePins && visibleSpotIds.has(spot.id);
+                            return (
+                                <Marker
+                                    key={spot.id}
+                                    coordinate={{ latitude: spot.latitude, longitude: spot.longitude }}
+                                    pinColor={getPinColor(spot)}
+                                    opacity={isVisible ? 1 : 0}
+                                    tappable={isVisible}
+                                    zIndex={isVisible ? 1 : 0}
+                                    onPress={() => {
+                                        if (isVisible) selectSpot(spot);
+                                    }}
+                                />
+                            );
+                        })}
+                        {prefectureSummaries.map((summary) => {
+                            const summarySpots = summary.spots.filter((spot) => visibleSpotIds.has(spot.id));
+                            const totalCount = summarySpots.length;
+                            const unlockedCount = summarySpots.filter((spot) => spot.isUnlocked).length;
+                            const isVisible = showPrefecturePins && totalCount > 0;
+
+                            return (
+                                <Marker
+                                    key={`prefecture-${summary.prefecture}`}
+                                    coordinate={{ latitude: summary.latitude, longitude: summary.longitude }}
+                                    anchor={{ x: 0.5, y: 0.5 }}
+                                    opacity={isVisible ? 1 : 0}
+                                    tappable={isVisible}
+                                    stopPropagation
+                                    zIndex={isVisible ? 2 : 0}
+                                    onPress={() => {
+                                        if (isVisible) selectPrefectureSummary(summary);
+                                    }}
+                                >
+                                    <View style={styles.prefectureMarker}>
+                                        <Text style={styles.prefectureMarkerLabel}>{summary.prefecture}</Text>
+                                        <Text style={styles.prefectureMarkerCount}>{`${unlockedCount}/${totalCount}`}</Text>
+                                    </View>
+                                </Marker>
+                            );
+                        })}
+                        <Circle
+                            center={selectedCircleCenter}
+                            radius={selectedCircleRadius}
+                            strokeColor={selectedSpot ? 'rgba(230, 0, 18, 0.45)' : 'rgba(0, 0, 0, 0)'}
+                            fillColor={selectedSpot ? 'rgba(230, 0, 18, 0.08)' : 'rgba(0, 0, 0, 0)'}
+                        />
                     </MapView>
 
                     {isLoading && (
@@ -748,6 +872,32 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         justifyContent: 'center',
         ...Theme.shadow.medium,
+    },
+    prefectureMarker: {
+        minWidth: 58,
+        minHeight: 44,
+        paddingHorizontal: 9,
+        paddingVertical: 5,
+        borderRadius: 16,
+        backgroundColor: '#FFFFFF',
+        alignItems: 'center',
+        justifyContent: 'center',
+        borderWidth: 2,
+        borderColor: Colors.light.primary,
+        ...Theme.shadow.small,
+    },
+    prefectureMarkerLabel: {
+        fontSize: 10,
+        lineHeight: 13,
+        fontWeight: '900',
+        color: Colors.light.text,
+    },
+    prefectureMarkerCount: {
+        marginTop: 1,
+        fontSize: 14,
+        lineHeight: 17,
+        fontWeight: '900',
+        color: Colors.light.primary,
     },
     previewSheet: {
         position: 'absolute',

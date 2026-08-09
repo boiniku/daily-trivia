@@ -1,13 +1,17 @@
 import json
+from pathlib import Path
+
 from database import SessionLocal
 from models import Trivia
+
+DATA_FILE = Path(__file__).with_name("data_50.json")
 
 def seed_data():
     db = SessionLocal()
     
     try:
         # Load JSON data
-        with open("data_50.json", "r", encoding="utf-8") as f:
+        with DATA_FILE.open("r", encoding="utf-8") as f:
             data = json.load(f)
             
         print(f"Found {len(data)} items in JSON file.")

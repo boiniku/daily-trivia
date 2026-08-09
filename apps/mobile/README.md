@@ -1,11 +1,11 @@
 # 毎日雑学アプリ
 
-Expo Router、React Native、TypeScriptで実装したiOS/Androidアプリです。バックエンドはリポジトリ直下の`backend`にあります。
+Expo Router、React Native、TypeScriptで実装したiOS/Androidアプリです。APIは`apps/api`にあります。
 
 ## ディレクトリ構成
 
 ```text
-daily-trivia-app/
+apps/mobile/
 ├─ app/          Expo Routerの画面とルート
 ├─ assets/       画像とフォント
 ├─ components/   再利用するUI

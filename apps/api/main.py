@@ -42,7 +42,7 @@ app = FastAPI()
 def ensure_admin_schema():
     # Keep admin workflow columns in sync even when the hosting service uses
     # a manually configured start command instead of render.yaml.
-    from migrate_trivia_candidates import migrate
+    from scripts.migrations.migrate_trivia_candidates import migrate
     migrate()
 
 from fastapi.middleware.cors import CORSMiddleware

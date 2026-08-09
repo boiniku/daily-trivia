@@ -10,7 +10,7 @@ load_dotenv(os.path.join(BASE_DIR, ".env"))
 # Used by admin_dashboard.py
 DATABASE_URL = os.getenv("DATABASE_URL")
 if not DATABASE_URL:
-    raise RuntimeError("DATABASE_URL is not set. Add it to backend/.env or the process environment.")
+    raise RuntimeError("DATABASE_URL is not set. Add it to apps/api/.env or the process environment.")
 
 # App connection (app_user) - subject to RLS policies
 # Used by main.py API endpoints

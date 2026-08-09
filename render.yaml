@@ -2,11 +2,11 @@ services:
   - type: web
     name: daily-trivia-backend
     env: python
-    rootDir: backend
+    rootDir: apps/api
     autoDeploy: false
     healthCheckPath: /health
     buildCommand: pip install -r requirements.txt
-    startCommand: python migrate_trivia_candidates.py && uvicorn main:app --host 0.0.0.0 --port $PORT
+    startCommand: python -m scripts.migrations.migrate_trivia_candidates && uvicorn main:app --host 0.0.0.0 --port $PORT
     envVars:
       - key: DATABASE_URL
         sync: false
@@ -40,12 +40,12 @@ services:
   - type: web
     name: daily-trivia-backend-staging
     env: python
-    rootDir: backend
+    rootDir: apps/api
     branch: develop
     autoDeploy: true
     healthCheckPath: /health
     buildCommand: pip install -r requirements.txt
-    startCommand: python migrate_trivia_candidates.py && uvicorn main:app --host 0.0.0.0 --port $PORT
+    startCommand: python -m scripts.migrations.migrate_trivia_candidates && uvicorn main:app --host 0.0.0.0 --port $PORT
     envVars:
       - key: APP_ENV
         value: staging

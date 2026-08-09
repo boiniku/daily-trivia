@@ -1,8 +1,12 @@
 import sys
 import os
-sys.path.append(os.path.join(os.path.dirname(__file__), 'backend'))
-from backend.main import get_widget_trivia
-from backend.database import SessionLocal
+
+REPOSITORY_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+API_DIR = os.path.join(REPOSITORY_ROOT, "apps", "api")
+sys.path.insert(0, API_DIR)
+
+from main import get_widget_trivia
+from database import SessionLocal
 
 db = SessionLocal()
 print("--- TEST DAY 1 (TODAY) ---")
