@@ -798,6 +798,7 @@ class MobileEditorIntegrationTests(unittest.TestCase):
         self.assertIn("収集済みMAP情報", page.text)
         self.assertIn("東京タワー / 東京都港区芝公園4-2-8", page.text)
         self.assertIn('id="add_to_map" type="checkbox" checked', page.text)
+        self.assertIn('id="add_to_normal" type="checkbox">', page.text)
 
     def test_image_upload_returns_uploaded_url(self):
         token = make_editor_token(0)

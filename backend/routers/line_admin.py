@@ -517,7 +517,7 @@ def _editor_html(candidate: TriviaCandidate, token: str, is_new: bool, map_mode:
     ])
     map_checked = " checked" if map_mode or has_map_values else ""
     map_display = "block" if map_checked else "none"
-    normal_checked = "" if map_mode else " checked"
+    normal_checked = "" if map_mode or has_map_values else " checked"
     map_summary = ""
     if has_map_values:
         map_summary_parts = [
