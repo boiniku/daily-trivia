@@ -16,6 +16,8 @@ services:
         value: gpt-5-mini
       - key: TRIVIA_MAX_SEARCH_CALLS
         value: 5
+      - key: TRIVIA_COLLECTION_ATTEMPTS
+        value: 3
       - key: TRIVIA_SEARCH_CONTEXT_SIZE
         value: medium
       - key: DAILY_COLLECTION_COUNT

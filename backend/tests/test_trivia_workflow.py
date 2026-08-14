@@ -20,6 +20,7 @@ from routers.line_admin import _approve_candidate_from_line, _parse_collect_comm
 from services.trivia_generation import build_generation_prompt
 from services.trivia_collection import (
     CollectedTrivia,
+    DEFAULT_COLLECTION_ATTEMPTS,
     DEFAULT_DISCOVERY_DOMAINS,
     DEFAULT_MAX_SEARCH_CALLS,
     TriviaCollectionResult,
@@ -27,6 +28,7 @@ from services.trivia_collection import (
     collect_trivia,
     collect_trivia_candidates,
     get_incomplete_reason,
+    get_collection_attempts,
     get_discovery_domains,
     get_max_search_calls,
     get_search_context_size,
@@ -426,6 +428,15 @@ class LineSecurityTests(unittest.TestCase):
         with patch.dict(os.environ, {"TRIVIA_SEARCH_CONTEXT_SIZE": "invalid"}, clear=False):
             self.assertEqual(get_search_context_size(), "medium")
 
+    def test_collection_attempts_are_configurable_and_bounded(self):
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("TRIVIA_COLLECTION_ATTEMPTS", None)
+            self.assertEqual(get_collection_attempts(), DEFAULT_COLLECTION_ATTEMPTS)
+        with patch.dict(os.environ, {"TRIVIA_COLLECTION_ATTEMPTS": "2"}, clear=False):
+            self.assertEqual(get_collection_attempts(), 2)
+        with patch.dict(os.environ, {"TRIVIA_COLLECTION_ATTEMPTS": "99"}, clear=False):
+            self.assertEqual(get_collection_attempts(), 3)
+
     def test_collection_prompt_includes_all_existing_titles(self):
         titles = [f"既存タイトル{i}" for i in range(305)]
         prompt = build_collection_prompt(
@@ -540,6 +551,66 @@ class LineSecurityTests(unittest.TestCase):
         finally:
             db.close()
             engine.dispose()
+
+    def test_collection_retries_after_generated_items_are_duplicates(self):
+        duplicate_result = TriviaCollectionResult(trivia=[CollectedTrivia(
+            subject_key="タコ",
+            title="心臓を3個持つタコ",
+            content="タコの体には全身用が一つ、えら用が二つの心臓があります。",
+            explanation="既存候補の言い換えです。",
+            category="生物",
+            source="https://example.com/octopus",
+        )])
+        novel_result = TriviaCollectionResult(trivia=[CollectedTrivia(
+            subject_key="金星",
+            title="金星では太陽が西から昇る",
+            content="金星は多くの惑星とは逆向きに自転するため、太陽が西から昇ります。",
+            explanation="地球とは反対方向にゆっくり自転していることが理由です。",
+            category="宇宙・天体",
+            source="https://example.com/venus",
+        )])
+
+        def response_for(parsed):
+            return type("Response", (), {
+                "output_text": "{}",
+                "output_parsed": parsed,
+                "status": "completed",
+            })()
+
+        parse = MagicMock(side_effect=[
+            response_for(duplicate_result),
+            response_for(novel_result),
+        ])
+        client = type("Client", (), {
+            "responses": type("Responses", (), {"parse": parse})()
+        })()
+        engine = create_engine("sqlite:///:memory:")
+        Base.metadata.create_all(engine)
+        db = sessionmaker(bind=engine)()
+        try:
+            db.add(Trivia(
+                title="タコには心臓が3つある",
+                content="タコは全身用とえら用の心臓を合わせて三つ持っています。",
+                explanation="",
+                source="https://example.com/existing-octopus",
+                category="生物",
+            ))
+            db.commit()
+            with patch.dict(os.environ, {
+                "OPENAI_API_KEY": "test-key",
+                "TRIVIA_COLLECTION_ATTEMPTS": "3",
+            }, clear=False), patch(
+                "services.trivia_collection.OpenAI",
+                return_value=client,
+            ):
+                items = collect_trivia(db, "科学", 1)
+        finally:
+            db.close()
+            engine.dispose()
+
+        self.assertEqual([item["title"] for item in items], ["金星では太陽が西から昇る"])
+        self.assertEqual(parse.call_count, 2)
+        self.assertIn("心臓を3個持つタコ", parse.call_args_list[1].kwargs["input"])
 
     def test_collection_schema_requires_all_fields(self):
         schema = TriviaCollectionResult.model_json_schema()

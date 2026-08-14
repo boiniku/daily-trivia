@@ -18,6 +18,8 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_DISCOVERY_DOMAINS: tuple[str, ...] = ()
 DEFAULT_MAX_SEARCH_CALLS = 5
+DEFAULT_COLLECTION_ATTEMPTS = 3
+RECENT_FACT_EXCLUSION_LIMIT = 100
 VALID_SEARCH_CONTEXT_SIZES = {"low", "medium", "high"}
 
 META_TOPIC_PHRASES = (
@@ -129,6 +131,15 @@ def get_search_context_size() -> str:
     return value if value in VALID_SEARCH_CONTEXT_SIZES else "medium"
 
 
+def get_collection_attempts() -> int:
+    raw_value = os.getenv("TRIVIA_COLLECTION_ATTEMPTS", "")
+    try:
+        value = int(raw_value)
+    except ValueError:
+        value = DEFAULT_COLLECTION_ATTEMPTS
+    return max(1, min(value or DEFAULT_COLLECTION_ATTEMPTS, 3))
+
+
 def build_collection_prompt(
     topic: str,
     count: int,
@@ -159,6 +170,8 @@ def build_collection_prompt(
 Web検索を最大{max_search_calls}回まで行い、Web上の個別ページから、
 {subject}具体的な事実を{output_count}件見つけ、それぞれを独立した雑学として書いてください。
 最初の検索だけで決めず、必要に応じて検索語や切り口を変えて複数回探してください。
+除外リストと重なる題材が見つかった場合は、そこで終了せず、対象・カテゴリ・検索語を変えて未掲載の題材を探してください。
+除外リストを新しい候補の発想元にせず、Web検索で別の対象から候補を発見してください。
 十分に良い候補が集まった時点で検索を止め、回数を使い切る必要はありません。
 
 【必須の検索手順】
@@ -270,7 +283,7 @@ Web検索を最大{max_search_calls}回まで行い、Web上の個別ページ�
 同じ対象について同じ事実を述べる言い換え、似た切り口、実質的に同じネタも避けてください。
 {exclusions}
 
-【既存雑学の本文要約（直近最大300件）】
+【既存雑学の本文要約（直近最大100件）】
 タイトルが違っても、以下と中心事実が同じ候補は出力しないでください。
 {fact_exclusions}
 """
@@ -443,7 +456,6 @@ def collect_trivia(
 
     count = max(1, min(count, 10))
     topic = topic.strip()
-    output_count = min(10, count * 2) if not topic else count
     existing_rows = (
         db.query(Trivia.title, Trivia.content).order_by(Trivia.id.asc()).all()
         + db.query(TriviaCandidate.title, TriviaCandidate.content)
@@ -454,7 +466,7 @@ def collect_trivia(
     existing_titles = [row[0] for row in existing_rows if row[0]]
     existing_facts = [
         f"{title}: {re.sub(r'\\s+', ' ', content or '').strip()[:160]}"
-        for title, content in existing_rows[-300:]
+        for title, content in existing_rows[-RECENT_FACT_EXCLUSION_LIMIT:]
         if title
     ]
     tool = {
@@ -471,52 +483,94 @@ def collect_trivia(
         tool["filters"] = {"allowed_domains": domains}
 
     max_search_calls = get_max_search_calls()
-    response = OpenAI(api_key=api_key).responses.parse(
-        model=os.getenv(
-            "TRIVIA_COLLECTION_MODEL",
-            os.getenv("TRIVIA_GENERATION_MODEL", "gpt-5-mini"),
-        ),
-        tools=[tool],
-        tool_choice="required",
-        max_tool_calls=max_search_calls,
-        max_output_tokens=16000,
-        reasoning={"effort": "low"},
-        text_format=TriviaCollectionResult,
-        input=build_collection_prompt(
-            topic,
-            count,
-            existing_titles,
-            output_count=output_count,
-            max_search_calls=max_search_calls,
-            map_mode=map_mode,
-            existing_facts=existing_facts,
-        ),
-    )
-    if usage_callback:
-        usage_callback(get_collection_usage(response))
-    incomplete_reason = get_incomplete_reason(response)
-    if incomplete_reason:
-        raise RuntimeError(incomplete_reason)
-    if not (response.output_text or "").strip():
-        raise RuntimeError("Web収集結果が空でした。もう一度実行してください")
-    parsed = getattr(response, "output_parsed", None)
-    if parsed is None:
-        logger.error(
-            "Web collection parse failed: status=%s output=%r",
-            getattr(response, "status", None),
-            (response.output_text or "")[:1000],
-        )
-        raise RuntimeError(
-            "Web収集結果を構造化できませんでした。件数を減らして再実行してください"
-        )
+    client = OpenAI(api_key=api_key)
+    collected_items: list[CollectedTrivia] = []
+    attempted_titles: list[str] = []
+    seen_exact_items: set[tuple[str, str]] = set()
+    total_usage = TriviaCollectionUsage()
 
-    source_items = parsed.trivia
-    if map_mode:
-        source_items = [item for item in source_items if has_complete_map_fields(item)]
-    novel_items, _ = remove_existing_duplicates(db, source_items)
+    for attempt in range(get_collection_attempts()):
+        eligible_items = (
+            select_diverse_items(collected_items, count)
+            if not topic
+            else collected_items
+        )
+        remaining = count - len(eligible_items)
+        if remaining <= 0:
+            break
+        output_count = min(10, remaining * 2)
+        response = client.responses.parse(
+            model=os.getenv(
+                "TRIVIA_COLLECTION_MODEL",
+                os.getenv("TRIVIA_GENERATION_MODEL", "gpt-5-mini"),
+            ),
+            tools=[tool],
+            tool_choice="required",
+            max_tool_calls=max_search_calls,
+            max_output_tokens=16000,
+            reasoning={"effort": "low"},
+            text_format=TriviaCollectionResult,
+            input=build_collection_prompt(
+                topic,
+                remaining,
+                existing_titles + attempted_titles,
+                output_count=output_count,
+                max_search_calls=max_search_calls,
+                map_mode=map_mode,
+                existing_facts=existing_facts,
+            ),
+        )
+        usage = get_collection_usage(response)
+        total_usage = TriviaCollectionUsage(
+            input_tokens=total_usage.input_tokens + usage.input_tokens,
+            output_tokens=total_usage.output_tokens + usage.output_tokens,
+            web_search_calls=total_usage.web_search_calls + usage.web_search_calls,
+        )
+        if usage_callback:
+            usage_callback(total_usage)
+
+        incomplete_reason = get_incomplete_reason(response)
+        if incomplete_reason:
+            raise RuntimeError(incomplete_reason)
+        if not (response.output_text or "").strip():
+            logger.warning("Web collection attempt %s returned no output", attempt + 1)
+            continue
+        parsed = getattr(response, "output_parsed", None)
+        if parsed is None:
+            logger.error(
+                "Web collection parse failed: status=%s output=%r",
+                getattr(response, "status", None),
+                (response.output_text or "")[:1000],
+            )
+            continue
+
+        source_items = parsed.trivia
+        attempted_titles.extend(
+            item.title.strip() for item in source_items if item.title.strip()
+        )
+        if map_mode:
+            source_items = [item for item in source_items if has_complete_map_fields(item)]
+        novel_items, duplicate_titles = remove_existing_duplicates(db, source_items)
+        logger.info(
+            "Web collection attempt %s: generated=%s duplicates=%s novel=%s",
+            attempt + 1,
+            len(source_items),
+            len(duplicate_titles),
+            len(novel_items),
+        )
+        for item in novel_items:
+            exact_key = (
+                re.sub(r"[\W_]+", "", item.title.lower()),
+                re.sub(r"[\W_]+", "", item.content.lower()),
+            )
+            if exact_key in seen_exact_items:
+                continue
+            seen_exact_items.add(exact_key)
+            collected_items.append(item)
+
     if not topic:
-        novel_items = select_diverse_items(novel_items, count)
-    return validate_collected_items(novel_items)[:count]
+        collected_items = select_diverse_items(collected_items, count)
+    return validate_collected_items(collected_items)[:count]
 
 
 def collect_trivia_candidates(
