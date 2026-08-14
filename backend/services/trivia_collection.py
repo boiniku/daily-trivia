@@ -140,6 +140,60 @@ def get_collection_attempts() -> int:
     return max(1, min(value or DEFAULT_COLLECTION_ATTEMPTS, 3))
 
 
+def build_map_collection_focus(output_count: int) -> str:
+    return f"""
+【地図用収集モード: 場所にまつわる面白い雑学】
+今回は日本国内の雑学MAPへ登録する候補だけを集める。
+特定の場所と強く結びつき、読んだ人が「この場所にそんなものがあるの？」「実際に探したい」と思えるものを選ぶ。
+「発祥の地」「日本初」という肩書だけを大量に集めず、それ自体より面白い二段目がある場合だけ採用する。
+
+優先順位:
+1. 現地に証拠が残る: 建物の傷、災害痕、刻印、境界、隠れた装飾、遺構、昔の設備など、対象そのものを探して確認できる
+2. 有名な場所の知られていない部分: 普通に訪れただけでは見落とす位置、数、形、欠けた部分、別の場所との繋がりがある
+3. 現在から想像できない過去: 公園、住宅街、道路、店舗などの現在の姿と、軍事施設、工場、事件現場などの過去との落差が大きい
+4. 現在も続く歴史: 歴史的な店舗、設備、建物、習慣などが同じ場所で今も使われ、見学や利用ができる
+5. 一段目より二段目・三段目が面白い: 最初の商品、意外な人物、当時の値段、現在の形になった理由などを追加検索すると驚きが増える
+
+【必須の深掘り】
+- 面白い事実を見つけたら、そこで止めず、「なぜそうなったか」「当時何が起きたか」「現在も残るか」「現地で具体的に何が見えるか」を追加検索する
+- 二段目・三段目で面白さが増した情報はexplanationへ入れる。弱い関連情報を無理に足して長くしない
+- 現存、営業、公開、移設、改修の状況を、できるだけ新しい公式情報で確認する。現在見られないものを見られるように書かない
+
+【現地体験】
+- map_hintには、現地でできることを25〜80文字程度で具体的に書く。例のような対象をそのまま使わず、「どの建物のどの部分を見る」「何を数える」「何と見比べる」まで分かる文章にする
+- 「説明板を読める」「歴史を感じられる」のような抽象表現だけでは採用しない。説明板より対象物そのものを観察できる候補を優先する
+- 公道や公開区域から安全に確認できるものを選ぶ。私有地への立入り、危険行為、文化財への接触を促さない
+- 有料、公開時間限定、予約制、通常非公開など重要な条件が公式情報で確認できる場合はmap_hintに簡潔に入れる
+
+【採用しないもの】
+- 「発祥」「日本初」「跡地」「石碑がある」だけで終わり、現地体験や深掘りの面白さがない
+- 全国どこでも成立し、場所を変えても内容がほぼ同じ
+- 観光サイトの概要を言い換えただけの有名すぎる話
+- 現地に何も残らず、場所そのものにも訪れる理由がない
+- 都市伝説、伝承だけの話、個人ブログやまとめサイトしか根拠がない話
+- 魅力的でも中心事実、人物、年代、由来を信頼できる資料で確認できない話
+- 数を満たすために弱い候補を混ぜない。条件を満たす候補が少なければ{output_count}件未満でもよい
+
+【ファクトチェックと出典】
+- 国、自治体、博物館、文化財機関、施設・企業公式、大学、新聞社、専門資料の順に優先する
+- 可能な限り2件以上の独立した資料で、中心事実、年代、人物、現存状況、場所を照合する
+- sourceには、照合した中で中心事実と現存状況を最も直接説明する、最も信頼性の高い個別ページ1件を入れる
+- 検索結果の抜粋、トップページ、URLが確認できない資料はsourceにしない
+
+【位置情報】
+- map_address、map_prefecture、map_latitude、map_longitude、map_radius、map_hintを全件必ず入れる
+- map_addressは「対象物・施設名 / 具体的な住所」とし、ユーザーが現地へ向かえる情報にする
+- 座標は施設全体の代表点より、傷、石碑、店舗、遺構、モニュメントなど雑学の対象物そのものへ可能な限り近づける
+- 公式案内図、文化財資料、施設情報、信頼できる地図で位置を確認する。座標を推測しない。対象位置に自信がなければ候補自体を出力しない
+- map_radiusは、対象点が明確なら100m、建物や小規模施設なら200〜300m、広い公園・城跡なら500〜800mを目安にする
+
+【内部評価】
+候補を広く調査してから、「意外性」「場所との強い結びつき」「現地で確認できる度合い」「深掘りの面白さ」「信頼性」「話したくなるか」「行きたくなるか」を各0〜5点で評価する。
+合計26点以上かつ「場所との結びつき」「現地で確認できる度合い」が各4点以上の候補だけを出力する。
+{output_count}件は場所、地域、面白さの型が偏りすぎないようにする。
+"""
+
+
 def build_collection_prompt(
     topic: str,
     count: int,
@@ -154,18 +208,7 @@ def build_collection_prompt(
     categories = ", ".join(TRIVIA_CATEGORIES)
     exclusions = "\n".join(f"- {title}" for title in exclusion_titles)
     fact_exclusions = "\n".join(f"- {fact}" for fact in (existing_facts or []))
-    map_focus = ""
-    if map_mode:
-        map_focus = f"""
-【地図用収集モード】
-- 今回は雑学MAPへ登録する候補だけを集める
-- 地名、建物、史跡、駅、橋、公園、神社仏閣、城跡、観光地、地域文化、特定の店や施設など、現地に行ける具体的な場所に紐づく雑学だけを採用する
-- 場所に紐づかない生物・科学・言葉・食べ物などの一般雑学は、どれだけ面白くても採用しない
-- map_address、map_prefecture、map_latitude、map_longitude、map_radiusは全件必ず入れる
-- map_addressは施設名だけでなく、可能なら住所や「施設名 / 住所」の形にする
-- map_latitude/map_longitudeは代表地点の座標を数値で入れる。分からない地点は採用しない
-- {output_count}件は都道府県、施設、史跡、地域文化などが互いに偏りすぎないようにする
-"""
+    map_focus = build_map_collection_focus(output_count) if map_mode else ""
     return f"""
 Web検索を最大{max_search_calls}回まで行い、Web上の個別ページから、
 {subject}具体的な事実を{output_count}件見つけ、それぞれを独立した雑学として書いてください。
@@ -307,13 +350,13 @@ Web検索を最大{max_search_calls}回まで行い、Web上の個別ページ�
       "map_latitude": 35.6812,
       "map_longitude": 139.7671,
       "map_radius": 300,
-      "map_hint": ""
+      "map_hint": "現地で何を、どこで、どう探したり体験したりできるか"
     }}
   ]
 }}
 
 【雑学MAP用情報】
-- 地名、建物、史跡、駅、観光地、地域文化など場所に紐づく雑学では、map_address/map_prefecture/map_latitude/map_longitude/map_radiusをできるだけ入れる
+- 地名、建物、史跡、駅、観光地、地域文化など場所に紐づく雑学では、map_address/map_prefecture/map_latitude/map_longitude/map_radius/map_hintをできるだけ入れる
 - 場所に関係しない雑学では、map_address/map_prefecture/map_hintは空文字、map_latitude/map_longitude/map_radiusはnullにする
 - map_addressはユーザーが現地へ向かえる具体的な施設名や住所にする
 - 緯度経度はその地点の代表座標にする
@@ -380,9 +423,11 @@ def has_complete_map_fields(item: CollectedTrivia) -> bool:
     return bool(
         item.map_address.strip()
         and item.map_prefecture.strip()
+        and item.map_hint.strip()
         and item.map_latitude is not None
         and item.map_longitude is not None
         and item.map_radius is not None
+        and 50 <= item.map_radius <= 1000
     )
 
 
