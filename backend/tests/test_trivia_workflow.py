@@ -732,6 +732,30 @@ class LineSecurityTests(unittest.TestCase):
         self.assertLessEqual(max(category_counts.values()), 2)
         self.assertGreaterEqual(len(category_counts), 4)
 
+    def test_diversity_selection_falls_back_to_valid_items(self):
+        items = [
+            CollectedTrivia(
+                subject_key="",
+                title=f"有効な候補{index}",
+                content=f"重複していない有効な本文{index}です。",
+                explanation="Web検索で確認した解説です。",
+                category="生活",
+                source=f"https://example.com/fallback-{index}",
+            )
+            for index in range(5)
+        ]
+
+        selected = select_diverse_items(items, 5)
+
+        self.assertEqual(len(selected), 5)
+        self.assertEqual([item.title for item in selected], [
+            "有効な候補0",
+            "有効な候補1",
+            "有効な候補2",
+            "有効な候補3",
+            "有効な候補4",
+        ])
+
     def test_incomplete_collection_response_has_clear_message(self):
         response = type("Response", (), {
             "status": "incomplete",

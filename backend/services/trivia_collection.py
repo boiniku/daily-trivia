@@ -418,6 +418,16 @@ def select_diverse_items(
         used_subjects.add(subject)
         category_counts[item.category] = category_counts.get(item.category, 0) + 1
         if len(selected) == count:
+            return selected
+
+    # Diversity is a preference, not a reason to discard otherwise valid facts.
+    # Structured model output can occasionally omit subject_key or concentrate on
+    # one category; fill the remaining slots after the diverse choices.
+    for item in items:
+        if item in selected:
+            continue
+        selected.append(item)
+        if len(selected) == count:
             break
     return selected
 
