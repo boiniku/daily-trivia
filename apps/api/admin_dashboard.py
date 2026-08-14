@@ -6,7 +6,6 @@ from dotenv import load_dotenv
 from openai import OpenAI
 import streamlit as st
 import pandas as pd
-import difflib
 import requests
 try:
     import boto3
@@ -32,6 +31,7 @@ from services.trivia_candidates import (
     update_candidate,
 )
 from services.map_trivia import create_map_trivia, create_map_trivia_from_candidate
+from services.trivia_collection import collect_trivia_candidates
 from datetime import datetime
 
 # Load env vars
@@ -51,7 +51,6 @@ TRIVIA_CATEGORIES = [
     "スポーツ", "IT・テクノロジー", "心理学", "言語・言葉", 
     "その他"
 ]
-CATEGORIES_STR = ", ".join(TRIVIA_CATEGORIES)
 IMAGE_CROP_OPTIONS = {
     "トリミングなし": None,
     "正方形": 1,
@@ -641,7 +640,7 @@ with tab1:
         
         with col1:
             title = st.text_input("タイトル (必須)", max_chars=50, placeholder="例: 富士山の高さ")
-            content = st.text_area("本文 (必須)", max_chars=100, height=80, placeholder="雑学のメインコンテンツ。50〜80文字程度で簡潔に。")
+            content = st.text_area("本文 (必須)", height=80, placeholder="雑学のメインコンテンツ。50〜80文字程度で簡潔に。")
             explanation = st.text_area("解説・詳細", height=120, placeholder="詳細な背景や理由など。100〜150文字程度。")
 
             if add_to_trivia_map:
@@ -655,7 +654,10 @@ with tab1:
                     map_longitude = st.number_input("経度", min_value=-180.0, max_value=180.0, value=139.7671, format="%.6f")
                 map_address = st.text_input("住所・施設名", placeholder="東京都港区芝公園4-2-8 / 東京タワー")
                 map_radius = st.number_input("解放半径（メートル）", min_value=10, max_value=5000, value=500, step=10)
-                map_hint = ""
+                map_hint = st.text_area(
+                    "現地ポイント",
+                    placeholder="現地で探す場所や見どころ、公開条件など",
+                )
             else:
                 map_address = ""
                 map_prefecture = ""
@@ -736,7 +738,7 @@ with tab1:
                             map_latitude=float(map_latitude),
                             map_longitude=float(map_longitude),
                             map_radius=int(map_radius),
-                            map_hint="",
+                            map_hint=map_hint,
                         )
                         messages.append(f"雑学MAP（#{map_item.id}）")
 
@@ -790,177 +792,21 @@ with tab2:
             with col_ai1:
                 topic = st.text_input("トピック (例: 宇宙, 猫, 歴史)", placeholder="何についての雑学を集めますか？")
             with col_ai2:
-                count = st.number_input("生成件数", min_value=1, max_value=10, value=3)
+                count = st.number_input("収集件数", min_value=1, max_value=10, value=3)
             
-            generate_submitted = st.form_submit_button("生成開始", type="primary")
+            generate_submitted = st.form_submit_button("収集開始", type="primary")
 
         if generate_submitted:
             map_collection = collection_target == "収集（地図用）"
             target_topic = topic if topic else "ランダムで幅広いジャンル"
-            with st.spinner(f"「{target_topic}」に関する{'地図用' if map_collection else '雑学・豆知識'}を {count} 件生成中..."):
+            with st.spinner(f"「{target_topic}」に関する{'地図用' if map_collection else '雑学・豆知識'}をWeb検索で {count} 件収集中..."):
                 try:
-                    # 1. Fetch ALL existing trivia titles to prevent duplicates
-                    all_existing_data = db.query(Trivia.title, Trivia.content).all()
-                    all_existing_titles = [e[0] for e in all_existing_data]
-                    
-                    # Also include pending approval items
-                    pending_titles = [item.get('title', '') for item in st.session_state.ai_trivia_list if isinstance(item, dict)]
-                    
-                    exclusion_titles = all_existing_titles + pending_titles
-                    exclusion_text = ""
-                    if exclusion_titles:
-                        exclusion_text = f"\n\n【除外リスト】以下の雑学は既にデータベースに存在します。これらと重複する内容（タイトルやネタ被り、同じ事実の言い換え）は絶対に避けてください：\n" + "\n".join([f"- {t}" for t in exclusion_titles])
-                    map_collection_instruction = ""
-                    if map_collection:
-                        map_collection_instruction = """
-                    【最重要：雑学MAP用に収集】
-                    - 今回は雑学MAPへ登録できる候補だけを生成してください。
-                    - 地名、建物、史跡、駅、橋、公園、神社仏閣、城跡、観光地、地域文化、特定の店や施設など、現地に行ける具体的な場所に紐づく雑学だけを採用してください。
-                    - 場所に紐づかない一般雑学は採用しないでください。
-                    - map_address、map_prefecture、map_latitude、map_longitude、map_radiusは全件必ず入れてください。
-                    - map_addressは「施設名 / 住所」の形を優先してください。
-                    - 座標が分からない候補は出力しないでください。
-                    """
-
-                    prompt = f"""
-                    「{target_topic}」に関する面白い雑学・豆知識を{count}件生成してください。
-                    以下のJSONフォーマットのオブジェクト形式で出力してください。
-                    キーは "trivia" とし、値はそのリストにしてください。
-                    
-                    keys = "trivia"
-                    
-                    【最重要：タイトルについて】
-                    タイトルはアプリの「顔」です。タイトルを読むだけで「何の話か」がわかり、かつ「へぇ！面白い！」と思わせるものにしてください。
-                    説明的であることは大事ですが、ただの説明で終わらず、意外性・驚き・面白さを必ず詰め込んでください。
-                    
-                    タイトルのルール：
-                    - 30文字以内
-                    - タイトルだけで「何の話か」と「面白いポイント」の両方が伝わること
-                    - 具体的な数字や意外な事実を盛り込む
-                    - 「〜の雑学」「〜の豆知識」のような中身のないタイトルは禁止
-                    - ただの事実の要約ではなく、「えっ！？」と驚く切り口で書く
-                    
-                    良いタイトルの例：
-                    ✅「バナナは実はベリーの仲間だった」（内容がわかる＋意外性がある）
-                    ✅「宇宙では爆発しても音が聞こえない」（説明的＋驚きがある）
-                    ✅「1日の唾液量はペットボトル1本分もある」（具体的な数字＋インパクト）
-                    ✅「ハチミツは3000年経っても腐らない」（事実がわかる＋衝撃的）
-                    ✅「タコは心臓を3つ持っている」（シンプルだが意外）
-                    ✅「金魚の記憶力は実は数ヶ月もある」（常識を覆す面白さ）
-                    
-                    悪いタイトルの例：
-                    ❌「バナナの分類について」（面白さがゼロ）
-                    ❌「宇宙空間の特徴」（漠然としている）
-                    ❌「唾液に関する雑学」（中身が伝わらない）
-                    ❌「心臓」（意味不明）
-                    
-                    【重要】ソース（出典）は**必ず「http://」または「https://」で始まる有効なURL**にしてください。
-                    書籍名だけや、「不明」などの単語はNGです。
-                    URLが存在しない場合は、その雑学自体を生成しないでください。
-                    地名、建物、史跡、駅、観光地、地域文化など場所に紐づく雑学では、雑学MAP用の住所・都道府県・座標も入れてください。
-                    場所に関係しない雑学では、map_address/map_prefectureは空文字、map_latitude/map_longitude/map_radiusはnullにしてください。
-                    {map_collection_instruction}
-                    
-                    【重要】生成する{count}件の雑学は互いに全く異なるテーマ・事実にしてください。同じ事実の言い換えや類似ネタは禁止です。
-                    {exclusion_text}
-
-                    {{
-                        "trivia": [
-                            {{
-                                "title": "内容がわかり、かつ面白さ・意外性のあるタイトル（30文字以内）",
-                                "content": "本文（です・ます調。50〜80文字程度。改行は含めないでください）",
-                                "explanation": "詳細な解説や背景（100〜150文字程度）",
-                                "category": f"カテゴリ（{CATEGORIES_STR} から選択）",
-                                "source": "https://example.com/article... (必須。http/httpsから始まるURL)",
-                                "map_address": "雑学MAPに置ける具体的な住所や施設名。場所に関係しない雑学なら空文字",
-                                "map_prefecture": "都道府県。場所に関係しない雑学なら空文字",
-                                "map_latitude": 35.6812,
-                                "map_longitude": 139.7671,
-                                "map_radius": 500,
-                                "map_hint": ""
-                            }}
-                        ]
-                    }}
-                    """
-                    
-                    response = client.chat.completions.create(
-                        model="gpt-5-mini",
-                        messages=[
-                            {"role": "system", "content": "You are a trivia content creator for a mobile app. Your #1 priority is writing titles that make people stop scrolling and think 'Wait, what!?' - titles must be specific, surprising, and instantly intriguing. You always provide reliable sources. Never generate duplicate or similar trivia. Output in JSON format."},
-                            {"role": "user", "content": prompt}
-                        ],
-                        response_format={"type": "json_object"}
+                    saved_candidates = collect_trivia_candidates(
+                        db,
+                        topic=topic.strip(),
+                        count=int(count),
+                        map_mode=map_collection,
                     )
-                    text_response = response.choices[0].message.content.strip()
-                    # Remove markdown code blocks if present
-                    if text_response.startswith("```json"):
-                        text_response = text_response[7:-3].strip()
-                    elif text_response.startswith("```"):
-                        text_response = text_response[3:-3].strip()
-                    
-                    data = json.loads(text_response)
-                    new_items = data.get("trivia", [])
-                    
-                    # 2. Filter out duplicates (check against ALL titles and Content using Fuzzy Match)
-                    unique_items = []
-                    duplicates_count = 0
-                    
-                    for item in new_items:
-                        if not isinstance(item, dict):
-                            continue
-                            
-                        is_duplicate = False
-                        new_title = item.get("title", "")
-                        new_content = item.get("content", "")
-                        
-                        # Check against DB entries
-                        for db_title, db_content in all_existing_data:
-                            title_ratio = difflib.SequenceMatcher(None, new_title, db_title).ratio()
-                            content_ratio = difflib.SequenceMatcher(None, new_content, db_content).ratio()
-                            
-                            # Threshold: 0.7 (70% similar) - stricter to catch paraphrases
-                            if title_ratio > 0.7 or content_ratio > 0.7:
-                                is_duplicate = True
-                                break
-                        
-                        # Check against pending approval list
-                        if not is_duplicate:
-                            for pending in st.session_state.ai_trivia_list:
-                                if not isinstance(pending, dict):
-                                    continue
-                                p_title = pending.get("title", "")
-                                p_content = pending.get("content", "")
-                                if difflib.SequenceMatcher(None, new_title, p_title).ratio() > 0.7 or \
-                                   difflib.SequenceMatcher(None, new_content, p_content).ratio() > 0.7:
-                                    is_duplicate = True
-                                    break
-                        
-                        # Check against items already accepted in this batch
-                        if not is_duplicate:
-                            for accepted in unique_items:
-                                a_title = accepted.get("title", "")
-                                a_content = accepted.get("content", "")
-                                if difflib.SequenceMatcher(None, new_title, a_title).ratio() > 0.7 or \
-                                   difflib.SequenceMatcher(None, new_content, a_content).ratio() > 0.7:
-                                    is_duplicate = True
-                                    break
-                        
-                        if not is_duplicate:
-                            if map_collection and not (
-                                item.get("map_address")
-                                and item.get("map_prefecture")
-                                and item.get("map_latitude") is not None
-                                and item.get("map_longitude") is not None
-                                and item.get("map_radius") is not None
-                            ):
-                                duplicates_count += 1
-                                continue
-                            item["map_collection"] = map_collection
-                            unique_items.append(item)
-                        else:
-                            duplicates_count += 1
-                    
-                    saved_candidates = create_candidates(db, unique_items)
                     st.session_state.ai_trivia_list.extend([
                         {
                             "id": candidate.id,
@@ -980,13 +826,16 @@ with tab2:
                         }
                         for candidate in saved_candidates
                     ])
-                    
-                    msg = f"{len(unique_items)} 件生成しました！下のリストから確認・承認してください。"
-                    if duplicates_count > 0:
-                        msg += f" (※重複・類似 {duplicates_count} 件を除外しました)"
-                    st.success(msg)
+
+                    if saved_candidates:
+                        msg = f"{len(saved_candidates)} 件収集しました。下のリストから確認・承認してください。"
+                        if len(saved_candidates) < int(count):
+                            msg += "（重複または収集条件に合わない候補は除外されました）"
+                        st.success(msg)
+                    else:
+                        st.warning("重複を除くと新しい候補がありませんでした。条件を変えて再実行してください。")
                 except Exception as e:
-                    st.error(f"生成エラー: {e}")
+                    st.error(f"収集エラー: {e}")
 
         st.divider()
         st.subheader("承認待ちリスト")
@@ -1095,7 +944,12 @@ with tab2:
                                 )
                             a_map_address = st.text_input("住所・施設名", value=item.get("map_address") or "", key=f"ai_map_address_{i}")
                             a_map_radius = st.number_input("解放半径（メートル）", min_value=10, max_value=5000, value=int(item.get("map_radius") or 500), step=10, key=f"ai_map_radius_{i}")
-                            a_map_hint = ""
+                            a_map_hint = st.text_area(
+                                "現地ポイント",
+                                value=item.get("map_hint") or "",
+                                key=f"ai_map_hint_{i}",
+                                placeholder="現地で探す場所や見どころ、公開条件など",
+                            )
                         else:
                             a_map_prefecture = ""
                             a_map_latitude = 0.0

@@ -505,6 +505,7 @@ def _editor_html(candidate: TriviaCandidate, token: str, is_new: bool, map_mode:
     method = "POST" if is_new else "PUT"
     map_address_value = value(getattr(candidate, "map_address", "") or "")
     map_prefecture_value = value(getattr(candidate, "map_prefecture", "") or "")
+    map_hint_value = value(getattr(candidate, "map_hint", "") or "")
     map_latitude_value = getattr(candidate, "map_latitude", None) or 35.6812
     map_longitude_value = getattr(candidate, "map_longitude", None) or 139.7671
     map_radius_value = getattr(candidate, "map_radius", None) or 500
@@ -526,6 +527,8 @@ def _editor_html(candidate: TriviaCandidate, token: str, is_new: bool, map_mode:
         ]
         if getattr(candidate, "map_latitude", None) is not None and getattr(candidate, "map_longitude", None) is not None:
             map_summary_parts.append(f"{float(getattr(candidate, 'map_latitude')):.6f}, {float(getattr(candidate, 'map_longitude')):.6f}")
+        if getattr(candidate, "map_hint", None):
+            map_summary_parts.append(f"現地ポイント: {getattr(candidate, 'map_hint')}")
         map_summary = html.escape(" / ".join(str(part) for part in map_summary_parts if part))
     return f"""<!doctype html>
 <html lang="ja"><head>
@@ -564,6 +567,7 @@ button{{border:0;border-radius:11px;padding:14px;font-size:16px;font-weight:700}
 <button class="smallbtn" onclick="fillCurrentLocation()">現在地を自動入力</button>
 <label>住所・施設名<input id="map_address" value="{map_address_value}" placeholder="東京都港区芝公園4-2-8 / 東京タワー"></label>
 <label>解放半径（m）<input id="map_radius" inputmode="numeric" value="{int(map_radius_value)}"></label>
+<label>現地ポイント<textarea id="map_hint" placeholder="現地で探す場所や見どころ、公開条件など">{map_hint_value}</textarea></label>
 <label>MAP ID（空欄なら自動生成）<input id="map_spot_id" placeholder="tokyo_001"></label>
 </div>
 <div class="actions"><button class="publish" onclick="submitCandidate()">登録する</button></div><div id="message"></div>
@@ -615,7 +619,7 @@ async function submitCandidate(){{
  map_latitude:Number(document.getElementById("map_latitude").value),
  map_longitude:Number(document.getElementById("map_longitude").value),
  map_radius:Number(document.getElementById("map_radius").value),
- map_hint:""}})}});
+ map_hint:document.getElementById("map_hint").value}})}});
  const data=await response.json();message.textContent=response.ok?"登録しました。LINEへ戻ってください。":(data.detail||"保存できませんでした。");
 }}
 </script></body></html>"""

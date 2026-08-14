@@ -350,7 +350,7 @@ class LineSecurityTests(unittest.TestCase):
         self.assertIn("事実・題材・キーワードだけ", prompt)
         self.assertIn("独自の日本語表現", prompt)
         self.assertIn("雑学サイト、まとめサイト、記事、メディアそのものを題材にしない", prompt)
-        self.assertIn("個別記事ページのhttpまたはhttps URL", prompt)
+        self.assertIn("深掘り内容を直接説明している個別ページのhttpまたはhttps URL", prompt)
         self.assertIn("話題まとめサイトの使い方", prompt)
         self.assertIn("タイトルだけで「何についての、どんな意外な事実か」", prompt)
         self.assertIn("疑問形、過度な煽り", prompt)
@@ -361,9 +361,27 @@ class LineSecurityTests(unittest.TestCase):
         self.assertIn("一覧記事の要約ではなく", prompt)
         self.assertIn("同一対象から選ぶのは1件まで", prompt)
         self.assertIn("最低3カテゴリ", prompt)
-        self.assertIn("まとめサイトだけ", prompt)
-        self.assertIn("学術論文、学会誌、大学・研究機関", prompt)
+        self.assertIn("モデルの内部知識だけで題材、理由、例外、因果関係を作らない", prompt)
+        self.assertIn("『魔女の宅急便』でなぜ使えるのか", prompt)
+        self.assertIn("2段目の理由・例外・意外な繋がり", prompt)
+        self.assertIn("公式ページ、官公庁、大学・研究機関", prompt)
         self.assertIn("日常会話で誰かに話したくなる", prompt)
+        self.assertIn("常識逆転型", prompt)
+        self.assertIn("疑問深掘り型", prompt)
+        self.assertIn("身近な由来型", prompt)
+        self.assertIn("想像超越型", prompt)
+        self.assertIn("合計18点未満の候補は出力しない", prompt)
+        self.assertIn("身近な比較で規模を実感できる場合は積極的に採用", prompt)
+        self.assertIn("記録だけでは採用しない", prompt)
+        self.assertIn("30秒で説明できないもの", prompt)
+        self.assertIn("専門知識のない中学生", prompt)
+        self.assertIn("候補のおよそ7割", prompt)
+        self.assertIn("全体の3割以内", prompt)
+        self.assertIn("専門語は1候補につき最大1つ", prompt)
+        self.assertIn("専門用語を三つ以上使わないと説明できない題材", prompt)
+        self.assertIn("45〜75文字程度", prompt)
+        self.assertIn("80〜140文字程度、最大2文", prompt)
+        self.assertIn("一度で言い換えられるか", prompt)
         self.assertIn(f"最大{DEFAULT_MAX_SEARCH_CALLS}回まで", prompt)
         self.assertIn("検索語や切り口を変えて複数回", prompt)
         self.assertIn("回数を使い切る必要はありません", prompt)
@@ -371,9 +389,14 @@ class LineSecurityTests(unittest.TestCase):
     def test_map_collection_prompt_requires_place_fields(self):
         prompt = build_collection_prompt("京都", 3, [], map_mode=True)
         self.assertIn("雑学MAPへ登録する候補だけ", prompt)
-        self.assertIn("現地に行ける具体的な場所", prompt)
-        self.assertIn("map_address、map_prefecture、map_latitude、map_longitude、map_radiusは全件必ず", prompt)
-        self.assertNotIn("map_hintは全件必ず", prompt)
+        self.assertIn("現地に証拠が残る", prompt)
+        self.assertIn("一段目より二段目・三段目が面白い", prompt)
+        self.assertIn("対象物そのものを観察できる候補", prompt)
+        self.assertIn("私有地への立入り", prompt)
+        self.assertIn("2件以上の独立した資料", prompt)
+        self.assertIn("座標を推測しない", prompt)
+        self.assertIn("map_address、map_prefecture、map_latitude、map_longitude、map_radius、map_hintを全件必ず", prompt)
+        self.assertIn("合計26点以上", prompt)
 
     def test_map_collection_requires_complete_map_fields(self):
         complete = CollectedTrivia(
@@ -387,14 +410,19 @@ class LineSecurityTests(unittest.TestCase):
             map_prefecture="東京都",
             map_latitude=35.658581,
             map_longitude=139.745433,
-            map_radius=500,
+            map_radius=300,
+            map_hint="正面から塔の部材を見比べられます。",
         )
         incomplete = complete.model_copy(update={"map_address": ""})
+        missing_hint = complete.model_copy(update={"map_hint": ""})
+        invalid_radius = complete.model_copy(update={"map_radius": 5000})
 
         self.assertTrue(has_complete_map_fields(complete))
         self.assertFalse(has_complete_map_fields(incomplete))
+        self.assertFalse(has_complete_map_fields(missing_hint))
+        self.assertFalse(has_complete_map_fields(invalid_radius))
 
-    def test_collection_uses_trivia_sites_by_default(self):
+    def test_collection_search_is_unrestricted_by_default(self):
         with patch.dict(os.environ, {}, clear=False):
             os.environ.pop("TRIVIA_DISCOVERY_DOMAINS", None)
             self.assertEqual(
@@ -747,6 +775,7 @@ class MobileEditorIntegrationTests(unittest.TestCase):
         self.assertEqual(page.status_code, 200)
         self.assertNotIn("下書き保存", page.text)
         self.assertIn("登録する", page.text)
+        self.assertIn('id="map_hint"', page.text)
 
     def test_new_map_candidate_publishes_to_map_trivia_directly(self):
         token = make_editor_token(0)
