@@ -10,7 +10,7 @@ from pydantic import BaseModel
 from database import SessionLocal
 from models import Trivia, TriviaCandidate
 from services.line_bot import (
-    candidate_flex_message,
+    candidate_carousel_message,
     is_allowed_user,
     mark_line_sent,
     new_candidate_message,
@@ -29,7 +29,7 @@ from services.trivia_candidates import (
 )
 from services.image_storage import upload_trivia_image
 from services.map_trivia import create_map_trivia, create_map_trivia_from_candidate
-from services.trivia_collection import collect_trivia
+from services.trivia_collection import collect_trivia_candidates
 from services.trivia_generation import TRIVIA_CATEGORIES, generate_trivia
 
 
@@ -178,11 +178,13 @@ def _generate_and_push(user_id: str, topic: str, count: int) -> None:
         if not candidates:
             push_message(user_id, [_text_message("候補を生成できませんでした。もう一度試してください。")])
             return
-        push_message(user_id, [_text_message(f"{len(candidates)}件生成しました。確認してください。")])
+        push_message(user_id, [
+            _text_message(f"{len(candidates)}件生成しました。左右にスワイプして確認してください。"),
+            candidate_carousel_message(candidates),
+        ])
         for candidate in candidates:
-            push_message(user_id, [candidate_flex_message(candidate)])
             mark_line_sent(candidate)
-            db.commit()
+        db.commit()
     except Exception as exc:
         push_message(user_id, [_text_message(f"生成中にエラーが発生しました: {exc}")])
     finally:
@@ -192,23 +194,22 @@ def _generate_and_push(user_id: str, topic: str, count: int) -> None:
 def _collect_and_push(user_id: str, topic: str, count: int, map_mode: bool = False) -> None:
     db = SessionLocal()
     try:
-        candidates = create_candidates(db, collect_trivia(db, topic, count, map_mode=map_mode))
+        candidates = collect_trivia_candidates(db, topic, count, map_mode=map_mode)
         if not candidates:
             push_message(
                 user_id,
                 [_text_message("重複を除くと収集できる候補がありませんでした。")],
             )
             return
-        push_message(
-            user_id,
-            [_text_message(
+        push_message(user_id, [
+            _text_message(
                 f"Webから{len(candidates)}件の{'地図用' if map_mode else ''}題材を収集しました。確認してください。"
-            )],
-        )
+            ),
+            candidate_carousel_message(candidates),
+        ])
         for candidate in candidates:
-            push_message(user_id, [candidate_flex_message(candidate)])
             mark_line_sent(candidate)
-            db.commit()
+        db.commit()
     except Exception as exc:
         push_message(user_id, [_text_message(f"収集中にエラーが発生しました: {exc}")])
     finally:
@@ -228,9 +229,11 @@ def _push_pending_candidates(user_id: str) -> None:
         if not candidates:
             push_message(user_id, [_text_message("承認待ちの候補はありません。")])
             return
-        push_message(user_id, [_text_message(f"承認待ちを{len(candidates)}件送ります。")])
+        push_message(user_id, [
+            _text_message(f"承認待ちを{len(candidates)}件送ります。左右にスワイプして確認してください。"),
+            candidate_carousel_message(candidates),
+        ])
         for candidate in candidates:
-            push_message(user_id, [candidate_flex_message(candidate)])
             mark_line_sent(candidate)
         db.commit()
     finally:

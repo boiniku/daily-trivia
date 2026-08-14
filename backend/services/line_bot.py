@@ -38,6 +38,13 @@ def push_message(user_id: str, messages: list[dict]) -> None:
     _send("push", {"to": user_id, "messages": messages})
 
 
+def get_admin_user_ids() -> list[str]:
+    configured = os.getenv("LINE_ADMIN_USER_IDS", "")
+    return list(dict.fromkeys(
+        value.strip() for value in configured.split(",") if value.strip()
+    ))
+
+
 def _send(endpoint: str, payload: dict) -> None:
     token = os.getenv("LINE_CHANNEL_ACCESS_TOKEN", "")
     if not token:
@@ -74,8 +81,8 @@ def read_editor_token(token: str) -> int:
         expected = hmac.new(
             secret.encode("utf-8"), encoded.encode("ascii"), hashlib.sha256
         ).digest()
-        actual = base64.urlsafe_b64decode(_pad_base64(encoded_signature))
-        if not hmac.compare_digest(expected, actual):
+        expected_signature = base64.urlsafe_b64encode(expected).decode("ascii").rstrip("=")
+        if not hmac.compare_digest(expected_signature, encoded_signature):
             raise ValueError("Invalid editor token")
         payload = json.loads(base64.urlsafe_b64decode(_pad_base64(encoded)))
         if int(payload["exp"]) < int(time.time()):
@@ -163,6 +170,20 @@ def candidate_flex_message(candidate: TriviaCandidate) -> dict:
                     },
                 ],
             },
+        },
+    }
+
+
+def candidate_carousel_message(candidates: list[TriviaCandidate]) -> dict:
+    bubbles = [candidate_flex_message(candidate)["contents"] for candidate in candidates[:10]]
+    if not bubbles:
+        raise ValueError("At least one candidate is required")
+    return {
+        "type": "flex",
+        "altText": f"承認待ちの雑学候補 {len(bubbles)}件",
+        "contents": {
+            "type": "carousel",
+            "contents": bubbles,
         },
     }
 

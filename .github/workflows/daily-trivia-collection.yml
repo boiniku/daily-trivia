@@ -1,0 +1,28 @@
+name: Daily trivia collection
+
+on:
+  schedule:
+    # GitHub Actions uses UTC. 00:00 UTC is 09:00 JST.
+    - cron: "0 0 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: daily-trivia-collection
+  cancel-in-progress: false
+
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Trigger daily collection
+        env:
+          DAILY_COLLECTION_URL: ${{ vars.DAILY_COLLECTION_URL }}
+          DAILY_COLLECTION_SECRET: ${{ secrets.DAILY_COLLECTION_SECRET }}
+        run: |
+          test -n "$DAILY_COLLECTION_URL"
+          test -n "$DAILY_COLLECTION_SECRET"
+          curl --fail-with-body --retry 3 --retry-all-errors \
+            --request POST \
+            --header "Authorization: Bearer ${DAILY_COLLECTION_SECRET}" \
+            "${DAILY_COLLECTION_URL%/}/internal/daily-trivia-collection"

@@ -2,23 +2,23 @@ import json
 import logging
 import os
 import re
+from collections.abc import Callable
+from dataclasses import dataclass
 
 from openai import OpenAI
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy.orm import Session
 
 from models import Trivia, TriviaCandidate
-from services.trivia_candidates import find_duplicate
+from services.trivia_candidates import create_candidates, find_duplicate
 from services.trivia_generation import TRIVIA_CATEGORIES
 
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_DISCOVERY_DOMAINS = (
-    "zatsuneta.com",
-    "kerokero-info.com",
-)
+DEFAULT_DISCOVERY_DOMAINS: tuple[str, ...] = ()
 DEFAULT_MAX_SEARCH_CALLS = 5
+VALID_SEARCH_CONTEXT_SIZES = {"low", "medium", "high"}
 
 META_TOPIC_PHRASES = (
     "雑学サイト",
@@ -76,6 +76,31 @@ class TriviaCollectionResult(BaseModel):
     trivia: list[CollectedTrivia]
 
 
+@dataclass(frozen=True)
+class TriviaCollectionUsage:
+    input_tokens: int = 0
+    output_tokens: int = 0
+    web_search_calls: int = 0
+
+
+def get_collection_usage(response) -> TriviaCollectionUsage:
+    usage = getattr(response, "usage", None)
+    output = getattr(response, "output", None) or []
+    search_calls = sum(
+        1
+        for item in output
+        if (
+            getattr(item, "type", None)
+            or (item.get("type") if isinstance(item, dict) else None)
+        ) == "web_search_call"
+    )
+    return TriviaCollectionUsage(
+        input_tokens=int(getattr(usage, "input_tokens", 0) or 0),
+        output_tokens=int(getattr(usage, "output_tokens", 0) or 0),
+        web_search_calls=search_calls,
+    )
+
+
 def get_discovery_domains() -> list[str]:
     raw_domains = os.getenv("TRIVIA_DISCOVERY_DOMAINS")
     if raw_domains is None:
@@ -99,6 +124,11 @@ def get_max_search_calls() -> int:
     return max(1, min(value or DEFAULT_MAX_SEARCH_CALLS, 10))
 
 
+def get_search_context_size() -> str:
+    value = os.getenv("TRIVIA_SEARCH_CONTEXT_SIZE", "medium").strip().lower()
+    return value if value in VALID_SEARCH_CONTEXT_SIZES else "medium"
+
+
 def build_collection_prompt(
     topic: str,
     count: int,
@@ -106,11 +136,13 @@ def build_collection_prompt(
     output_count: int | None = None,
     max_search_calls: int = DEFAULT_MAX_SEARCH_CALLS,
     map_mode: bool = False,
+    existing_facts: list[str] | None = None,
 ) -> str:
     output_count = output_count or count
     subject = f"「{topic}」に関する" if topic else "ジャンルを限定しない"
     categories = ", ".join(TRIVIA_CATEGORIES)
     exclusions = "\n".join(f"- {title}" for title in exclusion_titles)
+    fact_exclusions = "\n".join(f"- {fact}" for fact in (existing_facts or []))
     map_focus = ""
     if map_mode:
         map_focus = f"""
@@ -124,17 +156,23 @@ def build_collection_prompt(
 - {output_count}件は都道府県、施設、史跡、地域文化などが互いに偏りすぎないようにする
 """
     return f"""
-Web検索を最大{max_search_calls}回まで行い、日本語の雑学・豆知識・話のネタをまとめたWebサイトの記事から、
+Web検索を最大{max_search_calls}回まで行い、Web上の個別ページから、
 {subject}具体的な事実を{output_count}件見つけ、それぞれを独立した雑学として書いてください。
 最初の検索だけで決めず、必要に応じて検索語や切り口を変えて複数回探してください。
 十分に良い候補が集まった時点で検索を止め、回数を使い切る必要はありません。
 
-Webサイトは題材を探すための情報源にすぎません。出力対象は、記事内で紹介されている
-生物、人体、自然、科学、歴史、文化、生活、食べ物などに関する具体的な事実です。
-検索と出典には、雑学・豆知識・話のネタを主目的とする日本語のまとめサイトだけを
-使用してください。学術論文、学会誌、大学・研究機関、官公庁、百科事典、報道機関、
-企業・団体の公式サイト、専門家向け技術資料は、検索結果に出ても使用しないでください。
-正確さは採用した雑学記事の記述範囲で保ち、学術的な詳説よりも、
+【必須の検索手順】
+- モデルの内部知識だけで題材、理由、例外、因果関係を作らない。出力する全候補について必ずWeb検索結果の個別ページを開く
+- まず雑学・豆知識サイトなどから意外な起点となる事実を探す
+- 起点となる事実を見つけたら「なぜそうなったのか」「例外はあるか」「一見矛盾する事例はないか」「名称・商標・制度・歴史とどう繋がるか」のうち、最も面白くなる問いを1つ立て、その答えを追加検索する
+- 例: 「宅急便は商標」で止めず、「それなら『魔女の宅急便』でなぜ使えるのか」を検索する。検索ページで理由まで確認できた場合だけ候補にする
+- 検索で直接確認できなかった推測や、一般知識から補った説明は出力しない
+- 検索結果のスニペットだけで判断せず、最終的な主張を直接説明する個別ページを確認する
+- 1段目の事実だけよりも、2段目の理由・例外・意外な繋がりまで確認できた候補を優先する
+
+題材発見には雑学サイトも使えます。深掘りと検証には、企業・団体の公式ページ、官公庁、
+大学・研究機関、博物館、専門メディアなど、その主張を直接確認できる情報源を優先してください。
+出力対象は、生物、人体、自然、科学、歴史、文化、生活、食べ物などに関する具体的な事実です。
 日常会話で誰かに話したくなる意外性と分かりやすさを重視してください。
 
 【最重要: 雑学の題材】
@@ -171,14 +209,15 @@ Webサイトは題材を探すための情報源にすぎません。出力対�
 
 【本文と解説】
 - contentは50〜80文字程度のです・ます調で、雑学の要点を一読で理解できる本文にする
-- explanationは100〜150文字程度で、contentの繰り返しではなく、理由、仕組み、背景、条件や例外を補足する
+- explanationは100〜180文字程度で、contentの繰り返しではなく、追加検索で確認した理由、仕組み、背景、条件、例外、一見矛盾する事例との繋がりを補足する
+- 深掘りで面白さが増す題材では、contentに起点となる意外な事実、explanationに「なぜ／どうして可能か」の答えを書く
 - contentとexplanationに改行、前置き、感想、読者への呼びかけを入れない
 - 「〜といわれています」だけで済ませず、記事で確認できる範囲で何が分かっているかを具体的に書く
 - explanationも情報源を紹介する文章にせず、その事実自体の理由や背景だけを書く
 
 【出典と正確性】
-- sourceには、雑学・豆知識のまとめサイト内で、その具体的な事実を説明している個別記事ページのhttpまたはhttps URLを入れる
-- 学術論文、大学、研究機関、官公庁、百科事典、ニュース、企業公式ページのURLをsourceに入れない
+- sourceには、最終的な深掘り内容を直接説明している個別ページのhttpまたはhttps URLを入れる
+- 公式ページ、官公庁、大学・研究機関、博物館、信頼できる専門メディアがあれば優先する
 - URLが確認できない題材、検索結果の抜粋だけで判断した題材、記事に書かれていない内容は採用しない
 - 数値、年代、固有名詞、因果関係は記事の内容と一致させる
 - 条件や例外がある事実を、常に成り立つ事実のように書かない
@@ -204,7 +243,7 @@ Webサイトは題材を探すための情報源にすぎません。出力対�
       "subject_key": "中心対象を表す短い一般名詞",
       "title": "独自に作成した30文字以内のタイトル",
       "content": "独自に作成した50〜80文字程度の本文",
-      "explanation": "独自に作成した100〜150文字程度の解説",
+      "explanation": "追加検索した理由や意外な繋がりを含む100〜180文字程度の解説",
       "category": "{categories}のいずれか",
       "source": "題材を発見した記事のURL",
       "map_address": "雑学MAPに置ける具体的な住所や施設名。場所に関係しない雑学なら空文字",
@@ -226,9 +265,14 @@ Webサイトは題材を探すための情報源にすぎません。出力対�
 {"- 地図用収集モードでは、場所情報が欠ける候補は出力しない" if map_mode else ""}
 
 【除外リスト】
-以下は公開済みまたは承認待ちです。タイトルの完全一致だけでなく、
+以下はデータベースにある公開済みまたは承認待ちの雑学です。新しい候補を考える前に必ず照合してください。
+タイトルの完全一致だけでなく、
 同じ対象について同じ事実を述べる言い換え、似た切り口、実質的に同じネタも避けてください。
 {exclusions}
+
+【既存雑学の本文要約（直近最大300件）】
+タイトルが違っても、以下と中心事実が同じ候補は出力しないでください。
+{fact_exclusions}
 """
 
 
@@ -386,7 +430,13 @@ def get_incomplete_reason(response) -> str:
     return f"収集処理が完了しませんでした: {reason or 'unknown'}"
 
 
-def collect_trivia(db: Session, topic: str, count: int, map_mode: bool = False) -> list[dict]:
+def collect_trivia(
+    db: Session,
+    topic: str,
+    count: int,
+    map_mode: bool = False,
+    usage_callback: Callable[[TriviaCollectionUsage], None] | None = None,
+) -> list[dict]:
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
         raise RuntimeError("OPENAI_API_KEY is not configured")
@@ -394,15 +444,22 @@ def collect_trivia(db: Session, topic: str, count: int, map_mode: bool = False) 
     count = max(1, min(count, 10))
     topic = topic.strip()
     output_count = min(10, count * 2) if not topic else count
-    existing_titles = [
-        row[0]
-        for row in db.query(Trivia.title).all()
-        + db.query(TriviaCandidate.title).filter(TriviaCandidate.status == "pending").all()
-        if row[0]
+    existing_rows = (
+        db.query(Trivia.title, Trivia.content).order_by(Trivia.id.asc()).all()
+        + db.query(TriviaCandidate.title, TriviaCandidate.content)
+        .filter(TriviaCandidate.status == "pending")
+        .order_by(TriviaCandidate.id.asc())
+        .all()
+    )
+    existing_titles = [row[0] for row in existing_rows if row[0]]
+    existing_facts = [
+        f"{title}: {re.sub(r'\\s+', ' ', content or '').strip()[:160]}"
+        for title, content in existing_rows[-300:]
+        if title
     ]
     tool = {
         "type": "web_search",
-        "search_context_size": "low",
+        "search_context_size": get_search_context_size(),
         "user_location": {
             "type": "approximate",
             "country": "JP",
@@ -432,8 +489,11 @@ def collect_trivia(db: Session, topic: str, count: int, map_mode: bool = False) 
             output_count=output_count,
             max_search_calls=max_search_calls,
             map_mode=map_mode,
+            existing_facts=existing_facts,
         ),
     )
+    if usage_callback:
+        usage_callback(get_collection_usage(response))
     incomplete_reason = get_incomplete_reason(response)
     if incomplete_reason:
         raise RuntimeError(incomplete_reason)
@@ -457,3 +517,21 @@ def collect_trivia(db: Session, topic: str, count: int, map_mode: bool = False) 
     if not topic:
         novel_items = select_diverse_items(novel_items, count)
     return validate_collected_items(novel_items)[:count]
+
+
+def collect_trivia_candidates(
+    db: Session,
+    topic: str,
+    count: int,
+    map_mode: bool = False,
+    usage_callback: Callable[[TriviaCollectionUsage], None] | None = None,
+) -> list[TriviaCandidate]:
+    """Run the shared web collection workflow and persist its review candidates."""
+    items = collect_trivia(
+        db,
+        topic=topic,
+        count=count,
+        map_mode=map_mode,
+        usage_callback=usage_callback,
+    )
+    return create_candidates(db, items)

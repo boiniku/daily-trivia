@@ -27,6 +27,10 @@ def migrate():
         from models import MapTrivia
         MapTrivia.__table__.create(bind=engine)
         inspector = inspect(engine)
+    if not inspector.has_table("daily_trivia_collection_runs"):
+        from models import DailyTriviaCollectionRun
+        DailyTriviaCollectionRun.__table__.create(bind=engine)
+        inspector = inspect(engine)
 
     existing = {column["name"] for column in inspector.get_columns("trivia_candidates")}
     with engine.begin() as conn:

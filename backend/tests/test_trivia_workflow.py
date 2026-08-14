@@ -25,9 +25,11 @@ from services.trivia_collection import (
     TriviaCollectionResult,
     build_collection_prompt,
     collect_trivia,
+    collect_trivia_candidates,
     get_incomplete_reason,
     get_discovery_domains,
     get_max_search_calls,
+    get_search_context_size,
     has_complete_map_fields,
     parse_collection_output,
     remove_existing_duplicates,
@@ -350,7 +352,7 @@ class LineSecurityTests(unittest.TestCase):
         self.assertIn("事実・題材・キーワードだけ", prompt)
         self.assertIn("独自の日本語表現", prompt)
         self.assertIn("雑学サイト、まとめサイト、記事、メディアそのものを題材にしない", prompt)
-        self.assertIn("個別記事ページのhttpまたはhttps URL", prompt)
+        self.assertIn("深掘り内容を直接説明している個別ページのhttpまたはhttps URL", prompt)
         self.assertIn("話題まとめサイトの使い方", prompt)
         self.assertIn("タイトルだけで「何についての、どんな意外な事実か」", prompt)
         self.assertIn("疑問形、過度な煽り", prompt)
@@ -361,8 +363,10 @@ class LineSecurityTests(unittest.TestCase):
         self.assertIn("一覧記事の要約ではなく", prompt)
         self.assertIn("同一対象から選ぶのは1件まで", prompt)
         self.assertIn("最低3カテゴリ", prompt)
-        self.assertIn("まとめサイトだけ", prompt)
-        self.assertIn("学術論文、学会誌、大学・研究機関", prompt)
+        self.assertIn("モデルの内部知識だけで題材、理由、例外、因果関係を作らない", prompt)
+        self.assertIn("『魔女の宅急便』でなぜ使えるのか", prompt)
+        self.assertIn("2段目の理由・例外・意外な繋がり", prompt)
+        self.assertIn("公式ページ、官公庁、大学・研究機関", prompt)
         self.assertIn("日常会話で誰かに話したくなる", prompt)
         self.assertIn(f"最大{DEFAULT_MAX_SEARCH_CALLS}回まで", prompt)
         self.assertIn("検索語や切り口を変えて複数回", prompt)
@@ -394,7 +398,7 @@ class LineSecurityTests(unittest.TestCase):
         self.assertTrue(has_complete_map_fields(complete))
         self.assertFalse(has_complete_map_fields(incomplete))
 
-    def test_collection_uses_trivia_sites_by_default(self):
+    def test_collection_search_is_unrestricted_by_default(self):
         with patch.dict(os.environ, {}, clear=False):
             os.environ.pop("TRIVIA_DISCOVERY_DOMAINS", None)
             self.assertEqual(
@@ -413,12 +417,28 @@ class LineSecurityTests(unittest.TestCase):
         with patch.dict(os.environ, {"TRIVIA_MAX_SEARCH_CALLS": "invalid"}, clear=False):
             self.assertEqual(get_max_search_calls(), DEFAULT_MAX_SEARCH_CALLS)
 
+    def test_collection_search_context_defaults_to_medium_and_is_validated(self):
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("TRIVIA_SEARCH_CONTEXT_SIZE", None)
+            self.assertEqual(get_search_context_size(), "medium")
+        with patch.dict(os.environ, {"TRIVIA_SEARCH_CONTEXT_SIZE": "high"}, clear=False):
+            self.assertEqual(get_search_context_size(), "high")
+        with patch.dict(os.environ, {"TRIVIA_SEARCH_CONTEXT_SIZE": "invalid"}, clear=False):
+            self.assertEqual(get_search_context_size(), "medium")
+
     def test_collection_prompt_includes_all_existing_titles(self):
         titles = [f"既存タイトル{i}" for i in range(305)]
-        prompt = build_collection_prompt("", 5, titles)
+        prompt = build_collection_prompt(
+            "",
+            5,
+            titles,
+            existing_facts=["宅急便は商標: 宅急便はヤマト運輸の登録商標です。"],
+        )
 
         self.assertIn("既存タイトル0", prompt)
         self.assertIn("既存タイトル304", prompt)
+        self.assertIn("宅急便は商標: 宅急便はヤマト運輸の登録商標", prompt)
+        self.assertIn("中心事実が同じ候補は出力しない", prompt)
 
     def test_collection_output_parser(self):
         items = parse_collection_output("""```json
@@ -474,6 +494,14 @@ class LineSecurityTests(unittest.TestCase):
             Base.metadata.create_all(engine)
             db = sessionmaker(bind=engine)()
             try:
+                db.add(Trivia(
+                    title="既存の雑学",
+                    content="既存本文の中心事実です。",
+                    explanation="",
+                    source="https://example.com/existing",
+                    category="生活",
+                ))
+                db.commit()
                 items = collect_trivia(db, "", 5)
             finally:
                 db.close()
@@ -485,11 +513,33 @@ class LineSecurityTests(unittest.TestCase):
         self.assertEqual(kwargs["max_output_tokens"], 16000)
         self.assertEqual(kwargs["reasoning"], {"effort": "low"})
         self.assertEqual(kwargs["tool_choice"], "required")
+        self.assertEqual(kwargs["tools"][0]["search_context_size"], "medium")
+        self.assertIn("既存本文の中心事実", kwargs["input"])
         self.assertIs(kwargs["text_format"], TriviaCollectionResult)
         self.assertEqual(
             kwargs["tools"][0]["filters"]["allowed_domains"],
             ["example.com", "media.example.jp"],
         )
+
+    def test_shared_collection_workflow_persists_review_candidates(self):
+        engine = create_engine("sqlite:///:memory:")
+        Base.metadata.create_all(engine)
+        db = sessionmaker(bind=engine)()
+        item = {
+            "title": "深掘りした共通候補",
+            "content": "Web検索で確認した共通収集処理のテスト本文です。",
+            "explanation": "理由や例外まで追加検索して確認した解説です。",
+            "source": "https://example.com/deep-fact",
+            "category": "生活",
+        }
+        try:
+            with patch("services.trivia_collection.collect_trivia", return_value=[item]):
+                candidates = collect_trivia_candidates(db, "商標", 1)
+            self.assertEqual(len(candidates), 1)
+            self.assertEqual(db.query(TriviaCandidate).count(), 1)
+        finally:
+            db.close()
+            engine.dispose()
 
     def test_collection_schema_requires_all_fields(self):
         schema = TriviaCollectionResult.model_json_schema()
