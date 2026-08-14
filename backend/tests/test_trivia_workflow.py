@@ -393,9 +393,14 @@ class LineSecurityTests(unittest.TestCase):
     def test_map_collection_prompt_requires_place_fields(self):
         prompt = build_collection_prompt("京都", 3, [], map_mode=True)
         self.assertIn("雑学MAPへ登録する候補だけ", prompt)
-        self.assertIn("現地に行ける具体的な場所", prompt)
-        self.assertIn("map_address、map_prefecture、map_latitude、map_longitude、map_radiusは全件必ず", prompt)
-        self.assertNotIn("map_hintは全件必ず", prompt)
+        self.assertIn("現地に証拠が残る", prompt)
+        self.assertIn("一段目より二段目・三段目が面白い", prompt)
+        self.assertIn("対象物そのものを観察できる候補", prompt)
+        self.assertIn("私有地への立入り", prompt)
+        self.assertIn("2件以上の独立した資料", prompt)
+        self.assertIn("座標を推測しない", prompt)
+        self.assertIn("map_address、map_prefecture、map_latitude、map_longitude、map_radius、map_hintを全件必ず", prompt)
+        self.assertIn("合計26点以上", prompt)
 
     def test_map_collection_requires_complete_map_fields(self):
         complete = CollectedTrivia(
@@ -410,11 +415,16 @@ class LineSecurityTests(unittest.TestCase):
             map_latitude=35.658581,
             map_longitude=139.745433,
             map_radius=300,
+            map_hint="正面から塔の部材を見比べられます。",
         )
         incomplete = complete.model_copy(update={"map_address": ""})
+        missing_hint = complete.model_copy(update={"map_hint": ""})
+        invalid_radius = complete.model_copy(update={"map_radius": 5000})
 
         self.assertTrue(has_complete_map_fields(complete))
         self.assertFalse(has_complete_map_fields(incomplete))
+        self.assertFalse(has_complete_map_fields(missing_hint))
+        self.assertFalse(has_complete_map_fields(invalid_radius))
 
     def test_collection_search_is_unrestricted_by_default(self):
         with patch.dict(os.environ, {}, clear=False):
@@ -908,6 +918,7 @@ class MobileEditorIntegrationTests(unittest.TestCase):
         self.assertEqual(page.status_code, 200)
         self.assertNotIn("下書き保存", page.text)
         self.assertIn("登録する", page.text)
+        self.assertIn('id="map_hint"', page.text)
 
     def test_new_map_candidate_publishes_to_map_trivia_directly(self):
         token = make_editor_token(0)
