@@ -420,6 +420,8 @@ class LineSecurityTests(unittest.TestCase):
         self.assertIn("初出の同じ文", prompt)
         self.assertIn("観光案内", prompt)
         self.assertIn("現地体験や説明の一項目がやや弱くても", prompt)
+        self.assertIn("2点は最低品質、3点は明確な合格", prompt)
+        self.assertIn("可能な限り3件出力する", prompt)
 
     def test_normal_collection_prompt_keeps_compact_length(self):
         prompt = build_collection_prompt("京都", 3, [], map_mode=False)
@@ -569,16 +571,16 @@ class LineSecurityTests(unittest.TestCase):
         review = MapTriviaQualityReviewResult(assessments=[
             MapTriviaQualityAssessment(
                 candidate_index=0,
-                is_trivia=True,
+                is_trivia=False,
                 is_hyperlocal=False,
-                answers_why_and_how=True,
-                jargon_is_clear=True,
+                answers_why_and_how=False,
+                jargon_is_clear=False,
                 onsite_payoff_is_specific=False,
-                trivia_score=3,
+                trivia_score=2,
                 hyperlocal_score=2,
-                why_how_score=3,
-                clarity_score=3,
-                rejection_reason="同種の道は他地域にもあり、全国唯一ではありません。",
+                why_how_score=2,
+                clarity_score=4,
+                rejection_reason="各観点は最低品質ですが、一部のbool判定を満たしません。",
             ),
         ])
         response = type("Response", (), {

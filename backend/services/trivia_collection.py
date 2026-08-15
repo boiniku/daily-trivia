@@ -229,7 +229,7 @@ def build_map_collection_focus(output_count: int) -> str:
 - 現地に何も残らず、場所そのものにも訪れる理由がない
 - 都市伝説、伝承だけの話、個人ブログやまとめサイトしか根拠がない話
 - 魅力的でも中心事実、人物、年代、由来を信頼できる資料で確認できない話
-- 数を満たすために弱い候補を混ぜない。条件を満たす候補が少なければ{output_count}件未満でもよい
+- 虚偽や観光案内で数を埋めてはいけないが、一項目が満点でないだけの候補を自己判断で捨てない。最低品質を満たす候補を比較し、可能な限り{output_count}件出力する
 
 【ファクトチェックと出典】
 - 国、自治体、博物館、文化財機関、施設・企業公式、大学、新聞社、専門資料の順に優先する
@@ -246,7 +246,7 @@ def build_map_collection_focus(output_count: int) -> str:
 
 【内部評価】
 候補を広く調査してから、「予想とのズレ」「前提知識なしで伝わるか」「理由を知った納得感」「具体的に想像できるか」「一文で話したくなるか」「場所との強い結びつき」「信頼性」を各0〜5点で評価する。「場所との強い結びつき」は全国唯一かではなく、その地点の具体物・出来事・習慣として確認できるかで評価する。
-「予想とのズレ」「前提知識なしで伝わるか」「場所との強い結びつき」「信頼性」が各3点以上の候補から、総合点の高いものを優先する。現地体験や説明の一項目がやや弱くても、他の面白さが十分に強ければ除外しない。
+「予想とのズレ」「前提知識なしで伝わるか」「場所との強い結びつき」「信頼性」が2点以上の候補から、総合点の高いものを優先する。2点は最低品質、3点は明確な合格とする。現地体験や説明の一項目がやや弱くても、他の面白さが十分に強ければ除外しない。
 {output_count}件は場所、地域、面白さの型が偏りすぎないようにする。
 """
 
@@ -287,7 +287,7 @@ is_triviaは「予想とのズレがあり、一文で人に話したくなる�
 is_hyperlocalは全国唯一という意味ではありません。同じ種類の構造や習慣が他地域にも存在していても、その地点にある具体的な対象や経緯を確認できるなら、それだけでfalseにしないでください。
 jargon_is_clear、onsite_payoff_is_specificを含め、候補文だけで実質的に満たしている場合にtrueにしてください。
 trivia_scoreは意外性と話したくなる度合い、hyperlocal_scoreは場所固有性、why_how_scoreは驚きを回収する説明、clarity_scoreは前提知識なしで具体的に想像できる度合いとして採点してください。
-各スコアは0〜5点で付け、3点を最低限合格、4点を明確な合格、5点を非常に優れた候補とします。
+各スコアは0〜5点で付け、2点を最低品質、3点を明確な合格、4点を優れた候補、5点を非常に優れた候補とします。boolは判定理由を示す補助情報であり、一つのfalseだけで総合的に面白い候補を不合格にしないでください。
 候補ごとにcandidate_indexを保ち、全候補を1回ずつ評価してください。
 
 候補:
@@ -324,13 +324,11 @@ def review_map_trivia_quality(
             + assessment.clarity_score
         )
         passed = (
-            assessment.is_trivia
-            and assessment.jargon_is_clear
-            and assessment.trivia_score >= 3
+            assessment.trivia_score >= 2
             and assessment.hyperlocal_score >= 2
             and assessment.why_how_score >= 2
-            and assessment.clarity_score >= 3
-            and score_total >= 11
+            and assessment.clarity_score >= 2
+            and score_total >= 10
         )
         if passed and 0 <= assessment.candidate_index < len(items):
             accepted_indices.add(assessment.candidate_index)
@@ -775,7 +773,8 @@ def collect_trivia(
         remaining = count - len(eligible_items)
         if remaining <= 0:
             break
-        output_count = min(10, remaining * 2)
+        # Give the quality review enough alternatives even for a one-item request.
+        output_count = min(10, max(3, remaining * 2))
         response = client.responses.parse(
             model=model,
             tools=[tool],
@@ -819,16 +818,21 @@ def collect_trivia(
             continue
 
         source_items = parsed.trivia
+        generated_count = len(source_items)
+        complete_map_count = generated_count
+        quality_accepted_count = generated_count
         attempted_titles.extend(
             item.title.strip() for item in source_items if item.title.strip()
         )
         if map_mode:
             source_items = [item for item in source_items if has_complete_map_fields(item)]
+            complete_map_count = len(source_items)
             source_items, review_usage = review_map_trivia_quality(
                 client,
                 model,
                 source_items,
             )
+            quality_accepted_count = len(source_items)
             total_usage = TriviaCollectionUsage(
                 input_tokens=total_usage.input_tokens + review_usage.input_tokens,
                 output_tokens=total_usage.output_tokens + review_usage.output_tokens,
@@ -838,9 +842,12 @@ def collect_trivia(
                 usage_callback(total_usage)
         novel_items, duplicate_titles = remove_existing_duplicates(db, source_items)
         logger.info(
-            "Web collection attempt %s: generated=%s duplicates=%s novel=%s",
+            "Web collection attempt %s: generated=%s complete_map=%s "
+            "quality_accepted=%s duplicates=%s novel=%s",
             attempt + 1,
-            len(source_items),
+            generated_count,
+            complete_map_count,
+            quality_accepted_count,
             len(duplicate_titles),
             len(novel_items),
         )
