@@ -401,6 +401,16 @@ class LineSecurityTests(unittest.TestCase):
         self.assertIn("座標を推測しない", prompt)
         self.assertIn("map_address、map_prefecture、map_latitude、map_longitude、map_radius、map_hintを全件必ず", prompt)
         self.assertIn("合計26点以上", prompt)
+        self.assertIn("contentは70〜110文字程度", prompt)
+        self.assertIn("explanationは180〜300文字程度", prompt)
+        self.assertIn("成立した背景や原因→転機となった具体的な出来事→現在の姿", prompt)
+        self.assertIn("具体情報を2種類以上", prompt)
+
+    def test_normal_collection_prompt_keeps_compact_length(self):
+        prompt = build_collection_prompt("京都", 3, [], map_mode=False)
+        self.assertIn("contentは45〜75文字程度", prompt)
+        self.assertIn("explanationは80〜140文字程度", prompt)
+        self.assertNotIn("contentは70〜110文字程度", prompt)
 
     def test_map_collection_requires_complete_map_fields(self):
         complete = CollectedTrivia(

@@ -157,6 +157,8 @@ def build_map_collection_focus(output_count: int) -> str:
 【必須の深掘り】
 - 面白い事実を見つけたら、そこで止めず、「なぜそうなったか」「当時何が起きたか」「現在も残るか」「現地で具体的に何が見えるか」を追加検索する
 - 二段目・三段目で面白さが増した情報はexplanationへ入れる。弱い関連情報を無理に足して長くしない
+- explanationは、情報を箇条書きのように並べず、「成立した背景や原因→転機となった具体的な出来事→現在の姿や現地で確認できる痕跡」が一続きで分かる構成にする
+- 年代、人物、数量、構造、用途の変化のうち、題材の理解を深める具体情報を2種類以上入れる。資料で確認できない数字や逸話で水増ししない
 - 現存、営業、公開、移設、改修の状況を、できるだけ新しい公式情報で確認する。現在見られないものを見られるように書かない
 
 【現地体験】
@@ -209,6 +211,25 @@ def build_collection_prompt(
     exclusions = "\n".join(f"- {title}" for title in exclusion_titles)
     fact_exclusions = "\n".join(f"- {fact}" for fact in (existing_facts or []))
     map_focus = build_map_collection_focus(output_count) if map_mode else ""
+    if map_mode:
+        content_rule = (
+            "- contentは70〜110文字程度のです・ます調で、場所と中心事実の結びつきが"
+            "一読で分かる本文にする"
+        )
+        explanation_rule = (
+            "- explanationは180〜300文字程度、3〜4文で、contentの言い換えではなく、検索で確認した"
+            "背景や原因、具体的な出来事、現在の状態と現地の痕跡を因果関係または時系列でつなげる"
+        )
+        content_example = "場所との結びつきが一読で分かる70〜110文字程度の本文"
+        explanation_example = "背景、具体的な出来事、現在の痕跡をつないだ180〜300文字、3〜4文の解説"
+    else:
+        content_rule = "- contentは45〜75文字程度のです・ます調で、専門知識のない中学生が雑学の要点を一読で理解できる本文にする"
+        explanation_rule = (
+            "- explanationは80〜140文字程度、最大2文で、contentの繰り返しではなく、追加検索で確認した"
+            "理由、仕組み、背景、条件、例外、一見矛盾する事例との繋がりを平易に補足する"
+        )
+        content_example = "中学生が一読で分かる45〜75文字程度の本文"
+        explanation_example = "理由や意外な繋がりを平易に説明する80〜140文字、最大2文の解説"
     return f"""
 Web検索を最大{max_search_calls}回まで行い、Web上の個別ページから、
 {subject}具体的な事実を{output_count}件見つけ、それぞれを独立した雑学として書いてください。
@@ -303,8 +324,8 @@ Web検索を最大{max_search_calls}回まで行い、Web上の個別ページ�
 - 宇宙空間の特徴
 
 【本文と解説】
-- contentは45〜75文字程度のです・ます調で、専門知識のない中学生が雑学の要点を一読で理解できる本文にする
-- explanationは80〜140文字程度、最大2文で、contentの繰り返しではなく、追加検索で確認した理由、仕組み、背景、条件、例外、一見矛盾する事例との繋がりを平易に補足する
+{content_rule}
+{explanation_rule}
 - 深掘りで面白さが増す題材では、contentに起点となる意外な事実、explanationに「なぜ／どうして可能か」の答えを書く
 - contentとexplanationに改行、前置き、感想、読者への呼びかけを入れない
 - 「〜といわれています」だけで済ませず、記事で確認できる範囲で何が分かっているかを具体的に書く
@@ -341,8 +362,8 @@ Web検索を最大{max_search_calls}回まで行い、Web上の個別ページ�
     {{
       "subject_key": "中心対象を表す短い一般名詞",
       "title": "独自に作成した30文字以内のタイトル",
-      "content": "中学生が一読で分かる45〜75文字程度の本文",
-      "explanation": "理由や意外な繋がりを平易に説明する80〜140文字、最大2文の解説",
+      "content": "{content_example}",
+      "explanation": "{explanation_example}",
       "category": "{categories}のいずれか",
       "source": "題材を発見した記事のURL",
       "map_address": "雑学MAPに置ける具体的な住所や施設名。場所に関係しない雑学なら空文字",
