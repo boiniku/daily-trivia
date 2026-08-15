@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { View, Text, StyleSheet, Pressable, ActivityIndicator, Alert, Platform, AppState, AppStateStatus } from 'react-native';
+import { View, Text, StyleSheet, Pressable, ActivityIndicator, Alert, Platform, AppState, AppStateStatus, LayoutChangeEvent, useWindowDimensions } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import { Link, useRouter, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -41,7 +41,10 @@ import { useAuth } from '../../contexts/AuthContext';
 
 export default function HomeScreen() {
     const router = useRouter();
+    const { height: windowHeight } = useWindowDimensions();
+    const isShortScreen = windowHeight < 750;
     const [currentIndex, setCurrentIndex] = useState(0);
+    const [cardArea, setCardArea] = useState({ width: 0, height: 0 });
     const [triviaList, setTriviaList] = useState<TriviaItem[]>([]);
     const [loading, setLoading] = useState(true);
     const [showGuideMode, setShowGuideMode] = useState<'tap' | 'swipe' | null>(null);
@@ -71,6 +74,20 @@ export default function HomeScreen() {
     const shouldShowSwipeAfterTapGuideRef = useRef(true);
     const rewardHandledRef = useRef(false);
     const rewardRequestPendingRef = useRef(false);
+
+    const handleCardAreaLayout = useCallback((event: LayoutChangeEvent) => {
+        const { width, height } = event.nativeEvent.layout;
+        setCardArea((current) => {
+            if (Math.abs(current.width - width) < 1 && Math.abs(current.height - height) < 1) {
+                return current;
+            }
+            return { width, height };
+        });
+    }, []);
+
+    const cardWidth = Math.max(0, Math.min(cardArea.width * 0.86, 420));
+    const cardHeight = Math.max(0, Math.min(cardArea.height - 24, 500));
+    const canRenderCard = cardWidth > 0 && cardHeight > 0;
 
     // Helper to get effective date (changes at 2:00 AM)
     const getEffectiveDate = useCallback(() => {
@@ -676,26 +693,26 @@ export default function HomeScreen() {
     }
 
     return (
-        <SafeAreaView style={styles.container}>
-            <View style={styles.header}>
+        <SafeAreaView edges={['top', 'left', 'right']} style={styles.container}>
+            <View style={[styles.header, isShortScreen && styles.headerCompact]}>
                 <Pressable
-                    style={[styles.undoButton, currentIndex <= 0 && styles.undoButtonDisabled]}
+                    style={[styles.undoButton, isShortScreen && styles.headerButtonCompact, currentIndex <= 0 && styles.undoButtonDisabled]}
                     onPress={handleUndoSwipe}
                     disabled={currentIndex <= 0}
                     accessibilityRole="button"
                     accessibilityLabel="ひとつ前の雑学に戻る"
                 >
-                    <Ionicons name="arrow-undo" size={24} color={currentIndex > 0 ? Colors.light.primary : '#C8C8C8'} />
+                    <Ionicons name="arrow-undo" size={isShortScreen ? 21 : 24} color={currentIndex > 0 ? Colors.light.primary : '#C8C8C8'} />
                 </Pressable>
-                <Text style={styles.headerTitle}>毎日雑学</Text>
+                <Text style={[styles.headerTitle, isShortScreen && styles.headerTitleCompact]} maxFontSizeMultiplier={1.2}>毎日雑学</Text>
 
                 {/* Info Button for Widget Setup Guide */}
                 <Pressable
-                    style={styles.infoButton}
+                    style={[styles.infoButton, isShortScreen && styles.headerButtonCompact]}
                     onPress={() => router.push('/widget-setup')}
                     hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
                 >
-                    <Ionicons name="information-circle-outline" size={28} color={Colors.light.text} />
+                    <Ionicons name="information-circle-outline" size={isShortScreen ? 25 : 28} color={Colors.light.text} />
                     {!hasSeenWidgetGuide ? (
                         <View style={styles.badge}>
                             <Text style={styles.badgeText}>!</Text>
@@ -704,31 +721,37 @@ export default function HomeScreen() {
                 </Pressable>
             </View>
 
-            <View style={styles.cardContainer}>
+            <View style={styles.cardContainer} onLayout={handleCardAreaLayout}>
                 {!isLimitReached ? (
                     <>
                         {/* Next Card (Background) */}
-                        {triviaList[currentIndex + 1] ? (
+                        {canRenderCard && triviaList[currentIndex + 1] ? (
                             <TriviaCard
                                 key={`next-${triviaList[currentIndex + 1].id}`}
                                 item={triviaList[currentIndex + 1]}
                                 onSwipe={undefined}
                                 onPressDetails={() => { }}
                                 enabled={false}
+                                width={cardWidth}
+                                height={cardHeight}
                                 style={{ zIndex: 0, transform: [{ scale: 0.95 }, { translateY: 10 }] }}
                             />
                         ) : null}
 
                         {/* Current Card (Foreground) */}
                         {currentItem ? (
-                            <TriviaCard
-                                key={`current-${currentItem.id}`}
-                                item={currentItem}
-                                onSwipe={handleSwipe}
-                                onPressDetails={handlePressDetails}
-                                onDoubleTap={handleDoubleTapHee}
-                                style={{ zIndex: 1 }}
-                            />
+                            canRenderCard ? (
+                                <TriviaCard
+                                    key={`current-${currentItem.id}`}
+                                    item={currentItem}
+                                    onSwipe={handleSwipe}
+                                    onPressDetails={handlePressDetails}
+                                    onDoubleTap={handleDoubleTapHee}
+                                    width={cardWidth}
+                                    height={cardHeight}
+                                    style={{ zIndex: 1 }}
+                                />
+                            ) : null
                         ) : (
                             // When waiting for fetchMoreTrivia to load next block in Pro plan
                             <View style={[styles.finishedContainer, { paddingVertical: 60, zIndex: 1 }]}>
@@ -759,7 +782,7 @@ export default function HomeScreen() {
                         ) : null}
                     </>
                 ) : (
-                    <View style={styles.finishedContainer}>
+                    <View style={[styles.finishedContainer, isShortScreen && styles.finishedContainerCompact]}>
                         {canUnlockRewardedBonus ? (
                             <>
                                 <Ionicons name="play-circle" size={52} color={Colors.light.accent} />
@@ -787,7 +810,13 @@ export default function HomeScreen() {
                 )}
             </View>
 
-            <View style={[styles.adsContainer, { marginBottom: getTabScreenAdBottomMargin(insets) }]}>
+            <View style={[
+                styles.adsContainer,
+                {
+                    marginBottom: getTabScreenAdBottomMargin(insets),
+                    minHeight: isPro ? 0 : BANNER_RESERVED_HEIGHT,
+                },
+            ]}>
                 {/* Banner Ad */}
                 {!isPro ? (
                     <BannerAd
@@ -820,6 +849,9 @@ const styles = StyleSheet.create({
         zIndex: 50, // High z-index so it stays above SwipeGuide overlay
         backgroundColor: 'transparent',
     },
+    headerCompact: {
+        paddingVertical: 8,
+    },
     headerTitle: {
         fontSize: 32,
         fontWeight: '900', // Heaviest
@@ -828,12 +860,19 @@ const styles = StyleSheet.create({
         textTransform: 'uppercase', // Bold feel
         fontStyle: 'italic', // Dynamic
     },
+    headerTitleCompact: {
+        fontSize: 26,
+    },
     infoButton: {
         width: 44,
         height: 44,
         justifyContent: 'center',
         alignItems: 'center',
         position: 'relative',
+    },
+    headerButtonCompact: {
+        width: 38,
+        height: 38,
     },
     undoButton: {
         width: 44,
@@ -873,7 +912,7 @@ const styles = StyleSheet.create({
         justifyContent: 'center',
         alignItems: 'center',
         position: 'relative',
-        marginTop: -30,
+        overflow: 'hidden',
     },
     finishedContainer: {
         justifyContent: 'center',
@@ -885,6 +924,10 @@ const styles = StyleSheet.create({
         margin: 20,
         borderWidth: 4,
         borderColor: Colors.light.border,
+    },
+    finishedContainerCompact: {
+        padding: 20,
+        margin: 12,
     },
     finishedText: {
         fontSize: 24,
@@ -931,7 +974,6 @@ const styles = StyleSheet.create({
         fontWeight: '900',
     },
     adsContainer: {
-        minHeight: BANNER_RESERVED_HEIGHT,
         backgroundColor: 'transparent',
         justifyContent: 'center',
         alignItems: 'center',

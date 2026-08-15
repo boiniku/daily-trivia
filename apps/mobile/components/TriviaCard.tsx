@@ -1,13 +1,9 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, StyleSheet, Dimensions, Pressable } from 'react-native';
+import { View, Text, StyleSheet, Pressable } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { GestureDetector, Gesture } from 'react-native-gesture-handler';
 import Animated, { useSharedValue, useAnimatedStyle, withSpring, runOnJS, withTiming, withRepeat, withSequence, Easing, withDelay } from 'react-native-reanimated';
 import { Theme, Colors } from '../constants/Colors';
-
-const SCREEN_WIDTH = Dimensions.get('window').width;
-const CARD_WIDTH = SCREEN_WIDTH * 0.85; // Slightly narrower for pop effect
-const CARD_HEIGHT = 500;
 
 interface TriviaItem {
     id: number;
@@ -23,6 +19,8 @@ interface TriviaCardProps {
     onDoubleTap?: () => void;
     style?: any;
     enabled?: boolean;
+    width: number;
+    height: number;
 }
 
 // Floating Question Mark Component
@@ -53,7 +51,18 @@ const FloatingMark = ({ delay = 0, size = 40, x = 0, y = 0, color = '#eee' }: { 
     );
 };
 
-export default function TriviaCard({ item, onSwipe, onPressDetails, onDoubleTap, style, enabled = true }: TriviaCardProps) {
+export default function TriviaCard({
+    item,
+    onSwipe,
+    onPressDetails,
+    onDoubleTap,
+    style,
+    enabled = true,
+    width,
+    height,
+}: TriviaCardProps) {
+    const isCompact = height < 460;
+    const isVeryCompact = height < 370;
     const translationX = useSharedValue(0);
     const translationY = useSharedValue(0);
     const rotation = useSharedValue(0);
@@ -151,10 +160,10 @@ export default function TriviaCard({ item, onSwipe, onPressDetails, onDoubleTap,
 
     return (
         <GestureDetector gesture={composedGesture}>
-            <Animated.View style={[styles.cardContainer, animatedStyle, style]}>
+            <Animated.View style={[styles.cardContainer, { width, height }, animatedStyle, style]}>
                 
                 {/* Background Decorations inside card */}
-                <View style={styles.card}>
+                <View style={[styles.card, isCompact && styles.cardCompact, isVeryCompact && styles.cardVeryCompact]}>
                     {/* Floating Background Elements */}
                     <View style={StyleSheet.absoluteFill} pointerEvents="none">
                         <FloatingMark delay={0} size={80} x={20} y={40} color="#FFCDD2" />
@@ -162,24 +171,38 @@ export default function TriviaCard({ item, onSwipe, onPressDetails, onDoubleTap,
                     </View>
 
                     {/* Header */}
-                    <View style={styles.cardHeader}>
-                        <View style={styles.categoryBadge}>
-                            <Text style={styles.categoryText}>{item.category || "雑学"}</Text>
+                    <View style={[styles.cardHeader, isCompact && styles.cardHeaderCompact]}>
+                        <View style={[styles.categoryBadge, isCompact && styles.categoryBadgeCompact]}>
+                            <Text style={[styles.categoryText, isVeryCompact && styles.categoryTextVeryCompact]}>{item.category || "雑学"}</Text>
                         </View>
                         {/* Circle Badge with ID or Icon */}
-                        <View style={styles.idBadge}>
-                            <Ionicons name="sparkles" size={16} color={Colors.light.primary} />
+                        <View style={[styles.idBadge, isCompact && styles.idBadgeCompact]}>
+                            <Ionicons name="sparkles" size={isCompact ? 14 : 16} color={Colors.light.primary} />
                         </View>
                     </View>
 
                     {/* Main Content */}
-                    <View style={styles.contentContainer}>
-                        <View style={styles.iconCircle}>
-                            <Ionicons name="bulb" size={56} color={Colors.light.accent} />
+                    <View style={[styles.contentContainer, isCompact && styles.contentContainerCompact]}>
+                        <View style={[
+                            styles.iconCircle,
+                            isCompact && styles.iconCircleCompact,
+                            isVeryCompact && styles.iconCircleVeryCompact,
+                        ]}>
+                            <Ionicons name="bulb" size={isVeryCompact ? 34 : isCompact ? 42 : 56} color={Colors.light.accent} />
                         </View>
-                        <Text style={styles.title}>{item.title}</Text>
-                        <View style={styles.bgStripe} />
-                        <Text style={styles.content} numberOfLines={5}>
+                        <Text
+                            style={[styles.title, isCompact && styles.titleCompact, isVeryCompact && styles.titleVeryCompact]}
+                            numberOfLines={isVeryCompact ? 2 : 3}
+                            maxFontSizeMultiplier={1.3}
+                        >
+                            {item.title}
+                        </Text>
+                        {!isVeryCompact ? <View style={[styles.bgStripe, isCompact && styles.bgStripeCompact]} /> : null}
+                        <Text
+                            style={[styles.content, isCompact && styles.contentCompact, isVeryCompact && styles.contentVeryCompact]}
+                            numberOfLines={isVeryCompact ? 3 : isCompact ? 4 : 5}
+                            maxFontSizeMultiplier={1.3}
+                        >
                             {item.content}
                         </Text>
                     </View>
@@ -190,8 +213,8 @@ export default function TriviaCard({ item, onSwipe, onPressDetails, onDoubleTap,
                     </Animated.View>
 
                     {/* Footer Button */}
-                    <Pressable style={styles.footerButton} onPress={onPressDetails}>
-                        <Text style={styles.readMore}>くわしく見る！</Text>
+                    <Pressable style={[styles.footerButton, isCompact && styles.footerButtonCompact]} onPress={onPressDetails}>
+                        <Text style={[styles.readMore, isVeryCompact && styles.readMoreVeryCompact]} maxFontSizeMultiplier={1.3}>くわしく見る！</Text>
                         <View style={styles.arrowCircle}>
                             <Ionicons name="arrow-forward" size={16} color={Colors.light.primary} />
                         </View>
@@ -204,8 +227,6 @@ export default function TriviaCard({ item, onSwipe, onPressDetails, onDoubleTap,
 
 const styles = StyleSheet.create({
     cardContainer: {
-        width: CARD_WIDTH,
-        height: CARD_HEIGHT,
         position: 'absolute',
         alignItems: 'center',
         justifyContent: 'center',
@@ -222,6 +243,13 @@ const styles = StyleSheet.create({
         borderColor: Colors.light.border,
         overflow: 'hidden', // Contain animations
     },
+    cardCompact: {
+        padding: Theme.spacing.m,
+        borderRadius: Theme.borderRadius.l,
+    },
+    cardVeryCompact: {
+        padding: 12,
+    },
     cardHeader: {
         flexDirection: 'row',
         justifyContent: 'space-between',
@@ -229,17 +257,27 @@ const styles = StyleSheet.create({
         marginBottom: Theme.spacing.m,
         zIndex: 1,
     },
+    cardHeaderCompact: {
+        marginBottom: 6,
+    },
     categoryBadge: {
         backgroundColor: Colors.light.primary,
         paddingHorizontal: 16,
         paddingVertical: 8,
         borderRadius: 20,
     },
+    categoryBadgeCompact: {
+        paddingHorizontal: 12,
+        paddingVertical: 6,
+    },
     categoryText: {
         color: 'white',
         fontWeight: 'bold',
         fontSize: 14,
         letterSpacing: 1,
+    },
+    categoryTextVeryCompact: {
+        fontSize: 12,
     },
     idBadge: {
         width: 36,
@@ -249,12 +287,20 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         justifyContent: 'center',
     },
+    idBadgeCompact: {
+        width: 30,
+        height: 30,
+        borderRadius: 15,
+    },
     contentContainer: {
         flex: 1,
         alignItems: 'center',
         justifyContent: 'center',
         paddingVertical: Theme.spacing.m,
         zIndex: 1,
+    },
+    contentContainerCompact: {
+        paddingVertical: 4,
     },
     iconCircle: {
         width: 100,
@@ -268,6 +314,19 @@ const styles = StyleSheet.create({
         borderColor: 'white',
         ...Theme.shadow.small,
     },
+    iconCircleCompact: {
+        width: 72,
+        height: 72,
+        borderRadius: 36,
+        marginBottom: 10,
+        borderWidth: 3,
+    },
+    iconCircleVeryCompact: {
+        width: 52,
+        height: 52,
+        borderRadius: 26,
+        marginBottom: 6,
+    },
     title: {
         fontSize: 24,
         fontWeight: '900', // Heavy font
@@ -276,6 +335,16 @@ const styles = StyleSheet.create({
         marginBottom: Theme.spacing.m,
         lineHeight: 32,
     },
+    titleCompact: {
+        fontSize: 21,
+        lineHeight: 27,
+        marginBottom: 8,
+    },
+    titleVeryCompact: {
+        fontSize: 18,
+        lineHeight: 22,
+        marginBottom: 4,
+    },
     bgStripe: {
         width: '100%',
         height: 8,
@@ -283,12 +352,24 @@ const styles = StyleSheet.create({
         borderRadius: 4,
         marginBottom: Theme.spacing.m,
     },
+    bgStripeCompact: {
+        height: 5,
+        marginBottom: 8,
+    },
     content: {
         fontSize: 16,
         color: Colors.light.subtext,
         textAlign: 'center',
         lineHeight: 26,
         fontWeight: '600',
+    },
+    contentCompact: {
+        fontSize: 14,
+        lineHeight: 20,
+    },
+    contentVeryCompact: {
+        fontSize: 13,
+        lineHeight: 18,
     },
     footerButton: {
         flexDirection: 'row',
@@ -299,11 +380,18 @@ const styles = StyleSheet.create({
         borderRadius: Theme.borderRadius.l,
         zIndex: 1,
     },
+    footerButtonCompact: {
+        paddingVertical: 9,
+        borderRadius: Theme.borderRadius.m,
+    },
     readMore: {
         fontSize: 16,
         color: Colors.light.primary,
         fontWeight: 'bold',
         marginRight: 8,
+    },
+    readMoreVeryCompact: {
+        fontSize: 14,
     },
     arrowCircle: {
         width: 24,
