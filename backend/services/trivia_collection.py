@@ -107,6 +107,16 @@ class TriviaCollectionUsage:
     web_search_calls: int = 0
 
 
+@dataclass
+class TriviaCollectionDiagnostics:
+    attempts: int = 0
+    generated: int = 0
+    complete_map: int = 0
+    quality_accepted: int = 0
+    duplicates: int = 0
+    final_candidates: int = 0
+
+
 def get_collection_usage(response) -> TriviaCollectionUsage:
     usage = getattr(response, "usage", None)
     output = getattr(response, "output", None) or []
@@ -717,6 +727,7 @@ def collect_trivia(
     count: int,
     map_mode: bool = False,
     usage_callback: Callable[[TriviaCollectionUsage], None] | None = None,
+    diagnostics_callback: Callable[[TriviaCollectionDiagnostics], None] | None = None,
 ) -> list[dict]:
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
@@ -763,6 +774,11 @@ def collect_trivia(
     attempted_titles: list[str] = []
     seen_exact_items: set[tuple[str, str]] = set()
     total_usage = TriviaCollectionUsage()
+    diagnostics = TriviaCollectionDiagnostics()
+
+    def publish_diagnostics() -> None:
+        if diagnostics_callback:
+            diagnostics_callback(TriviaCollectionDiagnostics(**vars(diagnostics)))
 
     for attempt in range(get_collection_attempts()):
         eligible_items = (
@@ -773,6 +789,7 @@ def collect_trivia(
         remaining = count - len(eligible_items)
         if remaining <= 0:
             break
+        diagnostics.attempts += 1
         # Give the quality review enough alternatives even for a one-item request.
         output_count = min(10, max(3, remaining * 2))
         response = client.responses.parse(
@@ -807,6 +824,7 @@ def collect_trivia(
             raise RuntimeError(incomplete_reason)
         if not (response.output_text or "").strip():
             logger.warning("Web collection attempt %s returned no output", attempt + 1)
+            publish_diagnostics()
             continue
         parsed = getattr(response, "output_parsed", None)
         if parsed is None:
@@ -815,10 +833,12 @@ def collect_trivia(
                 getattr(response, "status", None),
                 (response.output_text or "")[:1000],
             )
+            publish_diagnostics()
             continue
 
         source_items = parsed.trivia
         generated_count = len(source_items)
+        diagnostics.generated += generated_count
         complete_map_count = generated_count
         quality_accepted_count = generated_count
         attempted_titles.extend(
@@ -827,12 +847,14 @@ def collect_trivia(
         if map_mode:
             source_items = [item for item in source_items if has_complete_map_fields(item)]
             complete_map_count = len(source_items)
+            diagnostics.complete_map += complete_map_count
             source_items, review_usage = review_map_trivia_quality(
                 client,
                 model,
                 source_items,
             )
             quality_accepted_count = len(source_items)
+            diagnostics.quality_accepted += quality_accepted_count
             total_usage = TriviaCollectionUsage(
                 input_tokens=total_usage.input_tokens + review_usage.input_tokens,
                 output_tokens=total_usage.output_tokens + review_usage.output_tokens,
@@ -841,6 +863,7 @@ def collect_trivia(
             if usage_callback:
                 usage_callback(total_usage)
         novel_items, duplicate_titles = remove_existing_duplicates(db, source_items)
+        diagnostics.duplicates += len(duplicate_titles)
         logger.info(
             "Web collection attempt %s: generated=%s complete_map=%s "
             "quality_accepted=%s duplicates=%s novel=%s",
@@ -860,10 +883,15 @@ def collect_trivia(
                 continue
             seen_exact_items.add(exact_key)
             collected_items.append(item)
+        diagnostics.final_candidates = len(collected_items)
+        publish_diagnostics()
 
     if not topic:
         collected_items = select_diverse_items(collected_items, count)
-    return validate_collected_items(collected_items)[:count]
+    final_items = validate_collected_items(collected_items)[:count]
+    diagnostics.final_candidates = len(final_items)
+    publish_diagnostics()
+    return final_items
 
 
 def collect_trivia_candidates(
@@ -872,6 +900,7 @@ def collect_trivia_candidates(
     count: int,
     map_mode: bool = False,
     usage_callback: Callable[[TriviaCollectionUsage], None] | None = None,
+    diagnostics_callback: Callable[[TriviaCollectionDiagnostics], None] | None = None,
 ) -> list[TriviaCandidate]:
     """Run the shared web collection workflow and persist its review candidates."""
     items = collect_trivia(
@@ -880,5 +909,6 @@ def collect_trivia_candidates(
         count=count,
         map_mode=map_mode,
         usage_callback=usage_callback,
+        diagnostics_callback=diagnostics_callback,
     )
     return create_candidates(db, items)

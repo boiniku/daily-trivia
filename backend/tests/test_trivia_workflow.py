@@ -24,6 +24,7 @@ from services.trivia_collection import (
     DEFAULT_DISCOVERY_DOMAINS,
     DEFAULT_MAX_SEARCH_CALLS,
     TriviaCollectionResult,
+    TriviaCollectionDiagnostics,
     TriviaCollectionUsage,
     MapTriviaQualityAssessment,
     MapTriviaQualityReviewResult,
@@ -816,6 +817,7 @@ class LineSecurityTests(unittest.TestCase):
                 category="生物",
             ))
             db.commit()
+            diagnostics = []
             with patch.dict(os.environ, {
                 "OPENAI_API_KEY": "test-key",
                 "TRIVIA_COLLECTION_ATTEMPTS": "3",
@@ -823,7 +825,12 @@ class LineSecurityTests(unittest.TestCase):
                 "services.trivia_collection.OpenAI",
                 return_value=client,
             ):
-                items = collect_trivia(db, "科学", 1)
+                items = collect_trivia(
+                    db,
+                    "科学",
+                    1,
+                    diagnostics_callback=diagnostics.append,
+                )
         finally:
             db.close()
             engine.dispose()
@@ -831,6 +838,80 @@ class LineSecurityTests(unittest.TestCase):
         self.assertEqual([item["title"] for item in items], ["金星では太陽が西から昇る"])
         self.assertEqual(parse.call_count, 2)
         self.assertIn("心臓を3個持つタコ", parse.call_args_list[1].kwargs["input"])
+        self.assertEqual(diagnostics[-1].attempts, 2)
+        self.assertEqual(diagnostics[-1].generated, 2)
+        self.assertEqual(diagnostics[-1].duplicates, 1)
+        self.assertEqual(diagnostics[-1].final_candidates, 1)
+
+    def test_map_collection_diagnostics_are_returned_when_no_output_is_generated(self):
+        response = type("Response", (), {
+            "output_text": "",
+            "output_parsed": None,
+            "output": [],
+            "usage": None,
+            "status": "completed",
+        })()
+        client = type("Client", (), {
+            "responses": type("Responses", (), {"parse": MagicMock(return_value=response)})()
+        })()
+        diagnostics = []
+        engine = create_engine("sqlite:///:memory:")
+        Base.metadata.create_all(engine)
+        db = sessionmaker(bind=engine)()
+
+        try:
+            with patch.dict(os.environ, {
+                "OPENAI_API_KEY": "test-key",
+                "TRIVIA_COLLECTION_ATTEMPTS": "1",
+            }, clear=False), patch(
+                "services.trivia_collection.OpenAI",
+                return_value=client,
+            ):
+                items = collect_trivia(
+                    db,
+                    "関東",
+                    1,
+                    map_mode=True,
+                    diagnostics_callback=diagnostics.append,
+                )
+        finally:
+            db.close()
+            engine.dispose()
+
+        self.assertEqual(items, [])
+        self.assertIsInstance(diagnostics[-1], TriviaCollectionDiagnostics)
+        self.assertEqual(diagnostics[-1].attempts, 1)
+        self.assertEqual(diagnostics[-1].generated, 0)
+        self.assertEqual(diagnostics[-1].final_candidates, 0)
+
+    def test_map_collection_failure_message_shows_rejection_stage_counts(self):
+        db = MagicMock()
+
+        def fake_collect(_db, _topic, _count, map_mode=False, diagnostics_callback=None):
+            self.assertTrue(map_mode)
+            diagnostics_callback(TriviaCollectionDiagnostics(
+                attempts=3,
+                generated=9,
+                complete_map=4,
+                quality_accepted=0,
+                duplicates=0,
+                final_candidates=0,
+            ))
+            return []
+
+        with patch.object(line_admin, "SessionLocal", return_value=db), patch.object(
+            line_admin,
+            "collect_trivia_candidates",
+            side_effect=fake_collect,
+        ), patch.object(line_admin, "push_message") as push:
+            line_admin._collect_and_push("user", "関東", 3, map_mode=True)
+
+        message = push.call_args.args[1][0]["text"]
+        self.assertIn("生成: 9件", message)
+        self.assertIn("位置情報通過: 4件", message)
+        self.assertIn("品質通過: 0件", message)
+        self.assertIn("全候補が品質審査で除外", message)
+        db.close.assert_called_once()
 
     def test_collection_schema_requires_all_fields(self):
         schema = TriviaCollectionResult.model_json_schema()

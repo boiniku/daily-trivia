@@ -29,7 +29,7 @@ from services.trivia_candidates import (
 )
 from services.image_storage import upload_trivia_image
 from services.map_trivia import create_map_trivia, create_map_trivia_from_candidate
-from services.trivia_collection import collect_trivia_candidates
+from services.trivia_collection import TriviaCollectionDiagnostics, collect_trivia_candidates
 from services.trivia_generation import TRIVIA_CATEGORIES, generate_trivia
 
 
@@ -193,12 +193,44 @@ def _generate_and_push(user_id: str, topic: str, count: int) -> None:
 
 def _collect_and_push(user_id: str, topic: str, count: int, map_mode: bool = False) -> None:
     db = SessionLocal()
+    diagnostics = TriviaCollectionDiagnostics()
+
+    def record_diagnostics(value: TriviaCollectionDiagnostics) -> None:
+        nonlocal diagnostics
+        diagnostics = value
+
     try:
-        candidates = collect_trivia_candidates(db, topic, count, map_mode=map_mode)
+        candidates = collect_trivia_candidates(
+            db,
+            topic,
+            count,
+            map_mode=map_mode,
+            diagnostics_callback=record_diagnostics,
+        )
         if not candidates:
+            if map_mode:
+                detail = (
+                    f"試行: {diagnostics.attempts}回 / 生成: {diagnostics.generated}件\n"
+                    f"位置情報通過: {diagnostics.complete_map}件 / "
+                    f"品質通過: {diagnostics.quality_accepted}件 / "
+                    f"重複除外: {diagnostics.duplicates}件"
+                )
+                if diagnostics.generated == 0:
+                    reason = "生成段階で候補が作られていません。"
+                elif diagnostics.complete_map == 0:
+                    reason = "住所・座標などの位置情報が揃わず、全候補が除外されました。"
+                elif diagnostics.quality_accepted == 0:
+                    reason = "位置情報は揃いましたが、全候補が品質審査で除外されました。"
+                elif diagnostics.duplicates >= diagnostics.quality_accepted:
+                    reason = "品質審査を通過した候補が、既存候補との重複で除外されました。"
+                else:
+                    reason = "候補が最終保存条件を満たしませんでした。"
+                message = f"地図収集で候補が残りませんでした。\n{detail}\n{reason}"
+            else:
+                message = "重複または品質基準を除くと、収集できる候補がありませんでした。"
             push_message(
                 user_id,
-                [_text_message("重複または品質基準を除くと、収集できる候補がありませんでした。地域や対象を少し広げて再度お試しください。")],
+                [_text_message(message)],
             )
             return
         push_message(user_id, [
