@@ -1,6 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import MapView, { Circle, Marker, PROVIDER_GOOGLE } from 'react-native-maps';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { getTriviaSpots } from '../../data/triviaSpots';
@@ -516,55 +516,60 @@ export default function TriviaMapScreen() {
             <View style={styles.filterPanel}>
                 <View style={styles.filterRow}>
                     <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterContent}>
-                        <Pressable
+                        <TouchableOpacity
                             style={[styles.filterChip, selectedRegion === 'all' && styles.filterChipActive]}
                             onPress={() => handleRegionChange('all')}
+                            activeOpacity={0.75}
                         >
                             <Text style={[styles.filterText, selectedRegion === 'all' && styles.filterTextActive]}>
                                 全国
                             </Text>
-                        </Pressable>
+                        </TouchableOpacity>
                         {JAPAN_REGIONS.map((region) => (
-                            <Pressable
+                            <TouchableOpacity
                                 key={region.id}
                                 style={[styles.filterChip, selectedRegion === region.id && styles.filterChipActive]}
                                 onPress={() => handleRegionChange(region.id)}
+                                activeOpacity={0.75}
                             >
                                 <Text style={[styles.filterText, selectedRegion === region.id && styles.filterTextActive]}>
                                     {region.label}
                                 </Text>
-                            </Pressable>
+                            </TouchableOpacity>
                         ))}
                     </ScrollView>
-                    <Pressable
+                    <TouchableOpacity
                         style={[styles.nearbyButton, nearbyOnly && styles.nearbyButtonActive]}
                         onPress={toggleNearbyOnly}
+                        activeOpacity={0.75}
                     >
                         <Ionicons name="locate" size={16} color={nearbyOnly ? '#FFFFFF' : Colors.light.primary} />
                         <Text style={[styles.nearbyButtonText, nearbyOnly && styles.nearbyButtonTextActive]}>近く</Text>
-                    </Pressable>
+                    </TouchableOpacity>
                 </View>
 
                 {activeRegion ? (
                     <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.prefectureFilterContent}>
-                        <Pressable
+                        <TouchableOpacity
                             style={[styles.prefectureChip, selectedPrefecture === 'すべて' && styles.prefectureChipActive]}
                             onPress={() => handlePrefectureChange('すべて')}
+                            activeOpacity={0.75}
                         >
                             <Text style={[styles.prefectureText, selectedPrefecture === 'すべて' && styles.prefectureTextActive]}>
                                 {activeRegion.label}全体
                             </Text>
-                        </Pressable>
+                        </TouchableOpacity>
                         {regionPrefectures.map((prefecture) => (
-                            <Pressable
+                            <TouchableOpacity
                                 key={prefecture}
                                 style={[styles.prefectureChip, selectedPrefecture === prefecture && styles.prefectureChipActive]}
                                 onPress={() => handlePrefectureChange(prefecture)}
+                                activeOpacity={0.75}
                             >
                                 <Text style={[styles.prefectureText, selectedPrefecture === prefecture && styles.prefectureTextActive]}>
                                     {prefecture}
                                 </Text>
-                            </Pressable>
+                            </TouchableOpacity>
                         ))}
                     </ScrollView>
                 ) : null}
@@ -591,14 +596,23 @@ export default function TriviaMapScreen() {
                                 <Marker
                                     key={spot.id}
                                     coordinate={{ latitude: spot.latitude, longitude: spot.longitude }}
-                                    pinColor={getPinColor(spot)}
-                                    opacity={isVisible ? 1 : 0}
-                                    tappable={isVisible}
-                                    zIndex={isVisible ? 1 : 0}
+                                    anchor={{ x: 0.5, y: 1 }}
+                                    zIndex={1}
                                     onPress={() => {
                                         if (isVisible) selectSpot(spot);
                                     }}
-                                />
+                                >
+                                    <View
+                                        pointerEvents="none"
+                                        style={[
+                                            styles.spotMarker,
+                                            { backgroundColor: getPinColor(spot) },
+                                            !isVisible && styles.mapMarkerHidden,
+                                        ]}
+                                    >
+                                        <Ionicons name="bulb" size={15} color="#FFFFFF" />
+                                    </View>
+                                </Marker>
                             );
                         })}
                         {prefectureSummaries.map((summary) => {
@@ -612,15 +626,16 @@ export default function TriviaMapScreen() {
                                     key={`prefecture-${summary.prefecture}`}
                                     coordinate={{ latitude: summary.latitude, longitude: summary.longitude }}
                                     anchor={{ x: 0.5, y: 0.5 }}
-                                    opacity={isVisible ? 1 : 0}
-                                    tappable={isVisible}
                                     stopPropagation
-                                    zIndex={isVisible ? 2 : 0}
+                                    zIndex={2}
                                     onPress={() => {
                                         if (isVisible) selectPrefectureSummary(summary);
                                     }}
                                 >
-                                    <View style={styles.prefectureMarker}>
+                                    <View
+                                        pointerEvents="none"
+                                        style={[styles.prefectureMarker, !isVisible && styles.mapMarkerHidden]}
+                                    >
                                         <Text style={styles.prefectureMarkerLabel}>{summary.prefecture}</Text>
                                         <Text style={styles.prefectureMarkerCount}>{`${unlockedCount}/${totalCount}`}</Text>
                                     </View>
@@ -872,6 +887,19 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         justifyContent: 'center',
         ...Theme.shadow.medium,
+    },
+    spotMarker: {
+        width: 34,
+        height: 34,
+        borderRadius: 17,
+        alignItems: 'center',
+        justifyContent: 'center',
+        borderWidth: 3,
+        borderColor: '#FFFFFF',
+        ...Theme.shadow.small,
+    },
+    mapMarkerHidden: {
+        opacity: 0,
     },
     prefectureMarker: {
         minWidth: 58,
