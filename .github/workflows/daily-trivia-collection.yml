@@ -2,8 +2,8 @@ name: Daily trivia collection
 
 on:
   schedule:
-    # GitHub Actions uses UTC. 00:00 UTC is 09:00 JST.
-    - cron: "0 0 * * *"
+    # GitHub Actions uses UTC. 00:53 UTC is 09:53 JST.
+    - cron: "53 0 * * *"
   workflow_dispatch:
 
 concurrency:
