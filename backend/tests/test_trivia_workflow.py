@@ -494,6 +494,7 @@ class LineSecurityTests(unittest.TestCase):
         self.assertIn("ニッチであること自体は加点しない", parse.call_args.kwargs["input"])
         self.assertIn("一文で友人へ言い換えられる", parse.call_args.kwargs["input"])
         self.assertIn("理由または仕組み", parse.call_args.kwargs["input"])
+        self.assertIn("全国唯一という意味ではありません", parse.call_args.kwargs["input"])
         self.assertIs(parse.call_args.kwargs["text_format"], MapTriviaQualityReviewResult)
         self.assertEqual(parse.call_args.kwargs["reasoning"], {"effort": "medium"})
 
@@ -550,7 +551,7 @@ class LineSecurityTests(unittest.TestCase):
         self.assertEqual(kwargs["reasoning"], {"effort": "medium"})
         review.assert_called_once()
 
-    def test_map_quality_review_allows_good_candidate_with_one_weaker_dimension(self):
+    def test_map_quality_review_allows_good_candidate_with_soft_location_score(self):
         item = CollectedTrivia(
             subject_key="路地の曲がり",
             title="城下町の路地は敵を見通せないよう曲がる",
@@ -569,15 +570,15 @@ class LineSecurityTests(unittest.TestCase):
             MapTriviaQualityAssessment(
                 candidate_index=0,
                 is_trivia=True,
-                is_hyperlocal=True,
+                is_hyperlocal=False,
                 answers_why_and_how=True,
                 jargon_is_clear=True,
                 onsite_payoff_is_specific=False,
                 trivia_score=3,
-                hyperlocal_score=3,
-                why_how_score=4,
+                hyperlocal_score=2,
+                why_how_score=3,
                 clarity_score=3,
-                rejection_reason="現地ヒントだけやや弱いです。",
+                rejection_reason="同種の道は他地域にもあり、全国唯一ではありません。",
             ),
         ])
         response = type("Response", (), {
