@@ -24,6 +24,9 @@ from services.trivia_collection import (
     DEFAULT_DISCOVERY_DOMAINS,
     DEFAULT_MAX_SEARCH_CALLS,
     TriviaCollectionResult,
+    TriviaCollectionUsage,
+    MapTriviaQualityAssessment,
+    MapTriviaQualityReviewResult,
     build_collection_prompt,
     collect_trivia,
     collect_trivia_candidates,
@@ -35,6 +38,7 @@ from services.trivia_collection import (
     has_complete_map_fields,
     parse_collection_output,
     remove_existing_duplicates,
+    review_map_trivia_quality,
     select_diverse_items,
     validate_collected_items,
 )
@@ -419,6 +423,126 @@ class LineSecurityTests(unittest.TestCase):
         self.assertIn("contentは45〜75文字程度", prompt)
         self.assertIn("explanationは80〜140文字程度", prompt)
         self.assertNotIn("contentは70〜110文字程度", prompt)
+
+    def test_map_quality_review_rejects_tourism_summary(self):
+        generic = CollectedTrivia(
+            subject_key="城",
+            title="城は有名武将が改名した",
+            content="この城は有名武将が攻略し、新しい名前へ改めた歴史ある観光名所です。",
+            explanation="市の資料で改名の歴史が紹介され、現在は復元天守を見学できます。",
+            category="歴史",
+            source="https://example.com/castle",
+            map_address="城 / 岐阜県岐阜市",
+            map_prefecture="岐阜県",
+            map_latitude=35.0,
+            map_longitude=136.0,
+            map_radius=300,
+            map_hint="復元天守を見学してください。",
+        )
+        niche = generic.model_copy(update={
+            "subject_key": "石垣の排水穴",
+            "title": "石垣の小穴は雨水を逃がす出口",
+            "content": "石垣の一部に並ぶ小穴は、山側にたまる雨水を外へ逃がし、石を内側から押す水圧を減らす排水口です。",
+            "explanation": "大雨で石垣の裏へ水がたまると、土が重くなり石を外へ押します。そこで裏込め石という隙間の多い小石層へ水を通し、小穴から排出する構造にしました。裏込め石は水の通り道と石垣の荷重分散を兼ねます。現在も北側の石垣で穴の位置を確認できます。",
+            "map_hint": "北側石垣の下段で、一定間隔に開く手のひらほどの排水穴を探してください。",
+        })
+        review = MapTriviaQualityReviewResult(assessments=[
+            MapTriviaQualityAssessment(
+                candidate_index=0,
+                is_trivia=False,
+                is_hyperlocal=False,
+                answers_why_and_how=False,
+                jargon_is_clear=True,
+                onsite_payoff_is_specific=False,
+                trivia_score=1,
+                hyperlocal_score=1,
+                why_how_score=1,
+                clarity_score=4,
+                rejection_reason="観光案内の要約です。",
+            ),
+            MapTriviaQualityAssessment(
+                candidate_index=1,
+                is_trivia=True,
+                is_hyperlocal=True,
+                answers_why_and_how=True,
+                jargon_is_clear=True,
+                onsite_payoff_is_specific=True,
+                trivia_score=4,
+                hyperlocal_score=4,
+                why_how_score=5,
+                clarity_score=4,
+                rejection_reason="",
+            ),
+        ])
+        response = type("Response", (), {
+            "output_parsed": review,
+            "output": [],
+            "usage": None,
+        })()
+        parse = MagicMock(return_value=response)
+        client = type("Client", (), {
+            "responses": type("Responses", (), {"parse": parse})()
+        })()
+
+        accepted, _ = review_map_trivia_quality(client, "gpt-5-mini", [generic, niche])
+
+        self.assertEqual([item.title for item in accepted], [niche.title])
+        self.assertIn("世界遺産・文化財登録", parse.call_args.kwargs["input"])
+        self.assertIs(parse.call_args.kwargs["text_format"], MapTriviaQualityReviewResult)
+        self.assertEqual(parse.call_args.kwargs["reasoning"], {"effort": "medium"})
+
+    def test_map_collection_uses_deeper_search_and_quality_review(self):
+        item = CollectedTrivia(
+            subject_key="石垣の排水穴",
+            title="石垣の小穴は雨水を逃がす出口",
+            content="石垣に並ぶ小穴は、裏側へたまる雨水を外へ逃がし、水圧で石が崩れるのを防ぐ排水口です。",
+            explanation="雨水が石垣の裏へたまると土が重くなり、石を外へ押します。そこで隙間の多い小石を裏へ詰め、水を小穴へ導く構造にしました。現在も北側の石垣で確認できます。",
+            category="歴史",
+            source="https://example.com/wall",
+            map_address="城跡 / 岐阜県岐阜市",
+            map_prefecture="岐阜県",
+            map_latitude=35.0,
+            map_longitude=136.0,
+            map_radius=300,
+            map_hint="北側石垣の下段で、一定間隔に開く排水穴を探してください。",
+        )
+        parsed = TriviaCollectionResult(trivia=[item])
+        response = type("Response", (), {
+            "output_text": "{}",
+            "output_parsed": parsed,
+            "output": [],
+            "usage": None,
+            "status": "completed",
+        })()
+        parse = MagicMock(return_value=response)
+        client = type("Client", (), {
+            "responses": type("Responses", (), {"parse": parse})()
+        })()
+        engine = create_engine("sqlite:///:memory:")
+        Base.metadata.create_all(engine)
+        db = sessionmaker(bind=engine)()
+        try:
+            with patch.dict(os.environ, {
+                "OPENAI_API_KEY": "test-key",
+                "TRIVIA_MAX_SEARCH_CALLS": "5",
+            }, clear=False), patch(
+                "services.trivia_collection.OpenAI",
+                return_value=client,
+            ), patch(
+                "services.trivia_collection.review_map_trivia_quality",
+                return_value=([item], TriviaCollectionUsage()),
+            ) as review:
+                items = collect_trivia(db, "岐阜", 1, map_mode=True)
+        finally:
+            db.close()
+            engine.dispose()
+
+        self.assertEqual([value["title"] for value in items], [item.title])
+        kwargs = parse.call_args.kwargs
+        self.assertEqual(kwargs["max_tool_calls"], 8)
+        self.assertEqual(kwargs["tools"][0]["search_context_size"], "high")
+        self.assertEqual(kwargs["reasoning"], {"effort": "medium"})
+        review.assert_called_once()
 
     def test_map_collection_requires_complete_map_fields(self):
         complete = CollectedTrivia(

@@ -6,7 +6,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 from openai import OpenAI
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
 
 from models import Trivia, TriviaCandidate
@@ -76,6 +76,28 @@ class TriviaCollectionResult(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     trivia: list[CollectedTrivia]
+
+
+class MapTriviaQualityAssessment(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    candidate_index: int
+    is_trivia: bool
+    is_hyperlocal: bool
+    answers_why_and_how: bool
+    jargon_is_clear: bool
+    onsite_payoff_is_specific: bool
+    trivia_score: int = Field(ge=0, le=5)
+    hyperlocal_score: int = Field(ge=0, le=5)
+    why_how_score: int = Field(ge=0, le=5)
+    clarity_score: int = Field(ge=0, le=5)
+    rejection_reason: str
+
+
+class MapTriviaQualityReviewResult(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    assessments: list[MapTriviaQualityAssessment]
 
 
 @dataclass(frozen=True)
@@ -212,6 +234,92 @@ def build_map_collection_focus(output_count: int) -> str:
 合計34点以上かつ「場所との結びつき」「地元資料ならではのニッチさ」「なぜ・どのようにの説明の完成度」が各4点以上の候補だけを出力する。
 {output_count}件は場所、地域、面白さの型が偏りすぎないようにする。
 """
+
+
+def build_map_quality_review_prompt(items: list[CollectedTrivia]) -> str:
+    candidates = [
+        {
+            "candidate_index": index,
+            "title": item.title,
+            "content": item.content,
+            "explanation": item.explanation,
+            "map_hint": item.map_hint,
+        }
+        for index, item in enumerate(items)
+    ]
+    return f"""
+あなたは雑学MAPの最終品質審査者です。候補を好意的に補完せず、書かれている文章だけで厳しく判定してください。
+
+雑学として合格する条件:
+- 読者の予想を裏切る、具体的で検証可能な事実が中心にある
+- 観光名所の概要ではなく、その地点固有の小さな痕跡、仕組み、工夫、用途変化、地域資料由来の事実である
+- explanationが「なぜそうなったか」と「どのように実現・変化・保存されたか」の両方へ具体的に答える
+- 専門用語は初見の中学生にも意味と役割が分かる
+- map_hintが、現地のどこで何を見れば事実を確かめられるか具体的に示す
+
+次は不合格:
+- 創建年、改名、世界遺産・文化財登録、受賞、規模、日本一、長い伝統を紹介するだけ
+- 有名な人物・祭り・工芸・城・寺社・施設の一般的な歴史や見どころ
+- 「資料にある」「公式が紹介」「展示で見られる」を根拠として述べ、原因や仕組みを説明していない
+- 「〜のため造られた」「〜として使われた」で止まり、必要が生じた事情や実現方法がない
+- 専門用語を別の専門用語で言い換えただけ
+- 現地体験が「展示を見る」「景色を見る」「歴史を感じる」だけ
+
+is_trivia、is_hyperlocal、answers_why_and_how、jargon_is_clear、onsite_payoff_is_specificは、完全に満たす場合だけtrueにしてください。
+各スコアは厳格に0〜5点で付け、4点を明確な合格、5点を非常に優れた候補とします。
+候補ごとにcandidate_indexを保ち、全候補を1回ずつ評価してください。
+
+候補:
+{json.dumps(candidates, ensure_ascii=False, indent=2)}
+"""
+
+
+def review_map_trivia_quality(
+    client,
+    model: str,
+    items: list[CollectedTrivia],
+) -> tuple[list[CollectedTrivia], TriviaCollectionUsage]:
+    if not items:
+        return [], TriviaCollectionUsage()
+
+    response = client.responses.parse(
+        model=model,
+        max_output_tokens=5000,
+        reasoning={"effort": "medium"},
+        text_format=MapTriviaQualityReviewResult,
+        input=build_map_quality_review_prompt(items),
+    )
+    parsed = getattr(response, "output_parsed", None)
+    if parsed is None:
+        logger.warning("Map trivia quality review returned no structured result")
+        return [], get_collection_usage(response)
+
+    accepted_indices = set()
+    for assessment in parsed.assessments:
+        passed = (
+            assessment.is_trivia
+            and assessment.is_hyperlocal
+            and assessment.answers_why_and_how
+            and assessment.jargon_is_clear
+            and assessment.onsite_payoff_is_specific
+            and assessment.trivia_score >= 4
+            and assessment.hyperlocal_score >= 4
+            and assessment.why_how_score >= 4
+            and assessment.clarity_score >= 4
+        )
+        if passed and 0 <= assessment.candidate_index < len(items):
+            accepted_indices.add(assessment.candidate_index)
+        else:
+            logger.info(
+                "Rejected map trivia candidate %s: %s",
+                assessment.candidate_index,
+                assessment.rejection_reason,
+            )
+
+    return (
+        [item for index, item in enumerate(items) if index in accepted_indices],
+        get_collection_usage(response),
+    )
 
 
 def build_collection_prompt(
@@ -606,9 +714,10 @@ def collect_trivia(
         for title, content in existing_rows[-RECENT_FACT_EXCLUSION_LIMIT:]
         if title
     ]
+    search_context_size = "high" if map_mode else get_search_context_size()
     tool = {
         "type": "web_search",
-        "search_context_size": get_search_context_size(),
+        "search_context_size": search_context_size,
         "user_location": {
             "type": "approximate",
             "country": "JP",
@@ -620,7 +729,13 @@ def collect_trivia(
         tool["filters"] = {"allowed_domains": domains}
 
     max_search_calls = get_max_search_calls()
+    if map_mode:
+        max_search_calls = max(max_search_calls, 8)
     client = OpenAI(api_key=api_key)
+    model = os.getenv(
+        "TRIVIA_COLLECTION_MODEL",
+        os.getenv("TRIVIA_GENERATION_MODEL", "gpt-5-mini"),
+    )
     collected_items: list[CollectedTrivia] = []
     attempted_titles: list[str] = []
     seen_exact_items: set[tuple[str, str]] = set()
@@ -637,15 +752,12 @@ def collect_trivia(
             break
         output_count = min(10, remaining * 2)
         response = client.responses.parse(
-            model=os.getenv(
-                "TRIVIA_COLLECTION_MODEL",
-                os.getenv("TRIVIA_GENERATION_MODEL", "gpt-5-mini"),
-            ),
+            model=model,
             tools=[tool],
             tool_choice="required",
             max_tool_calls=max_search_calls,
             max_output_tokens=16000,
-            reasoning={"effort": "low"},
+            reasoning={"effort": "medium" if map_mode else "low"},
             text_format=TriviaCollectionResult,
             input=build_collection_prompt(
                 topic,
@@ -687,6 +799,18 @@ def collect_trivia(
         )
         if map_mode:
             source_items = [item for item in source_items if has_complete_map_fields(item)]
+            source_items, review_usage = review_map_trivia_quality(
+                client,
+                model,
+                source_items,
+            )
+            total_usage = TriviaCollectionUsage(
+                input_tokens=total_usage.input_tokens + review_usage.input_tokens,
+                output_tokens=total_usage.output_tokens + review_usage.output_tokens,
+                web_search_calls=total_usage.web_search_calls + review_usage.web_search_calls,
+            )
+            if usage_callback:
+                usage_callback(total_usage)
         novel_items, duplicate_titles = remove_existing_duplicates(db, source_items)
         logger.info(
             "Web collection attempt %s: generated=%s duplicates=%s novel=%s",
