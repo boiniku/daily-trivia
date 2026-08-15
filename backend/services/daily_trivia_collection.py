@@ -153,7 +153,7 @@ def run_daily_collection(run_id: int) -> None:
         else:
             _send_to_admins([{
                 "type": "text",
-                "text": "本日の自動収集では、重複を除くと新しい候補がありませんでした。",
+                "text": "本日の自動収集では、重複または品質基準を除くと新しい候補がありませんでした。",
             }])
 
         run.collected_count = len(candidates)

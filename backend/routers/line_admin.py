@@ -198,7 +198,7 @@ def _collect_and_push(user_id: str, topic: str, count: int, map_mode: bool = Fal
         if not candidates:
             push_message(
                 user_id,
-                [_text_message("重複を除くと収集できる候補がありませんでした。")],
+                [_text_message("重複または品質基準を除くと、収集できる候補がありませんでした。地域や対象を少し広げて再度お試しください。")],
             )
             return
         push_message(user_id, [

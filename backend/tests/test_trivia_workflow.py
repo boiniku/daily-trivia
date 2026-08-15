@@ -397,26 +397,29 @@ class LineSecurityTests(unittest.TestCase):
     def test_map_collection_prompt_requires_place_fields(self):
         prompt = build_collection_prompt("京都", 3, [], map_mode=True)
         self.assertIn("雑学MAPへ登録する候補だけ", prompt)
-        self.assertIn("現地に証拠が残る", prompt)
-        self.assertIn("一段目より二段目・三段目が面白い", prompt)
+        self.assertIn("現地で対象を見たとき", prompt)
+        self.assertIn("一段目より二段目が面白い", prompt)
         self.assertIn("対象物そのものを観察できる候補", prompt)
         self.assertIn("私有地への立入り", prompt)
         self.assertIn("2件以上の独立した資料", prompt)
         self.assertIn("座標を推測しない", prompt)
         self.assertIn("map_address、map_prefecture、map_latitude、map_longitude、map_radius、map_hintを全件必ず", prompt)
-        self.assertIn("合計34点以上", prompt)
+        self.assertNotIn("合計34点以上", prompt)
         self.assertIn("contentは70〜110文字程度", prompt)
         self.assertIn("explanationは180〜300文字程度", prompt)
         self.assertIn("成立した背景や原因→転機となった具体的な出来事→現在の姿", prompt)
-        self.assertIn("具体情報を2種類以上", prompt)
-        self.assertIn("地元の人でも話したくなるニッチさ", prompt)
+        self.assertNotIn("具体情報を2種類以上", prompt)
+        self.assertIn("ニッチさは目的ではなく", prompt)
+        self.assertIn("誰でも知っている物・習慣・常識", prompt)
+        self.assertIn("一文で友人へ言い換えられるか", prompt)
+        self.assertIn("失敗、苦肉の策、偶然、対立、勘違い、転用", prompt)
         self.assertIn("自治体史・市史・町史", prompt)
         self.assertIn("普通の観光ページでは主役にならない具体的な一点", prompt)
         self.assertIn("なぜそうなったのか", prompt)
         self.assertIn("どのように実現・変化・保存されたのか", prompt)
         self.assertIn("初出の同じ文", prompt)
         self.assertIn("観光案内", prompt)
-        self.assertIn("地元資料ならではのニッチさ", prompt)
+        self.assertIn("現地体験や説明の一項目がやや弱くても", prompt)
 
     def test_normal_collection_prompt_keeps_compact_length(self):
         prompt = build_collection_prompt("京都", 3, [], map_mode=False)
@@ -488,6 +491,9 @@ class LineSecurityTests(unittest.TestCase):
 
         self.assertEqual([item.title for item in accepted], [niche.title])
         self.assertIn("世界遺産・文化財登録", parse.call_args.kwargs["input"])
+        self.assertIn("ニッチであること自体は加点しない", parse.call_args.kwargs["input"])
+        self.assertIn("一文で友人へ言い換えられる", parse.call_args.kwargs["input"])
+        self.assertIn("理由または仕組み", parse.call_args.kwargs["input"])
         self.assertIs(parse.call_args.kwargs["text_format"], MapTriviaQualityReviewResult)
         self.assertEqual(parse.call_args.kwargs["reasoning"], {"effort": "medium"})
 
@@ -543,6 +549,49 @@ class LineSecurityTests(unittest.TestCase):
         self.assertEqual(kwargs["tools"][0]["search_context_size"], "high")
         self.assertEqual(kwargs["reasoning"], {"effort": "medium"})
         review.assert_called_once()
+
+    def test_map_quality_review_allows_good_candidate_with_one_weaker_dimension(self):
+        item = CollectedTrivia(
+            subject_key="路地の曲がり",
+            title="城下町の路地は敵を見通せないよう曲がる",
+            content="城下町に残る鍵形の路地は、侵入者が先を見通して一気に進めないよう、道を直角に曲げた防御の名残です。",
+            explanation="城へ向かう道が一直線だと、敵は速度を落とさず進めます。そこで道を直角に折り、曲がるたびに隊列を崩す構造にしました。鍵形とは鍵のように折れた道筋のことです。現在も旧町名の区画で曲がり方をたどれます。",
+            category="歴史",
+            source="https://example.com/street",
+            map_address="旧城下町 / 岐阜県岐阜市",
+            map_prefecture="岐阜県",
+            map_latitude=35.0,
+            map_longitude=136.0,
+            map_radius=300,
+            map_hint="旧町名の交差点から、二度直角に折れる路地を歩いてください。",
+        )
+        review = MapTriviaQualityReviewResult(assessments=[
+            MapTriviaQualityAssessment(
+                candidate_index=0,
+                is_trivia=True,
+                is_hyperlocal=True,
+                answers_why_and_how=True,
+                jargon_is_clear=True,
+                onsite_payoff_is_specific=False,
+                trivia_score=3,
+                hyperlocal_score=3,
+                why_how_score=4,
+                clarity_score=3,
+                rejection_reason="現地ヒントだけやや弱いです。",
+            ),
+        ])
+        response = type("Response", (), {
+            "output_parsed": review,
+            "output": [],
+            "usage": None,
+        })()
+        client = type("Client", (), {
+            "responses": type("Responses", (), {"parse": MagicMock(return_value=response)})()
+        })()
+
+        accepted, _ = review_map_trivia_quality(client, "gpt-5-mini", [item])
+
+        self.assertEqual([candidate.title for candidate in accepted], [item.title])
 
     def test_map_collection_requires_complete_map_fields(self):
         complete = CollectedTrivia(
