@@ -86,17 +86,6 @@ export const TriviaUnlockManager = {
         });
     },
 
-    async resetTrivia(spotId: string) {
-        return runWithUnlockLock(async () => {
-            const records = await readRecords();
-            if (!records[spotId]) return false;
-
-            delete records[spotId];
-            await writeRecords(records);
-            return true;
-        });
-    },
-
     async unlockNearbySpots(spots: TriviaSpot[], userLocation: Coordinates) {
         return runWithUnlockLock(async () => {
             const records = await readRecords();

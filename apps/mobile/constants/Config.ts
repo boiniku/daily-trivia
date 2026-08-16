@@ -23,10 +23,6 @@ if (appEnvironment === 'production' && configuredBackendUrl && configuredBackend
 export const Config = {
     APP_ENV: appEnvironment,
     IS_PRODUCTION: appEnvironment === 'production',
-    // Available in development/staging unless explicitly disabled. Production
-    // builds can never expose the virtual-location test controls.
-    LOCATION_TESTING_ENABLED:
-        appEnvironment !== 'production' && process.env.EXPO_PUBLIC_ENABLE_LOCATION_TESTING !== 'false',
     // Production is the only environment allowed to fall back to the production API.
     // Development intentionally falls back to localhost so an incomplete test setup
     // cannot accidentally write to production.

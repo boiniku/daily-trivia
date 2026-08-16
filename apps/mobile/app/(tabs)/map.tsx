@@ -12,8 +12,6 @@ import { Coordinates, TriviaSpot } from '../../models/TriviaSpot';
 import { Colors, Theme } from '../../constants/Colors';
 import { JAPAN_REGIONS, JapanRegionId, getPrefecturesFromLabel } from '../../constants/JapanRegions';
 import { getFloatingTabBarBottom, FLOATING_TAB_BAR_HEIGHT } from '../../constants/Layout';
-import { Config } from '../../constants/Config';
-import { LocationTestController } from '../../components/LocationTestController';
 
 const JAPAN_REGION = {
     latitude: 36.2048,
@@ -64,8 +62,6 @@ export default function TriviaMapScreen() {
     const hasCenteredOnUserRef = useRef(false);
     const isClusterZoomingRef = useRef(false);
     const handledNotificationSpotRef = useRef<string | null>(null);
-    const isSimulatedLocationRef = useRef(false);
-    const lastSimulationCheckRef = useRef(0);
     const [spots, setSpots] = useState<TriviaSpot[]>([]);
     const [selectedSpotId, setSelectedSpotId] = useState<string | null>(null);
     const [userLocation, setUserLocation] = useState<Coordinates | null>(null);
@@ -80,11 +76,6 @@ export default function TriviaMapScreen() {
     const [isDetailVisible, setIsDetailVisible] = useState(false);
     const [isMapReady, setIsMapReady] = useState(false);
     const [mapLatitudeDelta, setMapLatitudeDelta] = useState(JAPAN_REGION.latitudeDelta);
-    const [isSimulatedLocation, setIsSimulatedLocation] = useState(false);
-    const [simulatedLocation, setSimulatedLocation] = useState<Coordinates | null>(null);
-    const [simulationSpeed, setSimulationSpeed] = useState(50);
-
-    const effectiveLocation = isSimulatedLocation && simulatedLocation ? simulatedLocation : userLocation;
 
     const selectedSpot = useMemo(
         () => spots.find((spot) => spot.id === selectedSpotId) ?? null,
@@ -115,12 +106,12 @@ export default function TriviaMapScreen() {
                 return false;
             }
             if (nearbyOnly) {
-                const distance = getSpotDistance(spot, effectiveLocation);
+                const distance = getSpotDistance(spot, userLocation);
                 return distance != null && distance <= 5000;
             }
             return true;
         });
-    }, [activeRegion, nearbyOnly, selectedPrefecture, spots, effectiveLocation]);
+    }, [activeRegion, nearbyOnly, selectedPrefecture, spots, userLocation]);
 
     const visibleSpotIds = useMemo(
         () => new Set(filteredSpots.map((spot) => spot.id)),
@@ -187,14 +178,10 @@ export default function TriviaMapScreen() {
 
     };
 
-    const checkUnlocks = async (
-        location: Coordinates,
-        sourceSpots = spotsRef.current,
-        refreshNativeGeofences = true
-    ) => {
+    const checkUnlocks = async (location: Coordinates, sourceSpots = spotsRef.current) => {
         const newlyUnlocked = await TriviaUnlockManager.unlockNearbySpots(sourceSpots, location);
         await handleUnlockedRecords(newlyUnlocked, sourceSpots);
-        if (newlyUnlocked.length > 0 && refreshNativeGeofences) {
+        if (newlyUnlocked.length > 0) {
             await TriviaGeofenceManager.refreshRegistration(sourceSpots, location);
         }
         return newlyUnlocked;
@@ -228,7 +215,6 @@ export default function TriviaMapScreen() {
 
                     const nextSubscription = await TriviaLocationManager.watchLocation((location) => {
                         setUserLocation(location);
-                        if (isSimulatedLocationRef.current) return;
                         checkUnlocks(location).catch((error) => {
                             console.error('Trivia map unlock check failed:', error);
                         });
@@ -256,15 +242,15 @@ export default function TriviaMapScreen() {
     }, []);
 
     useEffect(() => {
-        if (!isMapReady || !effectiveLocation || hasCenteredOnUserRef.current) return;
+        if (!isMapReady || !userLocation || hasCenteredOnUserRef.current) return;
 
         const frame = requestAnimationFrame(() => {
             const map = mapRef.current;
             if (!map) return;
             map.animateToRegion(
                 {
-                    latitude: effectiveLocation.latitude,
-                    longitude: effectiveLocation.longitude,
+                    latitude: userLocation.latitude,
+                    longitude: userLocation.longitude,
                     latitudeDelta: USER_LOCATION_REGION_DELTA,
                     longitudeDelta: USER_LOCATION_REGION_DELTA,
                 },
@@ -274,19 +260,10 @@ export default function TriviaMapScreen() {
         });
 
         return () => cancelAnimationFrame(frame);
-    }, [isMapReady, effectiveLocation]);
+    }, [isMapReady, userLocation]);
 
     useEffect(() => {
         if (!selectedSpot) return;
-        if (isSimulatedLocation && simulatedLocation) {
-            mapRef.current?.animateToRegion({
-                latitude: (simulatedLocation.latitude + selectedSpot.latitude) / 2,
-                longitude: (simulatedLocation.longitude + selectedSpot.longitude) / 2,
-                latitudeDelta: Math.max(0.012, Math.abs(simulatedLocation.latitude - selectedSpot.latitude) * 2.8),
-                longitudeDelta: Math.max(0.012, Math.abs(simulatedLocation.longitude - selectedSpot.longitude) * 2.8),
-            }, 450);
-            return;
-        }
         mapRef.current?.animateToRegion(
             {
                 latitude: selectedSpot.latitude,
@@ -296,7 +273,7 @@ export default function TriviaMapScreen() {
             },
             450
         );
-    }, [selectedSpotId, isSimulatedLocation]);
+    }, [selectedSpotId]);
 
     useEffect(() => {
         const requestedSpotId = Array.isArray(notificationSpotId) ? notificationSpotId[0] : notificationSpotId;
@@ -345,110 +322,17 @@ export default function TriviaMapScreen() {
     }, []);
 
     const moveToCurrentLocation = () => {
-        if (!effectiveLocation) return;
+        if (!userLocation) return;
         hasCenteredOnUserRef.current = true;
         mapRef.current?.animateToRegion(
             {
-                latitude: effectiveLocation.latitude,
-                longitude: effectiveLocation.longitude,
+                latitude: userLocation.latitude,
+                longitude: userLocation.longitude,
                 latitudeDelta: USER_LOCATION_REGION_DELTA,
                 longitudeDelta: USER_LOCATION_REGION_DELTA,
             },
             450
         );
-    };
-
-    const simulationTarget = useMemo(() => {
-        return spots.find((spot) => spot.id === 'map_330')
-            ?? spots.find((spot) => spot.address?.includes('姫町'))
-            ?? spots[0]
-            ?? null;
-    }, [spots]);
-
-    const getSimulationStart = (target: TriviaSpot): Coordinates => ({
-        latitude: target.latitude,
-        longitude: target.longitude + (
-            (target.unlockRadiusMeters + 300)
-            / (111_320 * Math.max(0.2, Math.cos(target.latitude * Math.PI / 180)))
-        ),
-    });
-
-    const focusSimulation = (location: Coordinates, target: TriviaSpot) => {
-        hasCenteredOnUserRef.current = true;
-        mapRef.current?.animateToRegion({
-            latitude: (location.latitude + target.latitude) / 2,
-            longitude: (location.longitude + target.longitude) / 2,
-            latitudeDelta: Math.max(0.012, Math.abs(location.latitude - target.latitude) * 2.8),
-            longitudeDelta: Math.max(0.012, Math.abs(location.longitude - target.longitude) * 2.8),
-        }, 450);
-    };
-
-    const activateSimulation = () => {
-        if (!Config.LOCATION_TESTING_ENABLED || !simulationTarget) return;
-        const start = getSimulationStart(simulationTarget);
-        isSimulatedLocationRef.current = true;
-        setIsSimulatedLocation(true);
-        setSimulatedLocation(start);
-        setSelectedRegion('all');
-        setSelectedPrefecture('すべて');
-        setNearbyOnly(false);
-        setSelectedSpotId(simulationTarget.id);
-        setIsPreviewVisible(false);
-        setIsDetailVisible(false);
-        focusSimulation(start, simulationTarget);
-    };
-
-    const deactivateSimulation = () => {
-        isSimulatedLocationRef.current = false;
-        setIsSimulatedLocation(false);
-        setSimulatedLocation(null);
-        hasCenteredOnUserRef.current = false;
-        if (userLocation) {
-            requestAnimationFrame(() => {
-                mapRef.current?.animateToRegion({
-                    latitude: userLocation.latitude,
-                    longitude: userLocation.longitude,
-                    latitudeDelta: USER_LOCATION_REGION_DELTA,
-                    longitudeDelta: USER_LOCATION_REGION_DELTA,
-                }, 450);
-            });
-        }
-    };
-
-    const moveSimulation = (eastMeters: number, northMeters: number) => {
-        setSimulatedLocation((current) => {
-            if (!current) return current;
-            const next = {
-                latitude: current.latitude + northMeters / 111_320,
-                longitude: current.longitude + eastMeters / (
-                    111_320 * Math.max(0.2, Math.cos(current.latitude * Math.PI / 180))
-                ),
-            };
-
-            const now = Date.now();
-            if (now - lastSimulationCheckRef.current >= 200) {
-                lastSimulationCheckRef.current = now;
-                // Use the production unlock path, but never register virtual
-                // coordinates with the native background geofence service.
-                checkUnlocks(next, spotsRef.current, false).catch((error) => {
-                    console.error('Simulated location unlock check failed:', error);
-                });
-            }
-            return next;
-        });
-    };
-
-    const resetSimulation = async () => {
-        if (!simulationTarget || !Config.LOCATION_TESTING_ENABLED) return;
-        await TriviaUnlockManager.resetTrivia(simulationTarget.id);
-        const hydrated = await refreshUnlockedState();
-        const freshTarget = hydrated.find((spot) => spot.id === simulationTarget.id) ?? simulationTarget;
-        const start = getSimulationStart(freshTarget);
-        setSimulatedLocation(start);
-        setSelectedSpotId(freshTarget.id);
-        setIsPreviewVisible(false);
-        setIsDetailVisible(false);
-        focusSimulation(start, freshTarget);
     };
 
     const selectPrefectureSummary = (summary: PrefectureSummary) => {
@@ -502,13 +386,13 @@ export default function TriviaMapScreen() {
 
     const getPinColor = (spot: TriviaSpot) => {
         if (spot.isUnlocked) return Colors.light.primary;
-        if (isSpotInRange(spot, effectiveLocation)) return Colors.light.secondary;
+        if (isSpotInRange(spot, userLocation)) return Colors.light.secondary;
         return '#8E8E93';
     };
 
     const getReadableState = (spot: TriviaSpot) => {
-        const distance = getSpotDistance(spot, effectiveLocation);
-        const inRange = isSpotInRange(spot, effectiveLocation);
+        const distance = getSpotDistance(spot, userLocation);
+        const inRange = isSpotInRange(spot, userLocation);
         const canRead = spot.isUnlocked || inRange;
 
         return { distance, inRange, canRead };
@@ -743,7 +627,7 @@ export default function TriviaMapScreen() {
                         style={StyleSheet.absoluteFill}
                         initialRegion={JAPAN_REGION}
                         provider={Platform.OS === 'android' ? PROVIDER_GOOGLE : undefined}
-                        showsUserLocation={locationStatus === 'granted' && !isSimulatedLocation}
+                        showsUserLocation={locationStatus === 'granted'}
                         showsMyLocationButton={false}
                         onMapReady={() => setIsMapReady(true)}
                         onRegionChangeComplete={(region) => {
@@ -809,13 +693,6 @@ export default function TriviaMapScreen() {
                             strokeColor={selectedSpot ? 'rgba(230, 0, 18, 0.45)' : 'rgba(0, 0, 0, 0)'}
                             fillColor={selectedSpot ? 'rgba(230, 0, 18, 0.08)' : 'rgba(0, 0, 0, 0)'}
                         />
-                        {isSimulatedLocation && simulatedLocation ? (
-                            <Marker coordinate={simulatedLocation} anchor={{ x: 0.5, y: 0.5 }} zIndex={10}>
-                                <View style={styles.simulatedLocationMarker}>
-                                    <Ionicons name="navigate" size={18} color="#FFFFFF" />
-                                </View>
-                            </Marker>
-                        ) : null}
                     </MapView>
 
                     {isLoading && (
@@ -830,25 +707,6 @@ export default function TriviaMapScreen() {
                     </Pressable>
 
                     {isPreviewVisible && renderSpotPreview()}
-                    {Config.LOCATION_TESTING_ENABLED && !isPreviewVisible && simulationTarget ? (
-                        <LocationTestController
-                            active={isSimulatedLocation}
-                            targetName={`${simulationTarget.prefecture ?? ''}${simulationTarget.address ?? ''} / ${simulationTarget.title}`}
-                            distanceMeters={simulatedLocation ? getSpotDistance(simulationTarget, simulatedLocation) : undefined}
-                            unlockRadiusMeters={simulationTarget.unlockRadiusMeters}
-                            bottomOffset={getFloatingTabBarBottom(insets) + FLOATING_TAB_BAR_HEIGHT + 12}
-                            speedMetersPerSecond={simulationSpeed}
-                            onActivate={activateSimulation}
-                            onDeactivate={deactivateSimulation}
-                            onMove={moveSimulation}
-                            onReset={() => {
-                                resetSimulation().catch((error) => {
-                                    console.error('Simulation reset failed:', error);
-                                });
-                            }}
-                            onSpeedChange={setSimulationSpeed}
-                        />
-                    ) : null}
                     {renderSpotDetailModal()}
                 </View>
             ) : (
@@ -1094,17 +952,6 @@ const styles = StyleSheet.create({
         borderWidth: 3,
         borderColor: '#FFFFFF',
         ...Theme.shadow.small,
-    },
-    simulatedLocationMarker: {
-        width: 42,
-        height: 42,
-        borderRadius: 21,
-        backgroundColor: '#1B76D1',
-        borderWidth: 4,
-        borderColor: '#FFFFFF',
-        alignItems: 'center',
-        justifyContent: 'center',
-        ...Theme.shadow.medium,
     },
     mapMarkerHidden: {
         opacity: 0,
