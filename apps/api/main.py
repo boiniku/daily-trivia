@@ -161,7 +161,14 @@ def read_root():
 
 @app.get("/health")
 def health_check():
-    return {"status": "ok", "environment": APP_ENV, "api_version": API_VERSION}
+    return {
+        "status": "ok",
+        "environment": APP_ENV,
+        "api_version": API_VERSION,
+        # Render supplies this value at runtime. It lets the release workflow
+        # prove that the exact reviewed commit is serving production traffic.
+        "release_commit": os.getenv("RENDER_GIT_COMMIT", "").strip(),
+    }
 
 
 @app.get("/app/version")
