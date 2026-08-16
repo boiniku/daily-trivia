@@ -84,7 +84,7 @@ const findByPredicate = async (predicate, description, timeoutMs = 20_000) => {
 
 const findByLabel = (label, timeoutMs = 20_000) => {
     return findByPredicate(
-        `label == ${JSON.stringify(label)} OR name == ${JSON.stringify(label)}`,
+        `label CONTAINS ${JSON.stringify(label)} OR name CONTAINS ${JSON.stringify(label)}`,
         label,
         timeoutMs
     );
@@ -135,11 +135,38 @@ const setAppPermission = async (permissionSettings) => {
 
 const completeTutorial = async () => {
     log('チュートリアルを進めます。');
+    // Do not depend on the persisted first-launch state of the cloud device.
+    await sleep(8000);
+    await execute('mobile: deepLink', {
+        url: 'dailytrivia://tutorial',
+        bundleId: BUNDLE_ID,
+    });
+    await sleep(5000);
     await clickLabel('次へ', 30_000);
     await clickLabel('次へ');
     await clickLabel('次へ');
     await clickLabel('通知を設定する');
     await sleep(12_000);
+};
+
+const printScreenDiagnostics = async () => {
+    if (!sessionId) return;
+    try {
+        const source = await command('GET', '/source');
+        const sourceText = typeof source === 'string' ? source : JSON.stringify(source);
+        const visibleTexts = Array.from(
+            sourceText.matchAll(/\b(?:label|name|value)="([^"]{1,160})"/g),
+            (match) => match[1]
+        );
+        const uniqueTexts = [...new Set(visibleTexts)].filter((value) => value.trim());
+        console.error(`[geofence-e2e] 現在の画面要素: ${uniqueTexts.slice(0, 60).join(' | ') || '(取得できませんでした)'}`);
+
+        if (sourceText.includes('No development servers found') || sourceText.includes('Development Server')) {
+            console.error('[geofence-e2e] Development Buildがアップロードされています。Metro不要のpreview IPAをアップロードしてください。');
+        }
+    } catch (diagnosticError) {
+        console.error(`[geofence-e2e] 画面診断の取得にも失敗しました: ${diagnosticError.message}`);
+    }
 };
 
 const configurePermissions = async () => {
@@ -250,6 +277,7 @@ try {
 } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     console.error(`[geofence-e2e] 失敗: ${message}`);
+    await printScreenDiagnostics();
     await finishSession(false, message).catch(() => undefined);
     process.exitCode = 1;
 }
