@@ -1,0 +1,66 @@
+{
+  "cli": {
+    "version": ">= 3.0.0",
+    "appVersionSource": "local"
+  },
+  "build": {
+    "development": {
+      "developmentClient": true,
+      "distribution": "internal",
+      "channel": "staging",
+      "environment": "development",
+      "env": {
+        "EXPO_PUBLIC_APP_ENV": "staging",
+        "EXPO_PUBLIC_BACKEND_URL": "https://daily-trivia-backend-staging.onrender.com",
+        "EXPO_PUBLIC_API_VERSION": "1"
+      }
+    },
+    "preview": {
+      "distribution": "internal",
+      "channel": "staging",
+      "environment": "preview",
+      "env": {
+        "EXPO_PUBLIC_APP_ENV": "staging",
+        "EXPO_PUBLIC_BACKEND_URL": "https://daily-trivia-backend-staging.onrender.com",
+        "EXPO_PUBLIC_API_VERSION": "1"
+      }
+    },
+    "testflight": {
+      "distribution": "store",
+      "channel": "staging",
+      "environment": "preview",
+      "env": {
+        "EXPO_PUBLIC_APP_ENV": "staging",
+        "EXPO_PUBLIC_BACKEND_URL": "https://daily-trivia-backend-staging.onrender.com",
+        "EXPO_PUBLIC_API_VERSION": "1"
+      },
+      "ios": {
+        "image": "macos-sequoia-15.6-xcode-26.2"
+      }
+    },
+    "production": {
+      "environment": "production",
+      "env": {
+        "EXPO_PUBLIC_APP_ENV": "production",
+        "EXPO_PUBLIC_BACKEND_URL": "https://daily-trivia-e7ge.onrender.com",
+        "EXPO_PUBLIC_API_VERSION": "1"
+      },
+      "ios": {
+        "image": "macos-sequoia-15.6-xcode-26.2"
+      },
+      "channel": "production"
+    }
+  },
+  "submit": {
+    "testflight": {
+      "ios": {
+        "ascAppId": "6758872525"
+      }
+    },
+    "production": {
+      "ios": {
+        "ascAppId": "6758872525"
+      }
+    }
+  }
+}

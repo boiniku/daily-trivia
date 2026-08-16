@@ -1,0 +1,28 @@
+# Local environment and credentials
+**/.env
+**/.env.local
+**/.env.*.local
+**/credentials/
+*.p8
+*.p12
+*.mobileprovision
+
+# Python
+**/__pycache__/
+*.py[cod]
+**/.venv/
+**/venv/
+**/.pytest_cache/
+**/.mypy_cache/
+*.log
+
+# Node / Expo
+**/node_modules/
+**/.expo/
+**/dist/
+**/web-build/
+
+# Editors and operating systems
+.DS_Store
+Thumbs.db
+*.tsbuildinfo

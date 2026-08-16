@@ -1,8 +1,0 @@
-const { execSync } = require('child_process');
-try {
-  const output = execSync('npx expo-modules-autolinking search --platform ios --json').toString();
-  const data = JSON.parse(output);
-  console.log(JSON.stringify(data, null, 2));
-} catch (e) {
-  console.error('Error running search:', e);
-}

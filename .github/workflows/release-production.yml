@@ -1,0 +1,129 @@
+name: Production release 1.1.0
+
+on:
+  workflow_dispatch:
+    inputs:
+      phase:
+        description: Release phase to run
+        required: true
+        type: choice
+        options:
+          - deploy-backend
+          - build-and-upload-ios
+          - enable-update-prompt
+      version:
+        description: App version
+        required: true
+        default: 1.1.0
+      confirmation:
+        description: Type RELEASE-1.1.0
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production-release
+  cancel-in-progress: false
+
+env:
+  PRODUCTION_API_URL: https://daily-trivia-e7ge.onrender.com
+  APP_STORE_ID: "6758872525"
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require main and exact confirmation
+        env:
+          RELEASE_PHASE: ${{ inputs.phase }}
+          RELEASE_VERSION: ${{ inputs.version }}
+          RELEASE_CONFIRMATION: ${{ inputs.confirmation }}
+        run: |
+          test "$GITHUB_REF" = "refs/heads/main"
+          test "$RELEASE_VERSION" = "1.1.0"
+          test "$RELEASE_CONFIRMATION" = "RELEASE-1.1.0"
+          echo "Validated $RELEASE_PHASE for $RELEASE_VERSION at $GITHUB_SHA"
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: apps/mobile/package-lock.json
+      - run: npm ci
+        working-directory: apps/mobile
+      - run: npm run typecheck
+        working-directory: apps/mobile
+      - run: npm run verify:release
+        working-directory: apps/mobile
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+
+  deploy-backend:
+    if: inputs.phase == 'deploy-backend'
+    needs: validate
+    runs-on: ubuntu-latest
+    environment: production-render
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - name: Deploy the exact reviewed commit to Render
+        env:
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+          RENDER_SERVICE_ID: ${{ secrets.RENDER_PRODUCTION_SERVICE_ID }}
+        run: |
+          python .github/scripts/render_release.py deploy \
+            --service-id "$RENDER_SERVICE_ID" \
+            --token "$RENDER_API_KEY" \
+            --commit "$GITHUB_SHA" \
+            --health-url "$PRODUCTION_API_URL/health"
+
+  build-and-upload-ios:
+    if: inputs.phase == 'build-and-upload-ios'
+    needs: validate
+    runs-on: ubuntu-latest
+    environment: app-store-connect
+    steps:
+      - uses: actions/checkout@v6
+      - name: Require this exact commit to be live on Render
+        run: |
+          python - <<'PY'
+          import json, os, urllib.request
+          with urllib.request.urlopen(os.environ["PRODUCTION_API_URL"] + "/health", timeout=30) as response:
+              health = json.load(response)
+          expected = os.environ["GITHUB_SHA"]
+          if health.get("status") != "ok" or health.get("environment") != "production" or health.get("release_commit") != expected:
+              raise SystemExit(f"Production is not serving {expected}: {health}")
+          print(f"Production API commit verified: {expected}")
+          PY
+      - uses: expo/expo-github-action@v8
+        with:
+          eas-version: 22.0.0
+          token: ${{ secrets.EXPO_TOKEN }}
+      - name: Build production iOS binary and upload it to App Store Connect
+        working-directory: apps/mobile
+        run: eas build --platform ios --profile production --non-interactive --auto-submit --no-wait
+
+  enable-update-prompt:
+    if: inputs.phase == 'enable-update-prompt'
+    needs: validate
+    runs-on: ubuntu-latest
+    environment: production-update-prompt
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - name: Verify App Store publication, then enable the old-app prompt
+        env:
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+          RENDER_SERVICE_ID: ${{ secrets.RENDER_PRODUCTION_SERVICE_ID }}
+        run: |
+          python .github/scripts/render_release.py activate-update-prompt \
+            --service-id "$RENDER_SERVICE_ID" \
+            --token "$RENDER_API_KEY" \
+            --version "${{ inputs.version }}" \
+            --health-url "$PRODUCTION_API_URL/health" \
+            --app-store-id "$APP_STORE_ID"
