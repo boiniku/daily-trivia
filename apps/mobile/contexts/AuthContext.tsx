@@ -250,6 +250,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             // 2. Sign out & Cleanup
             await AsyncStorage.removeItem('user_id');
             await AsyncStorage.removeItem('hasSeenTutorial');
+            await AsyncStorage.removeItem('hasSeenTutorialRevision');
             await AsyncStorage.removeItem('hasSeenWidgetGuide');
             await AsyncStorage.removeItem('triviaState');
 

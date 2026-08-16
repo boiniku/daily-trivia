@@ -55,14 +55,15 @@ const checkAppVersion = async () => {
 
     const data = await response.json();
     const minimumVersion = String(data.minimum_supported_version || '');
-    if (!minimumVersion) return;
+    const latestVersion = String(data.latest_version || minimumVersion);
+    if (!latestVersion) return;
 
-    if (compareVersions(Config.APP_VERSION, minimumVersion) < 0) {
+    if (compareVersions(Config.APP_VERSION, latestVersion) < 0) {
       hasShownUpdatePrompt = true;
       const appStoreUrl = String(data.app_store_url || 'https://apps.apple.com/app/id6758872525');
       Alert.alert(
         'アップデートのお願い',
-        '新しいバージョンの毎日雑学があります。快適に使うため、アップデートをお願いします。',
+        `新しいバージョン（${latestVersion}）の毎日雑学があります。新機能を利用するため、アップデートをお願いします。`,
         [
           { text: 'あとで', style: 'cancel' },
           { text: 'アップデート', onPress: () => Linking.openURL(appStoreUrl) },

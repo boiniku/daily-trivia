@@ -9,6 +9,11 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Ionicons } from '@expo/vector-icons';
 import { Theme, Colors } from '../constants/Colors';
 import { TriviaGeofenceEnableResult, TriviaGeofenceManager } from '../managers/TriviaGeofenceManager';
+import {
+    CURRENT_TUTORIAL_REVISION,
+    TUTORIAL_COMPLETION_KEY,
+    TUTORIAL_REVISION_KEY,
+} from '../constants/Tutorial';
 
 const { width } = Dimensions.get('window');
 
@@ -98,7 +103,10 @@ export default function TutorialScreen() {
     ];
 
     const finishTutorial = async () => {
-        await AsyncStorage.setItem('hasSeenTutorial', 'true');
+        await AsyncStorage.multiSet([
+            [TUTORIAL_COMPLETION_KEY, 'true'],
+            [TUTORIAL_REVISION_KEY, CURRENT_TUTORIAL_REVISION],
+        ]);
         await AsyncStorage.setItem('pendingSwipeGuide', 'true');
         router.replace('/');
     };

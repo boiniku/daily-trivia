@@ -17,6 +17,11 @@ import { fetchWithToken } from '../../utils/apiClient';
 import { Theme, Colors } from '../../constants/Colors';
 import { BANNER_RESERVED_HEIGHT, getTabScreenAdBottomMargin } from '../../constants/Layout';
 import { checkAndRequestReview } from '../../utils/reviewHandler';
+import {
+    CURRENT_TUTORIAL_REVISION,
+    TUTORIAL_COMPLETION_KEY,
+    TUTORIAL_REVISION_KEY,
+} from '../../constants/Tutorial';
 
 const DAILY_LIMIT = 3;
 const REWARDED_BONUS_LIMIT = 3;
@@ -126,8 +131,11 @@ export default function HomeScreen() {
 
     const checkTutorial = async () => {
         try {
-            const hasSeen = await AsyncStorage.getItem('hasSeenTutorial');
-            if (hasSeen !== 'true') {
+            const [hasSeen, seenRevision] = await Promise.all([
+                AsyncStorage.getItem(TUTORIAL_COMPLETION_KEY),
+                AsyncStorage.getItem(TUTORIAL_REVISION_KEY),
+            ]);
+            if (hasSeen !== 'true' || seenRevision !== CURRENT_TUTORIAL_REVISION) {
                 router.push('/tutorial');
             }
         } catch (e) {
@@ -158,7 +166,7 @@ export default function HomeScreen() {
     const checkSwipeGuide = async () => {
         try {
             // Only check if tutorial is already done
-            const hasSeen = await AsyncStorage.getItem('hasSeenTutorial');
+            const hasSeen = await AsyncStorage.getItem(TUTORIAL_COMPLETION_KEY);
             if (hasSeen !== 'true') return;
 
             const hasSeenInteractionGuide = await AsyncStorage.getItem('hasSeenInteractionGuide');
@@ -229,7 +237,7 @@ export default function HomeScreen() {
                 try {
                     // Check if they've seen the tutorial first. If not, they shouldn't see badge yet either, 
                     // or badge will show immediately. Only show badge (false) if tutorial is done but widget guide isn't.
-                    const hasSeenTutorialObj = await AsyncStorage.getItem('hasSeenTutorial');
+                    const hasSeenTutorialObj = await AsyncStorage.getItem(TUTORIAL_COMPLETION_KEY);
                     if (hasSeenTutorialObj !== 'true') {
                         setHasSeenWidgetGuide(true); // Hide badge while in tutorial
                         return;
