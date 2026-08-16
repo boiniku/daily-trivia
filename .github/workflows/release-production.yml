@@ -44,7 +44,7 @@ jobs:
           test "$RELEASE_VERSION" = "1.1.0"
           test "$RELEASE_CONFIRMATION" = "RELEASE-1.1.0"
           echo "Validated $RELEASE_PHASE for $RELEASE_VERSION at $GITHUB_SHA"
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
@@ -65,8 +65,8 @@ jobs:
     runs-on: ubuntu-latest
     environment: production-render
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.13"
       - name: Deploy the exact reviewed commit to Render
@@ -86,7 +86,7 @@ jobs:
     runs-on: ubuntu-latest
     environment: app-store-connect
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Require this exact commit to be live on Render
         run: |
           python - <<'PY'
@@ -112,8 +112,8 @@ jobs:
     runs-on: ubuntu-latest
     environment: production-update-prompt
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.13"
       - name: Verify App Store publication, then enable the old-app prompt
