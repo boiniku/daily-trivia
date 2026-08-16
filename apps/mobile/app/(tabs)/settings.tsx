@@ -40,14 +40,18 @@ export default function SettingsScreen() {
                 const result = await TriviaGeofenceManager.enable();
                 if (result !== 'enabled') {
                     Alert.alert(
-                        '許可が必要です',
-                        result === 'notification-denied'
+                        result === 'native-build-outdated' ? 'アプリの更新が必要です' : '許可が必要です',
+                        result === 'native-build-outdated'
+                            ? 'バックグラウンド通知に対応した最新のdevelopment buildをインストールしてください。'
+                            : result === 'notification-denied'
                             ? 'iPhoneの設定で通知を許可してください。'
                             : 'バックグラウンドで雑学を見つけるには、位置情報を「常に」に設定してください。',
-                        [
-                            { text: 'キャンセル', style: 'cancel' },
-                            { text: 'iPhoneの設定を開く', onPress: () => Linking.openSettings() },
-                        ]
+                        result === 'native-build-outdated'
+                            ? [{ text: '閉じる', style: 'cancel' }]
+                            : [
+                                { text: 'キャンセル', style: 'cancel' },
+                                { text: 'iPhoneの設定を開く', onPress: () => Linking.openSettings() },
+                            ]
                     );
                 }
             }
@@ -62,6 +66,8 @@ export default function SettingsScreen() {
 
     const notificationStatusText = notificationStatus === 'active'
         ? 'アプリを開いていないときも通知します'
+        : notificationStatus === 'native-build-outdated'
+            ? '最新のdevelopment buildが必要です'
         : notificationStatus === 'notification-denied'
             ? 'iPhoneの通知設定がOFFです'
             : notificationStatus === 'location-denied'

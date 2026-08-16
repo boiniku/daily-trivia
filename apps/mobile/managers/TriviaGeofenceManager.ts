@@ -1,5 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Location from 'expo-location';
+import Constants from 'expo-constants';
 import { Platform } from 'react-native';
 import { getTriviaSpots } from '../data/triviaSpots';
 import { Coordinates, TriviaSpot } from '../models/TriviaSpot';
@@ -16,17 +17,20 @@ const SPOT_REGION_PREFIX = 'trivia-spot:';
 const MAX_SPOT_REGIONS = 19;
 const MIN_REFRESH_RADIUS_METERS = 200;
 const MAX_REFRESH_RADIUS_METERS = 3000;
+const MINIMUM_IOS_BACKGROUND_LOCATION_BUILD = 144;
 
 export type TriviaGeofenceEnableResult =
     | 'enabled'
     | 'notification-denied'
     | 'foreground-location-denied'
     | 'background-location-denied'
+    | 'native-build-outdated'
     | 'unsupported';
 
 export type TriviaGeofenceStatus =
     | 'off'
     | 'active'
+    | 'native-build-outdated'
     | 'notification-denied'
     | 'location-denied';
 
@@ -56,6 +60,12 @@ const boundaryDistance = (spot: TriviaSpot, location: Coordinates) => (
 const clamp = (value: number, minimum: number, maximum: number) => (
     Math.min(maximum, Math.max(minimum, value))
 );
+
+const supportsBackgroundGeofencing = () => {
+    if (Platform.OS !== 'ios') return false;
+    const nativeBuildNumber = Number(Constants.platform?.ios?.buildNumber ?? 0);
+    return nativeBuildNumber >= MINIMUM_IOS_BACKGROUND_LOCATION_BUILD;
+};
 
 const getRegions = async (spots: TriviaSpot[], location: Coordinates): Promise<Location.LocationRegion[]> => {
     const records = await TriviaUnlockManager.getUnlockedRecords();
@@ -121,6 +131,7 @@ export const TriviaGeofenceManager = {
 
     async enable(): Promise<TriviaGeofenceEnableResult> {
         if (Platform.OS !== 'ios') return 'unsupported';
+        if (!supportsBackgroundGeofencing()) return 'native-build-outdated';
 
         await AsyncStorage.setItem(ENABLED_STORAGE_KEY, 'true');
 
@@ -139,6 +150,7 @@ export const TriviaGeofenceManager = {
 
     async getStatus(): Promise<TriviaGeofenceStatus> {
         if (!await this.isEnabled()) return 'off';
+        if (!supportsBackgroundGeofencing()) return 'native-build-outdated';
         if (!await TriviaNotificationManager.hasPermission()) return 'notification-denied';
         if (!await TriviaLocationManager.hasBackgroundPermission()) return 'location-denied';
         return 'active';
@@ -154,6 +166,7 @@ export const TriviaGeofenceManager = {
     async refreshRegistration(spots?: TriviaSpot[], location?: Coordinates) {
         return runSerialized(async () => {
             if (Platform.OS !== 'ios' || !await this.isEnabled()) return;
+            if (!supportsBackgroundGeofencing()) return;
             if (!await TriviaLocationManager.hasBackgroundPermission()) return;
 
             const availableSpots = spots?.length ? spots : await loadSpots();
@@ -176,6 +189,7 @@ export const TriviaGeofenceManager = {
 
     async syncLatestRegistration() {
         if (Platform.OS !== 'ios' || !await this.isEnabled()) return;
+        if (!supportsBackgroundGeofencing()) return;
         const spots = await getTriviaSpots();
         await this.refreshRegistration(spots);
     },

@@ -108,6 +108,8 @@ export default function TutorialScreen() {
 
         const message = result === 'notification-denied'
             ? '通知が許可されていません。あとからiPhoneの設定またはアプリの設定画面で変更できます。'
+            : result === 'native-build-outdated'
+                ? 'バックグラウンド通知に対応した最新のdevelopment buildをインストールしてください。'
             : result === 'foreground-location-denied'
                 ? '位置情報が許可されていません。あとから設定すると、近くの雑学を見つけられます。'
                 : result === 'background-location-denied'
@@ -116,7 +118,9 @@ export default function TutorialScreen() {
 
         Alert.alert('あとから設定できます', message, [
             { text: '閉じる', style: 'cancel' },
-            ...(result === 'unsupported' ? [] : [{ text: 'iPhoneの設定を開く', onPress: () => Linking.openSettings() }]),
+            ...(result === 'unsupported' || result === 'native-build-outdated'
+                ? []
+                : [{ text: 'iPhoneの設定を開く', onPress: () => Linking.openSettings() }]),
         ]);
     };
 
