@@ -26,6 +26,7 @@ if (!appId.startsWith('bs://')) {
 
 const auth = Buffer.from(`${username}:${accessKey}`).toString('base64');
 let sessionId = null;
+let deviceLockedForTest = false;
 
 const sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
 const log = (message) => console.log(`[geofence-e2e] ${message}`);
@@ -183,6 +184,23 @@ const backgroundApp = async () => {
     }
 };
 
+const pressPowerButton = () => execute('mobile: performIoHidEvent', {
+    page: 0x0C,
+    usage: 0x30,
+    durationSeconds: 0.005,
+});
+
+const lockDeviceForTest = async () => {
+    try {
+        log('画面をロックして、ロック中の通知を検証します。');
+        await pressPowerButton();
+        deviceLockedForTest = true;
+        await sleep(2500);
+    } catch (error) {
+        log(`端末ロックを利用できないためホーム画面のまま続行します: ${error.message}`);
+    }
+};
+
 const printScreenDiagnostics = async () => {
     if (!sessionId) return;
     try {
@@ -274,18 +292,69 @@ const waitForBackgroundEvent = async () => {
 };
 
 const verifyBackgroundNotification = async () => {
-    log('アプリを開かずにiOS通知センターを表示し、解放通知を確認します。');
+    log('アプリを開かずにロック画面・iOS通知センターの解放通知を確認します。');
+    if (deviceLockedForTest) {
+        // Wake the screen without unlocking it. Notifications should be visible
+        // directly on the lock screen.
+        await pressPowerButton();
+        await sleep(3500);
+        try {
+            return await findByPredicate(
+                'label CONTAINS "この場所ならではの雑学" OR label CONTAINS "が解放されました"',
+                '姫町のロック画面解放通知',
+                6000
+            );
+        } catch {
+            log('ロック画面に通知が見つからないため通知センターも確認します。');
+        }
+    }
+
     const rect = await command('GET', '/window/rect');
     const centerX = Math.round((rect.width ?? 390) / 2);
     const bottomY = Math.round((rect.height ?? 844) * 0.78);
-    await execute('mobile: dragFromToForDuration', {
-        duration: 0.8,
-        fromX: centerX,
-        fromY: 2,
-        toX: centerX,
-        toY: bottomY,
-    });
-    await sleep(3000);
+    const attempts = [
+        { x: centerX, y: 2 },
+        { x: Math.round((rect.width ?? 390) * 0.15), y: 20 },
+        { x: centerX, y: 40 },
+    ];
+
+    for (const attempt of attempts) {
+        try {
+            await command('POST', '/actions', {
+                actions: [{
+                    type: 'pointer',
+                    id: 'notification-center-finger',
+                    parameters: { pointerType: 'touch' },
+                    actions: [
+                        { type: 'pointerMove', duration: 0, origin: 'viewport', x: attempt.x, y: attempt.y },
+                        { type: 'pointerDown', button: 0 },
+                        { type: 'pause', duration: 350 },
+                        { type: 'pointerMove', duration: 900, origin: 'viewport', x: attempt.x, y: bottomY },
+                        { type: 'pointerUp', button: 0 },
+                    ],
+                }],
+            });
+        } catch {
+            await execute('mobile: dragFromToForDuration', {
+                duration: 0.9,
+                fromX: attempt.x,
+                fromY: attempt.y,
+                toX: attempt.x,
+                toY: bottomY,
+            });
+        }
+        await sleep(2500);
+
+        try {
+            return await findByPredicate(
+                'label CONTAINS "この場所ならではの雑学" OR label CONTAINS "が解放されました"',
+                '姫町のバックグラウンド解放通知',
+                4000
+            );
+        } catch {
+            // Try another top-edge coordinate before reporting a real failure.
+        }
+    }
 
     return findByPredicate(
         'label CONTAINS "この場所ならではの雑学" OR label CONTAINS "が解放されました"',
@@ -326,6 +395,7 @@ try {
     await completeTutorial();
     await configurePermissions();
     await backgroundApp();
+    await lockDeviceForTest();
     await setInsideLocation();
     // setInsideLocation is deliberately performed only after the app is backgrounded.
     await waitForBackgroundEvent();
