@@ -90,6 +90,14 @@ const findByLabel = (label, timeoutMs = 20_000) => {
     );
 };
 
+const findByExactLabel = (label, timeoutMs = 20_000) => {
+    return findByPredicate(
+        `label == ${JSON.stringify(label)} OR name == ${JSON.stringify(label)}`,
+        label,
+        timeoutMs
+    );
+};
+
 const clickLabel = async (label, timeoutMs) => {
     const elementId = await findByLabel(label, timeoutMs);
     await command('POST', `/element/${elementId}/click`, {});
@@ -104,7 +112,9 @@ const createSession = async () => {
                 'appium:deviceName': process.env.BROWSERSTACK_DEVICE ?? 'iPhone 15',
                 'appium:platformVersion': process.env.BROWSERSTACK_IOS_VERSION ?? '17',
                 'appium:app': appId,
-                'appium:autoAcceptAlerts': true,
+                // Permission choices are handled explicitly below. Automatically
+                // accepting an iOS location alert can select "Allow Once".
+                'appium:autoAcceptAlerts': false,
                 'appium:newCommandTimeout': 300,
                 'bstack:options': {
                     userName: username,
@@ -126,13 +136,6 @@ const createSession = async () => {
     if (!sessionId) throw new Error('BrowserStackからsessionIdが返りませんでした。');
 };
 
-const setAppPermission = async (permissionSettings) => {
-    await browserStackExecutor('updateAppSettings', {
-        'Permission Settings': permissionSettings,
-    });
-    await sleep(2000);
-};
-
 const completeTutorial = async () => {
     log('チュートリアルを進めます。');
     await sleep(8000);
@@ -140,7 +143,6 @@ const completeTutorial = async () => {
     await clickLabel('次へ');
     await clickLabel('次へ');
     await clickLabel('通知を設定する');
-    await sleep(12_000);
 };
 
 const backgroundApp = async () => {
@@ -175,16 +177,42 @@ const printScreenDiagnostics = async () => {
 };
 
 const configurePermissions = async () => {
-    log('位置情報を「常に」、正確な位置情報と通知をONにします。');
-    await setAppPermission({
-        Location: { 'ALLOW LOCATION ACCESS': 'Always' },
-    });
-    await setAppPermission({
-        Location: { 'Precise Location': 'ON' },
-    });
-    await setAppPermission({
-        Notifications: { 'Allow Notifications': 'ON' },
-    });
+    log('通常のiOS許可画面で、通知と位置情報を「常に」許可します。');
+    const preferredButtons = [
+        'Allow',
+        '許可',
+        'Allow While Using App',
+        'Appの使用中は許可',
+        'Change to Always Allow',
+        '常に許可に変更',
+        'Always Allow',
+        '常に許可',
+    ];
+    const deadline = Date.now() + 75_000;
+    let quietSince = null;
+
+    while (Date.now() < deadline) {
+        const source = await command('GET', '/source');
+        const sourceText = typeof source === 'string' ? source : JSON.stringify(source);
+        const button = preferredButtons.find((label) => (
+            sourceText.includes(`label="${label}"`) || sourceText.includes(`name="${label}"`)
+        ));
+
+        if (button) {
+            log(`iOS許可画面: 「${button}」を選択します。`);
+            const elementId = await findByExactLabel(button, 5000);
+            await command('POST', `/element/${elementId}/click`, {});
+            quietSince = null;
+            await sleep(2500);
+            continue;
+        }
+
+        // The manager requests notification, foreground location and then
+        // background location serially. Wait until all dialogs have settled.
+        quietSince ??= Date.now();
+        if (Date.now() - quietSince >= 10_000) break;
+        await sleep(1000);
+    }
 
     await execute('mobile: activateApp', { bundleId: BUNDLE_ID });
     // AppState active triggers a fresh geofence registration using the outside location.
