@@ -136,8 +136,35 @@ const createSession = async () => {
     if (!sessionId) throw new Error('BrowserStackからsessionIdが返りませんでした。');
 };
 
+const ensureAppRunning = async () => {
+    let lastState = 0;
+    for (let attempt = 1; attempt <= 3; attempt += 1) {
+        try {
+            lastState = Number(await execute('mobile: queryAppState', { bundleId: BUNDLE_ID }));
+        } catch {
+            lastState = 0;
+        }
+
+        // Appium states: 2 = background suspended, 3 = background, 4 = foreground.
+        if (lastState === 4) return;
+        log(`アプリが前面にないため起動します（${attempt}/3、state=${lastState}）。`);
+        try {
+            await execute('mobile: activateApp', { bundleId: BUNDLE_ID });
+        } catch (error) {
+            log(`アプリ起動命令に失敗しました: ${error.message}`);
+        }
+        await sleep(6000);
+    }
+
+    lastState = Number(await execute('mobile: queryAppState', { bundleId: BUNDLE_ID }).catch(() => 0));
+    if (lastState !== 4) {
+        throw new Error(`アプリを3回起動しても前面状態になりませんでした（state=${lastState}）。クラッシュログを確認してください。`);
+    }
+};
+
 const completeTutorial = async () => {
     log('チュートリアルを進めます。');
+    await ensureAppRunning();
     await sleep(8000);
     await clickLabel('次へ', 30_000);
     await clickLabel('次へ');
@@ -159,7 +186,15 @@ const backgroundApp = async () => {
 const printScreenDiagnostics = async () => {
     if (!sessionId) return;
     try {
-        const source = await command('GET', '/source');
+        let source;
+        try {
+            source = await command('GET', '/source');
+        } catch {
+            console.error('[geofence-e2e] アプリ停止後の画面を確認するため、一度だけ再起動します。');
+            await execute('mobile: activateApp', { bundleId: BUNDLE_ID });
+            await sleep(5000);
+            source = await command('GET', '/source');
+        }
         const sourceText = typeof source === 'string' ? source : JSON.stringify(source);
         const visibleTexts = Array.from(
             sourceText.matchAll(/\b(?:label|name|value)="([^"]{1,160})"/g),
