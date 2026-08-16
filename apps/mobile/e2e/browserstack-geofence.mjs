@@ -256,14 +256,9 @@ const configurePermissions = async () => {
 
 const setInsideLocation = async () => {
     log(`GPSを姫町中心 ${INSIDE_LOCATION.latitude}, ${INSIDE_LOCATION.longitude} へ移動します。`);
-    try {
-        await execute('mobile: setSimulatedLocation', INSIDE_LOCATION);
-    } catch (error) {
-        log(`setSimulatedLocationを利用できないため標準位置APIへ切り替えます: ${error.message}`);
-        await command('POST', '/location', {
-            location: { ...INSIDE_LOCATION, altitude: 0 },
-        });
-    }
+    await command('POST', '/location', {
+        location: { ...INSIDE_LOCATION, altitude: 0 },
+    });
 };
 
 const waitForBackgroundEvent = async () => {
@@ -272,13 +267,9 @@ const waitForBackgroundEvent = async () => {
     while ((Date.now() - startedAt) / 1000 < WAIT_SECONDS) {
         await sleep(15_000);
         // Keep the BrowserStack session alive without foregrounding the app.
-        try {
-            await execute('mobile: getSimulatedLocation');
-        } catch {
-            await command('GET', '/location');
-        }
+        const appState = await execute('mobile: queryAppState', { bundleId: BUNDLE_ID });
         const elapsed = Math.round((Date.now() - startedAt) / 1000);
-        log(`バックグラウンド待機 ${Math.min(elapsed, WAIT_SECONDS)}/${WAIT_SECONDS}秒`);
+        log(`バックグラウンド待機 ${Math.min(elapsed, WAIT_SECONDS)}/${WAIT_SECONDS}秒（state=${appState}）`);
     }
 };
 
