@@ -1,15 +1,21 @@
 const HUB_URL = 'https://hub-cloud.browserstack.com/wd/hub';
 const BUNDLE_ID = 'com.dailytrivia.app';
+const STAGING_MAP_URL = 'https://daily-trivia-backend-staging.onrender.com/trivia/map';
+const ROTATION_MODE = process.argv.includes('--rotation');
 
 const OUTSIDE_LOCATION = {
     latitude: Number(process.env.GEOFENCE_OUTSIDE_LATITUDE ?? 35.390926),
     longitude: Number(process.env.GEOFENCE_OUTSIDE_LONGITUDE ?? 137.100000),
 };
-const INSIDE_LOCATION = {
+let insideLocation = {
     latitude: Number(process.env.GEOFENCE_INSIDE_LATITUDE ?? 35.390926),
     longitude: Number(process.env.GEOFENCE_INSIDE_LONGITUDE ?? 137.066830),
 };
 const WAIT_SECONDS = Number(process.env.GEOFENCE_WAIT_SECONDS ?? 150);
+const ROTATION_WAIT_SECONDS = Number(process.env.GEOFENCE_ROTATION_WAIT_SECONDS ?? 120);
+let rotationWaypoint = null;
+let targetNotificationText = '姫町';
+let targetDescription = '姫町スポット';
 
 const username = process.env.BROWSERSTACK_USERNAME;
 const accessKey = process.env.BROWSERSTACK_ACCESS_KEY;
@@ -30,6 +36,65 @@ let deviceLockedForTest = false;
 
 const sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
 const log = (message) => console.log(`[geofence-e2e] ${message}`);
+
+const toRadians = (value) => value * Math.PI / 180;
+const calculateDistanceMeters = (from, to) => {
+    const earthRadiusMeters = 6_371_000;
+    const latitudeDelta = toRadians(to.latitude - from.latitude);
+    const longitudeDelta = toRadians(to.longitude - from.longitude);
+    const fromLatitude = toRadians(from.latitude);
+    const toLatitude = toRadians(to.latitude);
+    const a = Math.sin(latitudeDelta / 2) ** 2
+        + Math.cos(fromLatitude) * Math.cos(toLatitude) * Math.sin(longitudeDelta / 2) ** 2;
+    return earthRadiusMeters * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+};
+
+const prepareRotationTest = async () => {
+    if (!ROTATION_MODE) return;
+
+    log('stagingのスポット一覧から、初期監視19件に含まれない対象を選びます。');
+    const response = await fetch(STAGING_MAP_URL);
+    if (!response.ok) throw new Error(`stagingスポット取得に失敗しました（HTTP ${response.status}）。`);
+    const spots = await response.json();
+    if (!Array.isArray(spots) || spots.length < 21) {
+        throw new Error(`19+1試験には21件以上必要ですが、stagingには${Array.isArray(spots) ? spots.length : 0}件しかありません。`);
+    }
+
+    const ranked = spots
+        .filter((spot) => Number.isFinite(Number(spot.latitude)) && Number.isFinite(Number(spot.longitude)))
+        .map((spot) => ({
+            ...spot,
+            boundaryDistance: calculateDistanceMeters(OUTSIDE_LOCATION, {
+                latitude: Number(spot.latitude),
+                longitude: Number(spot.longitude),
+            }) - Number(spot.unlockRadiusMeters ?? spot.unlock_radius_meters ?? 0),
+        }))
+        .sort((a, b) => a.boundaryDistance - b.boundaryDistance);
+
+    // Leave enough margin beyond rank 19 in case the app immediately unlocks
+    // one or two spots at the initial coordinate before registering regions.
+    const requestedIndex = Math.max(19, Number(process.env.GEOFENCE_ROTATION_TARGET_INDEX ?? 30));
+    const targetIndex = Math.min(requestedIndex, ranked.length - 1);
+    const target = ranked[targetIndex];
+    const targetRadius = Math.max(1, Number(target.unlockRadiusMeters ?? target.unlock_radius_meters ?? 100));
+    const targetLatitude = Number(target.latitude);
+    const targetLongitude = Number(target.longitude);
+
+    insideLocation = { latitude: targetLatitude, longitude: targetLongitude };
+    rotationWaypoint = {
+        latitude: targetLatitude,
+        longitude: targetLongitude + (
+            (targetRadius + 1500)
+            / (111_320 * Math.max(0.2, Math.cos(targetLatitude * Math.PI / 180)))
+        ),
+    };
+    targetNotificationText = String(target.title ?? target.id);
+    targetDescription = `${targetNotificationText}（初期順位${targetIndex + 1}位 / ${target.id}）`;
+
+    if (targetIndex < 19) throw new Error('監視対象外のスポットを選択できませんでした。');
+    log(`対象: ${targetDescription}`);
+    log(`初期地点から解放境界まで約${Math.round(target.boundaryDistance / 1000)}kmのため、最初の19件には含まれません。`);
+};
 
 const webdriverRequest = async (method, path, body) => {
     const response = await fetch(`${HUB_URL}${path}`, {
@@ -272,24 +337,28 @@ const configurePermissions = async () => {
     await sleep(20_000);
 };
 
-const setInsideLocation = async () => {
-    log(`GPSを姫町中心 ${INSIDE_LOCATION.latitude}, ${INSIDE_LOCATION.longitude} へ移動します。`);
+const setDeviceLocation = async (location, description) => {
+    log(`GPSを${description} ${location.latitude}, ${location.longitude} へ移動します。`);
     await command('POST', '/location', {
-        location: { ...INSIDE_LOCATION, altitude: 0 },
+        location: { ...location, altitude: 0 },
     });
 };
 
-const waitForBackgroundEvent = async () => {
-    log(`バックグラウンド位置イベントを最大${WAIT_SECONDS}秒待ちます。`);
+const waitForBackgroundEvent = async (waitSeconds, phaseLabel) => {
+    log(`${phaseLabel}を最大${waitSeconds}秒待ちます。`);
     const startedAt = Date.now();
-    while ((Date.now() - startedAt) / 1000 < WAIT_SECONDS) {
+    while ((Date.now() - startedAt) / 1000 < waitSeconds) {
         await sleep(15_000);
         // Keep the BrowserStack session alive without foregrounding the app.
         const appState = await execute('mobile: queryAppState', { bundleId: BUNDLE_ID });
         const elapsed = Math.round((Date.now() - startedAt) / 1000);
-        log(`バックグラウンド待機 ${Math.min(elapsed, WAIT_SECONDS)}/${WAIT_SECONDS}秒（state=${appState}）`);
+        log(`${phaseLabel} ${Math.min(elapsed, waitSeconds)}/${waitSeconds}秒（state=${appState}）`);
     }
 };
+
+const notificationPredicate = () => (
+    `label CONTAINS ${JSON.stringify(targetNotificationText)}`
+);
 
 const verifyBackgroundNotification = async () => {
     log('アプリを開かずにロック画面・iOS通知センターの解放通知を確認します。');
@@ -300,8 +369,8 @@ const verifyBackgroundNotification = async () => {
         await sleep(3500);
         try {
             return await findByPredicate(
-                'label CONTAINS "この場所ならではの雑学" OR label CONTAINS "が解放されました"',
-                '姫町のロック画面解放通知',
+                notificationPredicate(),
+                `${targetDescription}のロック画面解放通知`,
                 6000
             );
         } catch {
@@ -347,8 +416,8 @@ const verifyBackgroundNotification = async () => {
 
         try {
             return await findByPredicate(
-                'label CONTAINS "この場所ならではの雑学" OR label CONTAINS "が解放されました"',
-                '姫町のバックグラウンド解放通知',
+                notificationPredicate(),
+                `${targetDescription}のバックグラウンド解放通知`,
                 4000
             );
         } catch {
@@ -357,8 +426,8 @@ const verifyBackgroundNotification = async () => {
     }
 
     return findByPredicate(
-        'label CONTAINS "この場所ならではの雑学" OR label CONTAINS "が解放されました"',
-        '姫町のバックグラウンド解放通知',
+        notificationPredicate(),
+        `${targetDescription}のバックグラウンド解放通知`,
         30_000
     );
 };
@@ -390,15 +459,25 @@ const finishSession = async (passed, reason) => {
 };
 
 try {
+    await prepareRotationTest();
     log('BrowserStack実機セッションを開始します。');
     await createSession();
     await completeTutorial();
     await configurePermissions();
     await backgroundApp();
     await lockDeviceForTest();
-    await setInsideLocation();
-    // setInsideLocation is deliberately performed only after the app is backgrounded.
-    await waitForBackgroundEvent();
+    if (ROTATION_MODE) {
+        // The target is initially outside the 19 monitored trivia regions.
+        // Stop outside its unlock radius so only the +1 refresh-region exit can
+        // cause the target to be selected into the next set of 19.
+        await setDeviceLocation(rotationWaypoint, `${targetDescription}の解放範囲外へ`);
+        await waitForBackgroundEvent(ROTATION_WAIT_SECONDS, '19+1監視更新待機');
+        await setDeviceLocation(insideLocation, `${targetDescription}の解放範囲内へ`);
+    } else {
+        await setDeviceLocation(insideLocation, '姫町中心へ');
+    }
+    // Location changes are deliberately performed only after the app is backgrounded.
+    await waitForBackgroundEvent(WAIT_SECONDS, 'バックグラウンド解放待機');
     const notificationElementId = await verifyBackgroundNotification();
     // The notification is scheduled only after unlockTrivia has persisted the
     // unlock record, so finding it is the authoritative background-test pass.
@@ -409,8 +488,13 @@ try {
     } catch (error) {
         log(`通知は確認済みです。ロック解除後の画面確認だけを省略します: ${error.message}`);
     }
-    await finishSession(true, 'ロック中にバックグラウンドで姫町スポットが解放され、通知が表示されました。');
-    log('成功: バックグラウンド位置イベントで姫町の雑学が解放されました。');
+    const successReason = ROTATION_MODE
+        ? `+1更新後、ロック中に初期監視対象外の${targetDescription}が解放され、通知が表示されました。`
+        : 'ロック中にバックグラウンドで姫町スポットが解放され、通知が表示されました。';
+    await finishSession(true, successReason);
+    log(ROTATION_MODE
+        ? `成功: 19+1の監視更新後に${targetDescription}が解放されました。`
+        : '成功: バックグラウンド位置イベントで姫町の雑学が解放されました。');
 } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     console.error(`[geofence-e2e] 失敗: ${message}`);
