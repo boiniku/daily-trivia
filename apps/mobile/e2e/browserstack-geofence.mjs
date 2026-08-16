@@ -433,7 +433,7 @@ const verifyBackgroundNotification = async () => {
 };
 
 const verifyUnlock = async (notificationElementId) => {
-    log('解放通知をタップし、姫町スポットの解放状態を確認します。');
+    log(`解放通知をタップし、${targetDescription}の解放状態を確認します。`);
     await command('POST', `/element/${notificationElementId}/click`, {});
     await sleep(8000);
     await findByLabel('解放済み', 12_000);
