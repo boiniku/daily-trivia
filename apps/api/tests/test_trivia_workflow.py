@@ -20,17 +20,26 @@ from routers.line_admin import _approve_candidate_from_line, _parse_collect_comm
 from services.trivia_generation import build_generation_prompt
 from services.trivia_collection import (
     CollectedTrivia,
+    DEFAULT_COLLECTION_ATTEMPTS,
     DEFAULT_DISCOVERY_DOMAINS,
     DEFAULT_MAX_SEARCH_CALLS,
     TriviaCollectionResult,
+    TriviaCollectionDiagnostics,
+    TriviaCollectionUsage,
+    MapTriviaQualityAssessment,
+    MapTriviaQualityReviewResult,
     build_collection_prompt,
     collect_trivia,
+    collect_trivia_candidates,
     get_incomplete_reason,
+    get_collection_attempts,
     get_discovery_domains,
     get_max_search_calls,
+    get_search_context_size,
     has_complete_map_fields,
     parse_collection_output,
     remove_existing_duplicates,
+    review_map_trivia_quality,
     select_diverse_items,
     validate_collected_items,
 )
@@ -350,7 +359,7 @@ class LineSecurityTests(unittest.TestCase):
         self.assertIn("事実・題材・キーワードだけ", prompt)
         self.assertIn("独自の日本語表現", prompt)
         self.assertIn("雑学サイト、まとめサイト、記事、メディアそのものを題材にしない", prompt)
-        self.assertIn("個別記事ページのhttpまたはhttps URL", prompt)
+        self.assertIn("深掘り内容を直接説明している個別ページのhttpまたはhttps URL", prompt)
         self.assertIn("話題まとめサイトの使い方", prompt)
         self.assertIn("タイトルだけで「何についての、どんな意外な事実か」", prompt)
         self.assertIn("疑問形、過度な煽り", prompt)
@@ -361,9 +370,27 @@ class LineSecurityTests(unittest.TestCase):
         self.assertIn("一覧記事の要約ではなく", prompt)
         self.assertIn("同一対象から選ぶのは1件まで", prompt)
         self.assertIn("最低3カテゴリ", prompt)
-        self.assertIn("まとめサイトだけ", prompt)
-        self.assertIn("学術論文、学会誌、大学・研究機関", prompt)
+        self.assertIn("モデルの内部知識だけで題材、理由、例外、因果関係を作らない", prompt)
+        self.assertIn("『魔女の宅急便』でなぜ使えるのか", prompt)
+        self.assertIn("2段目の理由・例外・意外な繋がり", prompt)
+        self.assertIn("公式ページ、官公庁、大学・研究機関", prompt)
         self.assertIn("日常会話で誰かに話したくなる", prompt)
+        self.assertIn("常識逆転型", prompt)
+        self.assertIn("疑問深掘り型", prompt)
+        self.assertIn("身近な由来型", prompt)
+        self.assertIn("想像超越型", prompt)
+        self.assertIn("合計18点未満の候補は出力しない", prompt)
+        self.assertIn("身近な比較で規模を実感できる場合は積極的に採用", prompt)
+        self.assertIn("記録だけでは採用しない", prompt)
+        self.assertIn("30秒で説明できないもの", prompt)
+        self.assertIn("専門知識のない中学生", prompt)
+        self.assertIn("候補のおよそ7割", prompt)
+        self.assertIn("全体の3割以内", prompt)
+        self.assertIn("専門語は1候補につき最大1つ", prompt)
+        self.assertIn("専門用語を三つ以上使わないと説明できない題材", prompt)
+        self.assertIn("45〜75文字程度", prompt)
+        self.assertIn("80〜140文字程度、最大2文", prompt)
+        self.assertIn("一度で言い換えられるか", prompt)
         self.assertIn(f"最大{DEFAULT_MAX_SEARCH_CALLS}回まで", prompt)
         self.assertIn("検索語や切り口を変えて複数回", prompt)
         self.assertIn("回数を使い切る必要はありません", prompt)
@@ -371,9 +398,204 @@ class LineSecurityTests(unittest.TestCase):
     def test_map_collection_prompt_requires_place_fields(self):
         prompt = build_collection_prompt("京都", 3, [], map_mode=True)
         self.assertIn("雑学MAPへ登録する候補だけ", prompt)
-        self.assertIn("現地に行ける具体的な場所", prompt)
-        self.assertIn("map_address、map_prefecture、map_latitude、map_longitude、map_radiusは全件必ず", prompt)
-        self.assertNotIn("map_hintは全件必ず", prompt)
+        self.assertIn("現地で対象を見たとき", prompt)
+        self.assertIn("一段目より二段目が面白い", prompt)
+        self.assertIn("対象物そのものを観察できる候補", prompt)
+        self.assertIn("私有地への立入り", prompt)
+        self.assertIn("2件以上の独立した資料", prompt)
+        self.assertIn("座標を推測しない", prompt)
+        self.assertIn("map_address、map_prefecture、map_latitude、map_longitude、map_radius、map_hintを全件必ず", prompt)
+        self.assertNotIn("合計34点以上", prompt)
+        self.assertIn("contentは70〜110文字程度", prompt)
+        self.assertIn("explanationは180〜300文字程度", prompt)
+        self.assertIn("成立した背景や原因→転機となった具体的な出来事→現在の姿", prompt)
+        self.assertNotIn("具体情報を2種類以上", prompt)
+        self.assertIn("ニッチさは目的ではなく", prompt)
+        self.assertIn("誰でも知っている物・習慣・常識", prompt)
+        self.assertIn("一文で友人へ言い換えられるか", prompt)
+        self.assertIn("失敗、苦肉の策、偶然、対立、勘違い、転用", prompt)
+        self.assertIn("自治体史・市史・町史", prompt)
+        self.assertIn("普通の観光ページでは主役にならない具体的な一点", prompt)
+        self.assertIn("なぜそうなったのか", prompt)
+        self.assertIn("どのように実現・変化・保存されたのか", prompt)
+        self.assertIn("初出の同じ文", prompt)
+        self.assertIn("観光案内", prompt)
+        self.assertIn("現地体験や説明の一項目がやや弱くても", prompt)
+        self.assertIn("2点は最低品質、3点は明確な合格", prompt)
+        self.assertIn("可能な限り3件出力する", prompt)
+
+    def test_normal_collection_prompt_keeps_compact_length(self):
+        prompt = build_collection_prompt("京都", 3, [], map_mode=False)
+        self.assertIn("contentは45〜75文字程度", prompt)
+        self.assertIn("explanationは80〜140文字程度", prompt)
+        self.assertNotIn("contentは70〜110文字程度", prompt)
+
+    def test_map_quality_review_rejects_tourism_summary(self):
+        generic = CollectedTrivia(
+            subject_key="城",
+            title="城は有名武将が改名した",
+            content="この城は有名武将が攻略し、新しい名前へ改めた歴史ある観光名所です。",
+            explanation="市の資料で改名の歴史が紹介され、現在は復元天守を見学できます。",
+            category="歴史",
+            source="https://example.com/castle",
+            map_address="城 / 岐阜県岐阜市",
+            map_prefecture="岐阜県",
+            map_latitude=35.0,
+            map_longitude=136.0,
+            map_radius=300,
+            map_hint="復元天守を見学してください。",
+        )
+        niche = generic.model_copy(update={
+            "subject_key": "石垣の排水穴",
+            "title": "石垣の小穴は雨水を逃がす出口",
+            "content": "石垣の一部に並ぶ小穴は、山側にたまる雨水を外へ逃がし、石を内側から押す水圧を減らす排水口です。",
+            "explanation": "大雨で石垣の裏へ水がたまると、土が重くなり石を外へ押します。そこで裏込め石という隙間の多い小石層へ水を通し、小穴から排出する構造にしました。裏込め石は水の通り道と石垣の荷重分散を兼ねます。現在も北側の石垣で穴の位置を確認できます。",
+            "map_hint": "北側石垣の下段で、一定間隔に開く手のひらほどの排水穴を探してください。",
+        })
+        review = MapTriviaQualityReviewResult(assessments=[
+            MapTriviaQualityAssessment(
+                candidate_index=0,
+                is_trivia=False,
+                is_hyperlocal=False,
+                answers_why_and_how=False,
+                jargon_is_clear=True,
+                onsite_payoff_is_specific=False,
+                trivia_score=1,
+                hyperlocal_score=1,
+                why_how_score=1,
+                clarity_score=4,
+                rejection_reason="観光案内の要約です。",
+            ),
+            MapTriviaQualityAssessment(
+                candidate_index=1,
+                is_trivia=True,
+                is_hyperlocal=True,
+                answers_why_and_how=True,
+                jargon_is_clear=True,
+                onsite_payoff_is_specific=True,
+                trivia_score=4,
+                hyperlocal_score=4,
+                why_how_score=5,
+                clarity_score=4,
+                rejection_reason="",
+            ),
+        ])
+        response = type("Response", (), {
+            "output_parsed": review,
+            "output": [],
+            "usage": None,
+        })()
+        parse = MagicMock(return_value=response)
+        client = type("Client", (), {
+            "responses": type("Responses", (), {"parse": parse})()
+        })()
+
+        accepted, _ = review_map_trivia_quality(client, "gpt-5-mini", [generic, niche])
+
+        self.assertEqual([item.title for item in accepted], [niche.title])
+        self.assertIn("世界遺産・文化財登録", parse.call_args.kwargs["input"])
+        self.assertIn("ニッチであること自体は加点しない", parse.call_args.kwargs["input"])
+        self.assertIn("一文で友人へ言い換えられる", parse.call_args.kwargs["input"])
+        self.assertIn("理由または仕組み", parse.call_args.kwargs["input"])
+        self.assertIn("全国唯一という意味ではありません", parse.call_args.kwargs["input"])
+        self.assertIs(parse.call_args.kwargs["text_format"], MapTriviaQualityReviewResult)
+        self.assertEqual(parse.call_args.kwargs["reasoning"], {"effort": "medium"})
+
+    def test_map_collection_uses_deeper_search_and_quality_review(self):
+        item = CollectedTrivia(
+            subject_key="石垣の排水穴",
+            title="石垣の小穴は雨水を逃がす出口",
+            content="石垣に並ぶ小穴は、裏側へたまる雨水を外へ逃がし、水圧で石が崩れるのを防ぐ排水口です。",
+            explanation="雨水が石垣の裏へたまると土が重くなり、石を外へ押します。そこで隙間の多い小石を裏へ詰め、水を小穴へ導く構造にしました。現在も北側の石垣で確認できます。",
+            category="歴史",
+            source="https://example.com/wall",
+            map_address="城跡 / 岐阜県岐阜市",
+            map_prefecture="岐阜県",
+            map_latitude=35.0,
+            map_longitude=136.0,
+            map_radius=300,
+            map_hint="北側石垣の下段で、一定間隔に開く排水穴を探してください。",
+        )
+        parsed = TriviaCollectionResult(trivia=[item])
+        response = type("Response", (), {
+            "output_text": "{}",
+            "output_parsed": parsed,
+            "output": [],
+            "usage": None,
+            "status": "completed",
+        })()
+        parse = MagicMock(return_value=response)
+        client = type("Client", (), {
+            "responses": type("Responses", (), {"parse": parse})()
+        })()
+        engine = create_engine("sqlite:///:memory:")
+        Base.metadata.create_all(engine)
+        db = sessionmaker(bind=engine)()
+        try:
+            with patch.dict(os.environ, {
+                "OPENAI_API_KEY": "test-key",
+                "TRIVIA_MAX_SEARCH_CALLS": "5",
+            }, clear=False), patch(
+                "services.trivia_collection.OpenAI",
+                return_value=client,
+            ), patch(
+                "services.trivia_collection.review_map_trivia_quality",
+                return_value=([item], TriviaCollectionUsage()),
+            ) as review:
+                items = collect_trivia(db, "岐阜", 1, map_mode=True)
+        finally:
+            db.close()
+            engine.dispose()
+
+        self.assertEqual([value["title"] for value in items], [item.title])
+        kwargs = parse.call_args.kwargs
+        self.assertEqual(kwargs["max_tool_calls"], 8)
+        self.assertEqual(kwargs["tools"][0]["search_context_size"], "high")
+        self.assertEqual(kwargs["reasoning"], {"effort": "medium"})
+        review.assert_called_once()
+
+    def test_map_quality_review_allows_good_candidate_with_soft_location_score(self):
+        item = CollectedTrivia(
+            subject_key="路地の曲がり",
+            title="城下町の路地は敵を見通せないよう曲がる",
+            content="城下町に残る鍵形の路地は、侵入者が先を見通して一気に進めないよう、道を直角に曲げた防御の名残です。",
+            explanation="城へ向かう道が一直線だと、敵は速度を落とさず進めます。そこで道を直角に折り、曲がるたびに隊列を崩す構造にしました。鍵形とは鍵のように折れた道筋のことです。現在も旧町名の区画で曲がり方をたどれます。",
+            category="歴史",
+            source="https://example.com/street",
+            map_address="旧城下町 / 岐阜県岐阜市",
+            map_prefecture="岐阜県",
+            map_latitude=35.0,
+            map_longitude=136.0,
+            map_radius=300,
+            map_hint="旧町名の交差点から、二度直角に折れる路地を歩いてください。",
+        )
+        review = MapTriviaQualityReviewResult(assessments=[
+            MapTriviaQualityAssessment(
+                candidate_index=0,
+                is_trivia=False,
+                is_hyperlocal=False,
+                answers_why_and_how=False,
+                jargon_is_clear=False,
+                onsite_payoff_is_specific=False,
+                trivia_score=2,
+                hyperlocal_score=2,
+                why_how_score=2,
+                clarity_score=4,
+                rejection_reason="各観点は最低品質ですが、一部のbool判定を満たしません。",
+            ),
+        ])
+        response = type("Response", (), {
+            "output_parsed": review,
+            "output": [],
+            "usage": None,
+        })()
+        client = type("Client", (), {
+            "responses": type("Responses", (), {"parse": MagicMock(return_value=response)})()
+        })()
+
+        accepted, _ = review_map_trivia_quality(client, "gpt-5-mini", [item])
+
+        self.assertEqual([candidate.title for candidate in accepted], [item.title])
 
     def test_map_collection_requires_complete_map_fields(self):
         complete = CollectedTrivia(
@@ -387,14 +609,19 @@ class LineSecurityTests(unittest.TestCase):
             map_prefecture="東京都",
             map_latitude=35.658581,
             map_longitude=139.745433,
-            map_radius=500,
+            map_radius=300,
+            map_hint="正面から塔の部材を見比べられます。",
         )
         incomplete = complete.model_copy(update={"map_address": ""})
+        missing_hint = complete.model_copy(update={"map_hint": ""})
+        invalid_radius = complete.model_copy(update={"map_radius": 5000})
 
         self.assertTrue(has_complete_map_fields(complete))
         self.assertFalse(has_complete_map_fields(incomplete))
+        self.assertFalse(has_complete_map_fields(missing_hint))
+        self.assertFalse(has_complete_map_fields(invalid_radius))
 
-    def test_collection_uses_trivia_sites_by_default(self):
+    def test_collection_search_is_unrestricted_by_default(self):
         with patch.dict(os.environ, {}, clear=False):
             os.environ.pop("TRIVIA_DISCOVERY_DOMAINS", None)
             self.assertEqual(
@@ -413,12 +640,37 @@ class LineSecurityTests(unittest.TestCase):
         with patch.dict(os.environ, {"TRIVIA_MAX_SEARCH_CALLS": "invalid"}, clear=False):
             self.assertEqual(get_max_search_calls(), DEFAULT_MAX_SEARCH_CALLS)
 
+    def test_collection_search_context_defaults_to_medium_and_is_validated(self):
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("TRIVIA_SEARCH_CONTEXT_SIZE", None)
+            self.assertEqual(get_search_context_size(), "medium")
+        with patch.dict(os.environ, {"TRIVIA_SEARCH_CONTEXT_SIZE": "high"}, clear=False):
+            self.assertEqual(get_search_context_size(), "high")
+        with patch.dict(os.environ, {"TRIVIA_SEARCH_CONTEXT_SIZE": "invalid"}, clear=False):
+            self.assertEqual(get_search_context_size(), "medium")
+
+    def test_collection_attempts_are_configurable_and_bounded(self):
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("TRIVIA_COLLECTION_ATTEMPTS", None)
+            self.assertEqual(get_collection_attempts(), DEFAULT_COLLECTION_ATTEMPTS)
+        with patch.dict(os.environ, {"TRIVIA_COLLECTION_ATTEMPTS": "2"}, clear=False):
+            self.assertEqual(get_collection_attempts(), 2)
+        with patch.dict(os.environ, {"TRIVIA_COLLECTION_ATTEMPTS": "99"}, clear=False):
+            self.assertEqual(get_collection_attempts(), 3)
+
     def test_collection_prompt_includes_all_existing_titles(self):
         titles = [f"既存タイトル{i}" for i in range(305)]
-        prompt = build_collection_prompt("", 5, titles)
+        prompt = build_collection_prompt(
+            "",
+            5,
+            titles,
+            existing_facts=["宅急便は商標: 宅急便はヤマト運輸の登録商標です。"],
+        )
 
         self.assertIn("既存タイトル0", prompt)
         self.assertIn("既存タイトル304", prompt)
+        self.assertIn("宅急便は商標: 宅急便はヤマト運輸の登録商標", prompt)
+        self.assertIn("中心事実が同じ候補は出力しない", prompt)
 
     def test_collection_output_parser(self):
         items = parse_collection_output("""```json
@@ -474,6 +726,14 @@ class LineSecurityTests(unittest.TestCase):
             Base.metadata.create_all(engine)
             db = sessionmaker(bind=engine)()
             try:
+                db.add(Trivia(
+                    title="既存の雑学",
+                    content="既存本文の中心事実です。",
+                    explanation="",
+                    source="https://example.com/existing",
+                    category="生活",
+                ))
+                db.commit()
                 items = collect_trivia(db, "", 5)
             finally:
                 db.close()
@@ -485,11 +745,173 @@ class LineSecurityTests(unittest.TestCase):
         self.assertEqual(kwargs["max_output_tokens"], 16000)
         self.assertEqual(kwargs["reasoning"], {"effort": "low"})
         self.assertEqual(kwargs["tool_choice"], "required")
+        self.assertEqual(kwargs["tools"][0]["search_context_size"], "medium")
+        self.assertIn("既存本文の中心事実", kwargs["input"])
         self.assertIs(kwargs["text_format"], TriviaCollectionResult)
         self.assertEqual(
             kwargs["tools"][0]["filters"]["allowed_domains"],
             ["example.com", "media.example.jp"],
         )
+
+    def test_shared_collection_workflow_persists_review_candidates(self):
+        engine = create_engine("sqlite:///:memory:")
+        Base.metadata.create_all(engine)
+        db = sessionmaker(bind=engine)()
+        item = {
+            "title": "深掘りした共通候補",
+            "content": "Web検索で確認した共通収集処理のテスト本文です。",
+            "explanation": "理由や例外まで追加検索して確認した解説です。",
+            "source": "https://example.com/deep-fact",
+            "category": "生活",
+        }
+        try:
+            with patch("services.trivia_collection.collect_trivia", return_value=[item]):
+                candidates = collect_trivia_candidates(db, "商標", 1)
+            self.assertEqual(len(candidates), 1)
+            self.assertEqual(db.query(TriviaCandidate).count(), 1)
+        finally:
+            db.close()
+            engine.dispose()
+
+    def test_collection_retries_after_generated_items_are_duplicates(self):
+        duplicate_result = TriviaCollectionResult(trivia=[CollectedTrivia(
+            subject_key="タコ",
+            title="心臓を3個持つタコ",
+            content="タコの体には全身用が一つ、えら用が二つの心臓があります。",
+            explanation="既存候補の言い換えです。",
+            category="生物",
+            source="https://example.com/octopus",
+        )])
+        novel_result = TriviaCollectionResult(trivia=[CollectedTrivia(
+            subject_key="金星",
+            title="金星では太陽が西から昇る",
+            content="金星は多くの惑星とは逆向きに自転するため、太陽が西から昇ります。",
+            explanation="地球とは反対方向にゆっくり自転していることが理由です。",
+            category="宇宙・天体",
+            source="https://example.com/venus",
+        )])
+
+        def response_for(parsed):
+            return type("Response", (), {
+                "output_text": "{}",
+                "output_parsed": parsed,
+                "status": "completed",
+            })()
+
+        parse = MagicMock(side_effect=[
+            response_for(duplicate_result),
+            response_for(novel_result),
+        ])
+        client = type("Client", (), {
+            "responses": type("Responses", (), {"parse": parse})()
+        })()
+        engine = create_engine("sqlite:///:memory:")
+        Base.metadata.create_all(engine)
+        db = sessionmaker(bind=engine)()
+        try:
+            db.add(Trivia(
+                title="タコには心臓が3つある",
+                content="タコは全身用とえら用の心臓を合わせて三つ持っています。",
+                explanation="",
+                source="https://example.com/existing-octopus",
+                category="生物",
+            ))
+            db.commit()
+            diagnostics = []
+            with patch.dict(os.environ, {
+                "OPENAI_API_KEY": "test-key",
+                "TRIVIA_COLLECTION_ATTEMPTS": "3",
+            }, clear=False), patch(
+                "services.trivia_collection.OpenAI",
+                return_value=client,
+            ):
+                items = collect_trivia(
+                    db,
+                    "科学",
+                    1,
+                    diagnostics_callback=diagnostics.append,
+                )
+        finally:
+            db.close()
+            engine.dispose()
+
+        self.assertEqual([item["title"] for item in items], ["金星では太陽が西から昇る"])
+        self.assertEqual(parse.call_count, 2)
+        self.assertIn("心臓を3個持つタコ", parse.call_args_list[1].kwargs["input"])
+        self.assertEqual(diagnostics[-1].attempts, 2)
+        self.assertEqual(diagnostics[-1].generated, 2)
+        self.assertEqual(diagnostics[-1].duplicates, 1)
+        self.assertEqual(diagnostics[-1].final_candidates, 1)
+
+    def test_map_collection_diagnostics_are_returned_when_no_output_is_generated(self):
+        response = type("Response", (), {
+            "output_text": "",
+            "output_parsed": None,
+            "output": [],
+            "usage": None,
+            "status": "completed",
+        })()
+        client = type("Client", (), {
+            "responses": type("Responses", (), {"parse": MagicMock(return_value=response)})()
+        })()
+        diagnostics = []
+        engine = create_engine("sqlite:///:memory:")
+        Base.metadata.create_all(engine)
+        db = sessionmaker(bind=engine)()
+
+        try:
+            with patch.dict(os.environ, {
+                "OPENAI_API_KEY": "test-key",
+                "TRIVIA_COLLECTION_ATTEMPTS": "1",
+            }, clear=False), patch(
+                "services.trivia_collection.OpenAI",
+                return_value=client,
+            ):
+                items = collect_trivia(
+                    db,
+                    "関東",
+                    1,
+                    map_mode=True,
+                    diagnostics_callback=diagnostics.append,
+                )
+        finally:
+            db.close()
+            engine.dispose()
+
+        self.assertEqual(items, [])
+        self.assertIsInstance(diagnostics[-1], TriviaCollectionDiagnostics)
+        self.assertEqual(diagnostics[-1].attempts, 1)
+        self.assertEqual(diagnostics[-1].generated, 0)
+        self.assertEqual(diagnostics[-1].final_candidates, 0)
+
+    def test_map_collection_failure_message_shows_rejection_stage_counts(self):
+        db = MagicMock()
+
+        def fake_collect(_db, _topic, _count, map_mode=False, diagnostics_callback=None):
+            self.assertTrue(map_mode)
+            diagnostics_callback(TriviaCollectionDiagnostics(
+                attempts=3,
+                generated=9,
+                complete_map=4,
+                quality_accepted=0,
+                duplicates=0,
+                final_candidates=0,
+            ))
+            return []
+
+        with patch.object(line_admin, "SessionLocal", return_value=db), patch.object(
+            line_admin,
+            "collect_trivia_candidates",
+            side_effect=fake_collect,
+        ), patch.object(line_admin, "push_message") as push:
+            line_admin._collect_and_push("user", "関東", 3, map_mode=True)
+
+        message = push.call_args.args[1][0]["text"]
+        self.assertIn("生成: 9件", message)
+        self.assertIn("位置情報通過: 4件", message)
+        self.assertIn("品質通過: 0件", message)
+        self.assertIn("全候補が品質審査で除外", message)
+        db.close.assert_called_once()
 
     def test_collection_schema_requires_all_fields(self):
         schema = TriviaCollectionResult.model_json_schema()
@@ -610,6 +1032,30 @@ class LineSecurityTests(unittest.TestCase):
             category_counts[item.category] = category_counts.get(item.category, 0) + 1
         self.assertLessEqual(max(category_counts.values()), 2)
         self.assertGreaterEqual(len(category_counts), 4)
+
+    def test_diversity_selection_falls_back_to_valid_items(self):
+        items = [
+            CollectedTrivia(
+                subject_key="",
+                title=f"有効な候補{index}",
+                content=f"重複していない有効な本文{index}です。",
+                explanation="Web検索で確認した解説です。",
+                category="生活",
+                source=f"https://example.com/fallback-{index}",
+            )
+            for index in range(5)
+        ]
+
+        selected = select_diverse_items(items, 5)
+
+        self.assertEqual(len(selected), 5)
+        self.assertEqual([item.title for item in selected], [
+            "有効な候補0",
+            "有効な候補1",
+            "有効な候補2",
+            "有効な候補3",
+            "有効な候補4",
+        ])
 
     def test_incomplete_collection_response_has_clear_message(self):
         response = type("Response", (), {
@@ -747,6 +1193,7 @@ class MobileEditorIntegrationTests(unittest.TestCase):
         self.assertEqual(page.status_code, 200)
         self.assertNotIn("下書き保存", page.text)
         self.assertIn("登録する", page.text)
+        self.assertIn('id="map_hint"', page.text)
 
     def test_new_map_candidate_publishes_to_map_trivia_directly(self):
         token = make_editor_token(0)
@@ -798,6 +1245,7 @@ class MobileEditorIntegrationTests(unittest.TestCase):
         self.assertIn("収集済みMAP情報", page.text)
         self.assertIn("東京タワー / 東京都港区芝公園4-2-8", page.text)
         self.assertIn('id="add_to_map" type="checkbox" checked', page.text)
+        self.assertIn('id="add_to_normal" type="checkbox">', page.text)
 
     def test_image_upload_returns_uploaded_url(self):
         token = make_editor_token(0)

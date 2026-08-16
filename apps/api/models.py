@@ -98,6 +98,23 @@ class TriviaCandidate(Base):
 
     published_trivia = relationship("Trivia")
 
+
+class DailyTriviaCollectionRun(Base):
+    __tablename__ = "daily_trivia_collection_runs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    run_date = Column(Date, nullable=False, unique=True, index=True)
+    status = Column(String, nullable=False, default="running", index=True)
+    requested_count = Column(Integer, nullable=False, default=10)
+    collected_count = Column(Integer, nullable=False, default=0)
+    input_tokens = Column(Integer, nullable=False, default=0)
+    output_tokens = Column(Integer, nullable=False, default=0)
+    web_search_calls = Column(Integer, nullable=False, default=0)
+    estimated_cost_usd = Column(Float, nullable=False, default=0.0)
+    error = Column(Text, nullable=True)
+    started_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    completed_at = Column(DateTime, nullable=True)
+
 class TriviaHee(Base):
     __tablename__ = "trivia_hees"
 

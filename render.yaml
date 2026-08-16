@@ -14,6 +14,28 @@ services:
         sync: false
       - key: OPENAI_API_KEY
         sync: false
+      - key: TRIVIA_COLLECTION_MODEL
+        value: gpt-5-mini
+      - key: TRIVIA_MAX_SEARCH_CALLS
+        value: 5
+      - key: TRIVIA_COLLECTION_ATTEMPTS
+        value: 3
+      - key: TRIVIA_SEARCH_CONTEXT_SIZE
+        value: medium
+      - key: DAILY_COLLECTION_COUNT
+        value: 10
+      - key: DAILY_COLLECTION_MAX_PENDING
+        value: 30
+      - key: DAILY_COLLECTION_MONTHLY_BUDGET_USD
+        value: 6.0
+      - key: DAILY_COLLECTION_SECRET
+        sync: false
+      - key: OPENAI_INPUT_USD_PER_MILLION
+        value: 0.25
+      - key: OPENAI_OUTPUT_USD_PER_MILLION
+        value: 2.0
+      - key: OPENAI_WEB_SEARCH_USD_PER_1000
+        value: 10.0
       - key: LINE_CHANNEL_SECRET
         sync: false
       - key: LINE_CHANNEL_ACCESS_TOKEN
