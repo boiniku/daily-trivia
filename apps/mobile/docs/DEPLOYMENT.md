@@ -54,7 +54,7 @@ TestFlight版は`EXPO_PUBLIC_APP_ENV=staging`で作られ、ステージングAP
 8. 旧APIの削除は、旧版の利用がなくなり、最低対応バージョンを引き上げた後の別リリースで行う。
 
 App Storeで新版が実際にダウンロード可能になったことを確認してから、Render本番サービスの
-`LATEST_APP_VERSION`と`MINIMUM_SUPPORTED_APP_VERSION`を新版（今回なら`1.0.39`）へ更新する。
+`LATEST_APP_VERSION`と`MINIMUM_SUPPORTED_APP_VERSION`を新版（今回なら`1.1.0`）へ更新する。
 公開前に変更すると、App Storeからまだ取得できない更新を旧版ユーザーへ案内してしまう。
 旧版も「あとで」を選んで継続利用できるため、バックエンドの後方互換性は維持する。
 
