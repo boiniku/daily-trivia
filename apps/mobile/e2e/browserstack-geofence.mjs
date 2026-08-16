@@ -135,18 +135,23 @@ const setAppPermission = async (permissionSettings) => {
 
 const completeTutorial = async () => {
     log('チュートリアルを進めます。');
-    // Do not depend on the persisted first-launch state of the cloud device.
     await sleep(8000);
-    await execute('mobile: deepLink', {
-        url: 'dailytrivia://tutorial',
-        bundleId: BUNDLE_ID,
-    });
-    await sleep(5000);
     await clickLabel('次へ', 30_000);
     await clickLabel('次へ');
     await clickLabel('次へ');
     await clickLabel('通知を設定する');
     await sleep(12_000);
+};
+
+const backgroundApp = async () => {
+    // BrowserStack's iOS driver does not expose mobile: backgroundApp on every
+    // device image, but its standard Appium endpoint is supported.
+    try {
+        await command('POST', '/appium/app/background', { seconds: -1 });
+    } catch (error) {
+        log(`標準バックグラウンドAPIを利用できないためHome操作へ切り替えます: ${error.message}`);
+        await execute('mobile: pressButton', { name: 'home' });
+    }
 };
 
 const printScreenDiagnostics = async () => {
@@ -266,7 +271,7 @@ try {
     await createSession();
     await completeTutorial();
     await configurePermissions();
-    await execute('mobile: backgroundApp', { seconds: -1 });
+    await backgroundApp();
     await setInsideLocation();
     // setInsideLocation is deliberately performed only after the app is backgrounded.
     await waitForBackgroundEvent();
