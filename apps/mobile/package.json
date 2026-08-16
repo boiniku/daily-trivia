@@ -16,6 +16,7 @@
     "submit:production": "eas submit --platform ios --profile production",
     "check:r2-themes": "node scripts/check_r2_themes.js",
     "generate:widget-mocks": "python scripts/generate_widget_mocks.py",
+    "test:geofence:browserstack": "node e2e/browserstack-geofence.mjs",
     "eas-build-pre-install": "bash scripts/install-widget-profile.sh"
   },
   "dependencies": {
