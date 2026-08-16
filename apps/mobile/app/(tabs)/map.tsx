@@ -143,9 +143,12 @@ export default function TriviaMapScreen() {
     const selectedCircleRadius = selectedSpot ? Math.max(1, selectedSpot.unlockRadiusMeters) : 1;
 
     const collectionSpots = useMemo(
-        () => spots.filter((spot) => spot.isUnlocked).sort((a, b) => (b.unlockedAt?.getTime() ?? 0) - (a.unlockedAt?.getTime() ?? 0)),
-        [spots]
+        () => filteredSpots
+            .filter((spot) => spot.isUnlocked)
+            .sort((a, b) => (b.unlockedAt?.getTime() ?? 0) - (a.unlockedAt?.getTime() ?? 0)),
+        [filteredSpots]
     );
+    const isCollectionFiltered = selectedRegion !== 'all' || selectedPrefecture !== 'すべて' || nearbyOnly;
 
     const setTriviaSpots = (nextSpots: TriviaSpot[]) => {
         spotsRef.current = nextSpots;
@@ -675,9 +678,19 @@ export default function TriviaMapScreen() {
                     <Text style={styles.collectionNote}>MAPで解放した雑学だけを保存します。過去に見た雑学には追加されません。</Text>
                     {collectionSpots.length === 0 ? (
                         <View style={styles.emptyCollection}>
-                            <Ionicons name="lock-closed-outline" size={40} color={Colors.light.subtext} />
-                            <Text style={styles.emptyTitle}>解放済み雑学はまだありません</Text>
-                            <Text style={styles.emptyBody}>現地に近づくと、ここにコレクションとして保存されます。</Text>
+                            <Ionicons
+                                name={isCollectionFiltered ? "filter-outline" : "lock-closed-outline"}
+                                size={40}
+                                color={Colors.light.subtext}
+                            />
+                            <Text style={styles.emptyTitle}>
+                                {isCollectionFiltered ? '条件に合う解放済み雑学はありません' : '解放済み雑学はまだありません'}
+                            </Text>
+                            <Text style={styles.emptyBody}>
+                                {isCollectionFiltered
+                                    ? '上の地域・都道府県・近くフィルターを変更してください。'
+                                    : '現地に近づくと、ここにコレクションとして保存されます。'}
+                            </Text>
                         </View>
                     ) : (
                         collectionSpots.map((spot) => (
