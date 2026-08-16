@@ -11,7 +11,16 @@ import { TriviaUnlockManager, calculateDistanceMeters } from '../../managers/Tri
 import { Coordinates, TriviaSpot } from '../../models/TriviaSpot';
 import { Colors, Theme } from '../../constants/Colors';
 import { JAPAN_REGIONS, JapanRegionId, getPrefecturesFromLabel } from '../../constants/JapanRegions';
-import { getFloatingTabBarBottom, FLOATING_TAB_BAR_HEIGHT } from '../../constants/Layout';
+import {
+    BANNER_RESERVED_HEIGHT,
+    FLOATING_TAB_BAR_HEIGHT,
+    getFloatingTabBarBottom,
+    getTabScreenAdBottomMargin,
+} from '../../constants/Layout';
+import { Config } from '../../constants/Config';
+import { useRevenueCat } from '../../contexts/RevenueCatContext';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { AdEventType, BannerAd, BannerAdSize, InterstitialAd, TestIds } from 'react-native-google-mobile-ads';
 
 const JAPAN_REGION = {
     latitude: 36.2048,
@@ -22,6 +31,17 @@ const JAPAN_REGION = {
 
 const USER_LOCATION_REGION_DELTA = 0.05;
 const PREFECTURE_CLUSTER_LATITUDE_DELTA = 2.2;
+const MAP_INTERSTITIAL_COOLDOWN_MS = 20 * 60 * 1000;
+const MAP_INTERSTITIAL_LAST_SHOWN_KEY = 'map_last_interstitial_shown';
+const MAP_INTERSTITIAL_ID = Config.IS_PRODUCTION
+    ? (Platform.OS === 'ios' ? Config.INTERSTITIAL_ID_IOS : Config.INTERSTITIAL_ID_ANDROID)
+    : TestIds.INTERSTITIAL;
+const MAP_BANNER_ID = Config.IS_PRODUCTION
+    ? (Platform.OS === 'ios' ? Config.BANNER_ID_IOS : Config.BANNER_ID_ANDROID)
+    : TestIds.BANNER;
+const mapInterstitial = InterstitialAd.createForAdRequest(MAP_INTERSTITIAL_ID, {
+    requestNonPersonalizedAdsOnly: true,
+});
 
 type PrefectureSummary = {
     prefecture: string;
@@ -62,6 +82,9 @@ export default function TriviaMapScreen() {
     const hasCenteredOnUserRef = useRef(false);
     const isClusterZoomingRef = useRef(false);
     const handledNotificationSpotRef = useRef<string | null>(null);
+    const pendingCollectionSpotRef = useRef<TriviaSpot | null>(null);
+    const isHandlingCollectionPressRef = useRef(false);
+    const { isPro } = useRevenueCat();
     const [spots, setSpots] = useState<TriviaSpot[]>([]);
     const [selectedSpotId, setSelectedSpotId] = useState<string | null>(null);
     const [userLocation, setUserLocation] = useState<Coordinates | null>(null);
@@ -76,6 +99,7 @@ export default function TriviaMapScreen() {
     const [isDetailVisible, setIsDetailVisible] = useState(false);
     const [isMapReady, setIsMapReady] = useState(false);
     const [mapLatitudeDelta, setMapLatitudeDelta] = useState(JAPAN_REGION.latitudeDelta);
+    const [isInterstitialLoaded, setIsInterstitialLoaded] = useState(mapInterstitial.loaded);
 
     const selectedSpot = useMemo(
         () => spots.find((spot) => spot.id === selectedSpotId) ?? null,
@@ -354,10 +378,89 @@ export default function TriviaMapScreen() {
         });
     };
 
-    const selectFromCollection = (spot: TriviaSpot) => {
+    const openCollectionSpot = useCallback((spot: TriviaSpot) => {
         setSelectedSpotId(spot.id);
         setViewMode('map');
         setIsPreviewVisible(true);
+    }, []);
+
+    useEffect(() => {
+        if (isPro) {
+            pendingCollectionSpotRef.current = null;
+            isHandlingCollectionPressRef.current = false;
+            setIsInterstitialLoaded(false);
+            return;
+        }
+
+        if (mapInterstitial.loaded) setIsInterstitialLoaded(true);
+
+        const unsubscribeLoaded = mapInterstitial.addAdEventListener(AdEventType.LOADED, () => {
+            setIsInterstitialLoaded(true);
+        });
+        const openPendingSpot = () => {
+            const pendingSpot = pendingCollectionSpotRef.current;
+            pendingCollectionSpotRef.current = null;
+            isHandlingCollectionPressRef.current = false;
+            if (pendingSpot) openCollectionSpot(pendingSpot);
+        };
+        const unsubscribeClosed = mapInterstitial.addAdEventListener(AdEventType.CLOSED, () => {
+            setIsInterstitialLoaded(false);
+            openPendingSpot();
+            mapInterstitial.load();
+        });
+        const unsubscribeError = mapInterstitial.addAdEventListener(AdEventType.ERROR, (error) => {
+            setIsInterstitialLoaded(false);
+            console.error('[Map Ads] Interstitial failed:', error);
+            const hadPendingSpot = pendingCollectionSpotRef.current != null;
+            openPendingSpot();
+            if (hadPendingSpot) {
+                AsyncStorage.removeItem(MAP_INTERSTITIAL_LAST_SHOWN_KEY).catch(() => undefined);
+            }
+        });
+
+        if (!mapInterstitial.loaded) mapInterstitial.load();
+
+        return () => {
+            unsubscribeLoaded();
+            unsubscribeClosed();
+            unsubscribeError();
+        };
+    }, [isPro, openCollectionSpot]);
+
+    const selectFromCollection = async (spot: TriviaSpot) => {
+        if (isHandlingCollectionPressRef.current) return;
+        isHandlingCollectionPressRef.current = true;
+
+        if (isPro || (!isInterstitialLoaded && !mapInterstitial.loaded)) {
+            isHandlingCollectionPressRef.current = false;
+            openCollectionSpot(spot);
+            return;
+        }
+
+        try {
+            const lastShownValue = await AsyncStorage.getItem(MAP_INTERSTITIAL_LAST_SHOWN_KEY);
+            const lastShownAt = Number(lastShownValue);
+            const isWithinCooldown = Number.isFinite(lastShownAt)
+                && lastShownAt > 0
+                && Date.now() - lastShownAt < MAP_INTERSTITIAL_COOLDOWN_MS;
+
+            if (isWithinCooldown) {
+                isHandlingCollectionPressRef.current = false;
+                openCollectionSpot(spot);
+                return;
+            }
+
+            pendingCollectionSpotRef.current = spot;
+            await AsyncStorage.setItem(MAP_INTERSTITIAL_LAST_SHOWN_KEY, Date.now().toString());
+            setIsInterstitialLoaded(false);
+            mapInterstitial.show();
+        } catch (error) {
+            console.error('[Map Ads] Interstitial display failed:', error);
+            pendingCollectionSpotRef.current = null;
+            isHandlingCollectionPressRef.current = false;
+            await AsyncStorage.removeItem(MAP_INTERSTITIAL_LAST_SHOWN_KEY).catch(() => undefined);
+            openCollectionSpot(spot);
+        }
     };
 
     const selectSpot = (spot: TriviaSpot) => {
@@ -407,7 +510,10 @@ export default function TriviaMapScreen() {
             : '現地に近づくと本文を読むことができます。';
 
         return (
-            <View style={[styles.previewSheet, { bottom: getFloatingTabBarBottom(insets) + FLOATING_TAB_BAR_HEIGHT + 12 }]}>
+            <View style={[
+                styles.previewSheet,
+                { bottom: isPro ? getFloatingTabBarBottom(insets) + FLOATING_TAB_BAR_HEIGHT + 12 : 12 },
+            ]}>
                 <Pressable style={styles.closeButton} onPress={() => setIsPreviewVisible(false)} hitSlop={10}>
                     <Ionicons name="close" size={20} color={Colors.light.subtext} />
                 </Pressable>
@@ -714,7 +820,7 @@ export default function TriviaMapScreen() {
                     style={styles.collectionList}
                     contentContainerStyle={[
                         styles.collectionContent,
-                        { paddingBottom: getFloatingTabBarBottom(insets) + FLOATING_TAB_BAR_HEIGHT + 24 },
+                        { paddingBottom: isPro ? getFloatingTabBarBottom(insets) + FLOATING_TAB_BAR_HEIGHT + 24 : 24 },
                     ]}
                 >
                     <Text style={styles.collectionNote}>MAPで解放した雑学だけを保存します。過去に見た雑学には追加されません。</Text>
@@ -753,6 +859,22 @@ export default function TriviaMapScreen() {
                     )}
                 </ScrollView>
             )}
+
+            {!isPro ? (
+                <View style={[
+                    styles.adsContainer,
+                    {
+                        minHeight: BANNER_RESERVED_HEIGHT,
+                        marginBottom: getTabScreenAdBottomMargin(insets),
+                    },
+                ]}>
+                    <BannerAd
+                        unitId={MAP_BANNER_ID}
+                        size={BannerAdSize.ANCHORED_ADAPTIVE_BANNER}
+                        requestOptions={{ requestNonPersonalizedAdsOnly: true }}
+                    />
+                </View>
+            ) : null}
         </SafeAreaView>
     );
 }
@@ -912,6 +1034,12 @@ const styles = StyleSheet.create({
         flex: 1,
         overflow: 'hidden',
         backgroundColor: '#E9EEF1',
+    },
+    adsContainer: {
+        width: '100%',
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: Colors.light.background,
     },
     loadingOverlay: {
         position: 'absolute',
