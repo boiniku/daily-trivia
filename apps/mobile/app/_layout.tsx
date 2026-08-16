@@ -1,14 +1,17 @@
 import { ActionSheetProvider } from '@expo/react-native-action-sheet';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
-import { Stack } from 'expo-router';
+import { router, Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect } from 'react';
-import { Alert, InteractionManager, Linking, View } from 'react-native';
+import { Alert, AppState, InteractionManager, Linking, View } from 'react-native';
+import * as Notifications from 'expo-notifications';
 import { RevenueCatProvider } from '../contexts/RevenueCatContext';
 import { AuthProvider } from '../contexts/AuthContext';
 import { Config, getBackendUrl } from '../constants/Config';
 
 import { registerBackgroundFetchAsync } from '../tasks/backgroundFetch';
+import '../tasks/triviaGeofencing';
+import { TriviaGeofenceManager } from '../managers/TriviaGeofenceManager';
 
 const compareVersions = (current: string, minimum: string) => {
   const currentParts = current.split('.').map((part) => Number(part) || 0);
@@ -25,6 +28,17 @@ const compareVersions = (current: string, minimum: string) => {
 };
 
 let hasShownUpdatePrompt = false;
+let lastHandledNotificationId: string | null = null;
+
+const handleNotificationResponse = (response: Notifications.NotificationResponse | null) => {
+  if (!response || response.notification.request.identifier === lastHandledNotificationId) return;
+  const data = response.notification.request.content.data;
+  if (data?.type !== 'trivia-map-unlock' || typeof data.spotId !== 'string') return;
+
+  lastHandledNotificationId = response.notification.request.identifier;
+  router.push({ pathname: '/map', params: { spotId: data.spotId } });
+  Notifications.clearLastNotificationResponseAsync().catch(() => undefined);
+};
 
 const checkAppVersion = async () => {
   if (hasShownUpdatePrompt) return;
@@ -65,6 +79,17 @@ export default function RootLayout() {
   useEffect(() => {
     // Register background fetch
     registerBackgroundFetchAsync().catch(err => console.error("BG Register Error:", err));
+    TriviaGeofenceManager.syncLatestRegistration().catch(err => console.error('Geofence refresh error:', err));
+
+    Notifications.getLastNotificationResponseAsync()
+      .then(handleNotificationResponse)
+      .catch(err => console.error('Notification response error:', err));
+    const notificationSubscription = Notifications.addNotificationResponseReceivedListener(handleNotificationResponse);
+    const appStateSubscription = AppState.addEventListener('change', (state) => {
+      if (state === 'active') {
+        TriviaGeofenceManager.syncLatestRegistration().catch(err => console.error('Geofence resume error:', err));
+      }
+    });
 
     const task = InteractionManager.runAfterInteractions(() => {
       checkAppVersion();
@@ -78,7 +103,11 @@ export default function RootLayout() {
       }, 1500);
     });
 
-    return () => task.cancel();
+    return () => {
+      task.cancel();
+      notificationSubscription.remove();
+      appStateSubscription.remove();
+    };
   }, []);
 
   return (

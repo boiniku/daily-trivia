@@ -1,11 +1,12 @@
 import { Ionicons } from '@expo/vector-icons';
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useFocusEffect, useLocalSearchParams } from 'expo-router';
+import { ActivityIndicator, AppState, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import MapView, { Circle, Marker, PROVIDER_GOOGLE } from 'react-native-maps';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { getTriviaSpots } from '../../data/triviaSpots';
 import { TriviaLocationManager, TriviaLocationStatus } from '../../managers/TriviaLocationManager';
-import { TriviaNotificationManager } from '../../managers/TriviaNotificationManager';
+import { TriviaGeofenceManager } from '../../managers/TriviaGeofenceManager';
 import { TriviaUnlockManager, calculateDistanceMeters } from '../../managers/TriviaUnlockManager';
 import { Coordinates, TriviaSpot } from '../../models/TriviaSpot';
 import { Colors, Theme } from '../../constants/Colors';
@@ -54,11 +55,13 @@ const isSpotInRange = (spot: TriviaSpot, userLocation: Coordinates | null) => {
 };
 
 export default function TriviaMapScreen() {
+    const { spotId: notificationSpotId } = useLocalSearchParams<{ spotId?: string }>();
     const insets = useSafeAreaInsets();
     const mapRef = useRef<MapView | null>(null);
     const spotsRef = useRef<TriviaSpot[]>([]);
     const hasCenteredOnUserRef = useRef(false);
     const isClusterZoomingRef = useRef(false);
+    const handledNotificationSpotRef = useRef<string | null>(null);
     const [spots, setSpots] = useState<TriviaSpot[]>([]);
     const [selectedSpotId, setSelectedSpotId] = useState<string | null>(null);
     const [userLocation, setUserLocation] = useState<Coordinates | null>(null);
@@ -173,19 +176,15 @@ export default function TriviaMapScreen() {
             setTimeout(() => setUnlockPulseId(null), 1600);
         }
 
-        records.forEach((record) => {
-            const spot = hydrated.find((item) => item.id === record.id);
-            if (spot) {
-                TriviaNotificationManager.notifyUnlockedSpot(spot).catch((error) => {
-                    console.error('Trivia map notification failed:', error);
-                });
-            }
-        });
     };
 
     const checkUnlocks = async (location: Coordinates, sourceSpots = spotsRef.current) => {
         const newlyUnlocked = await TriviaUnlockManager.unlockNearbySpots(sourceSpots, location);
         await handleUnlockedRecords(newlyUnlocked, sourceSpots);
+        if (newlyUnlocked.length > 0) {
+            await TriviaGeofenceManager.refreshRegistration(sourceSpots, location);
+        }
+        return newlyUnlocked;
     };
 
     useEffect(() => {
@@ -201,10 +200,6 @@ export default function TriviaMapScreen() {
                 setTriviaSpots(hydrated);
                 setSelectedSpotId(null);
 
-                TriviaNotificationManager.requestPermission().catch((error) => {
-                    console.error('Trivia map notification permission failed:', error);
-                });
-
                 const status = await TriviaLocationManager.requestForegroundPermission();
                 if (!isMounted) return;
                 setLocationStatus(status);
@@ -215,6 +210,7 @@ export default function TriviaMapScreen() {
                     setUserLocation(current);
                     if (current) {
                         await checkUnlocks(current, hydrated);
+                        await TriviaGeofenceManager.refreshRegistration(hydrated, current);
                     }
 
                     const nextSubscription = await TriviaLocationManager.watchLocation((location) => {
@@ -278,6 +274,52 @@ export default function TriviaMapScreen() {
             450
         );
     }, [selectedSpotId]);
+
+    useEffect(() => {
+        const requestedSpotId = Array.isArray(notificationSpotId) ? notificationSpotId[0] : notificationSpotId;
+        if (!requestedSpotId || handledNotificationSpotRef.current === requestedSpotId) return;
+        let cancelled = false;
+
+        refreshUnlockedState().then((hydrated) => {
+            if (cancelled) return;
+            const spot = hydrated.find((item) => item.id === requestedSpotId && item.isUnlocked);
+            if (!spot) return;
+
+            handledNotificationSpotRef.current = requestedSpotId;
+            setSelectedSpotId(requestedSpotId);
+            setIsPreviewVisible(true);
+        }).catch((error) => {
+            console.error('Notification unlock refresh failed:', error);
+        });
+
+        return () => {
+            cancelled = true;
+        };
+    }, [notificationSpotId, spots.length]);
+
+    useFocusEffect(useCallback(() => {
+        refreshUnlockedState().catch((error) => {
+            console.error('Trivia map focus refresh failed:', error);
+        });
+    }, []));
+
+    useEffect(() => {
+        let refreshTimer: ReturnType<typeof setTimeout> | null = null;
+        const subscription = AppState.addEventListener('change', (state) => {
+            if (state === 'active') {
+                if (refreshTimer) clearTimeout(refreshTimer);
+                refreshTimer = setTimeout(() => {
+                    refreshUnlockedState().catch((error) => {
+                        console.error('Trivia map resume refresh failed:', error);
+                    });
+                }, 1000);
+            }
+        });
+        return () => {
+            if (refreshTimer) clearTimeout(refreshTimer);
+            subscription.remove();
+        };
+    }, []);
 
     const moveToCurrentLocation = () => {
         if (!userLocation) return;

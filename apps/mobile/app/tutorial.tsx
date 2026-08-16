@@ -1,4 +1,4 @@
-import { View, Text, StyleSheet, Dimensions, Pressable, Platform } from 'react-native';
+import { ActivityIndicator, Alert, View, Text, StyleSheet, Dimensions, Linking, Pressable, Platform } from 'react-native';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Animated, {
@@ -8,6 +8,7 @@ import { useState } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Ionicons } from '@expo/vector-icons';
 import { Theme, Colors } from '../constants/Colors';
+import { TriviaGeofenceEnableResult, TriviaGeofenceManager } from '../managers/TriviaGeofenceManager';
 
 const { width } = Dimensions.get('window');
 
@@ -71,6 +72,7 @@ const TutorialStep = ({
 export default function TutorialScreen() {
     const router = useRouter();
     const [step, setStep] = useState(0);
+    const [isEnablingNotifications, setIsEnablingNotifications] = useState(false);
 
     const steps = [
         {
@@ -87,23 +89,64 @@ export default function TutorialScreen() {
             title: "1日3つまで",
             description: "無料で読めるのは1日3つまで。\n\n厳選された雑学を毎日楽しみにしていてくださいね！",
             icon: "time",
+        },
+        {
+            title: "近くの雑学を見つけよう",
+            description: "雑学スポットの近くに行くと、新しい雑学が解放されます。通知を設定すると、アプリを開いていないときもお知らせします。\n\n位置情報は端末内での開放判定にのみ使い、移動履歴は保存しません。",
+            icon: "location",
         }
     ];
+
+    const finishTutorial = async () => {
+        await AsyncStorage.setItem('hasSeenTutorial', 'true');
+        await AsyncStorage.setItem('pendingSwipeGuide', 'true');
+        router.replace('/');
+    };
+
+    const showPermissionResult = (result: TriviaGeofenceEnableResult) => {
+        if (result === 'enabled') return;
+
+        const message = result === 'notification-denied'
+            ? '通知が許可されていません。あとからiPhoneの設定またはアプリの設定画面で変更できます。'
+            : result === 'foreground-location-denied'
+                ? '位置情報が許可されていません。あとから設定すると、近くの雑学を見つけられます。'
+                : result === 'background-location-denied'
+                    ? 'バックグラウンド通知には、位置情報を「常に」に設定する必要があります。'
+                    : 'この端末ではバックグラウンド通知を設定できませんでした。';
+
+        Alert.alert('あとから設定できます', message, [
+            { text: '閉じる', style: 'cancel' },
+            ...(result === 'unsupported' ? [] : [{ text: 'iPhoneの設定を開く', onPress: () => Linking.openSettings() }]),
+        ]);
+    };
 
     const handleNext = async () => {
         if (step < steps.length - 1) {
             setStep(step + 1);
         } else {
-            // Finish
             try {
-                await AsyncStorage.setItem('hasSeenTutorial', 'true');
-                await AsyncStorage.setItem('pendingSwipeGuide', 'true');
-                router.replace('/');
+                setIsEnablingNotifications(true);
+                const result = await TriviaGeofenceManager.enable();
+                await finishTutorial();
+                showPermissionResult(result);
             } catch (e) {
                 console.error(e);
+                await finishTutorial();
+            } finally {
+                setIsEnablingNotifications(false);
             }
         }
     };
+
+    const handleSkipNotifications = async () => {
+        try {
+            await finishTutorial();
+        } catch (error) {
+            console.error(error);
+        }
+    };
+
+    const isNotificationStep = step === steps.length - 1;
 
     return (
         <SafeAreaView style={styles.container}>
@@ -115,7 +158,7 @@ export default function TutorialScreen() {
                 />
             </View>
 
-            <View style={styles.footer}>
+            <View style={[styles.footer, isNotificationStep && styles.notificationFooter]}>
                 <View style={styles.dots}>
                     {steps.map((_, i) => (
                         <View
@@ -128,12 +171,36 @@ export default function TutorialScreen() {
                     ))}
                 </View>
 
-                <Pressable style={styles.button} onPress={handleNext}>
-                    <Text style={styles.buttonText}>
-                        {step === steps.length - 1 ? "始める" : "次へ"}
-                    </Text>
-                    <Ionicons name="arrow-forward" size={20} color="white" />
+                <Pressable
+                    style={[
+                        styles.button,
+                        isNotificationStep && styles.notificationButton,
+                        isEnablingNotifications && styles.buttonDisabled,
+                    ]}
+                    onPress={handleNext}
+                    disabled={isEnablingNotifications}
+                >
+                    {isEnablingNotifications ? (
+                        <ActivityIndicator color="white" />
+                    ) : (
+                        <>
+                            <Text style={styles.buttonText}>
+                                {step === steps.length - 1 ? "通知を設定する" : "次へ"}
+                            </Text>
+                            <Ionicons name="arrow-forward" size={20} color="white" />
+                        </>
+                    )}
                 </Pressable>
+
+                {isNotificationStep && (
+                    <Pressable
+                        style={styles.skipButton}
+                        onPress={handleSkipNotifications}
+                        disabled={isEnablingNotifications}
+                    >
+                        <Text style={styles.skipButtonText}>今はしない</Text>
+                    </Pressable>
+                )}
             </View>
         </SafeAreaView>
     );
@@ -181,6 +248,10 @@ const styles = StyleSheet.create({
         justifyContent: 'space-between',
         alignItems: 'center',
     },
+    notificationFooter: {
+        flexDirection: 'column',
+        gap: 14,
+    },
     dots: {
         flexDirection: 'row',
         gap: 8,
@@ -211,6 +282,22 @@ const styles = StyleSheet.create({
         color: 'white',
         fontWeight: 'bold',
         fontSize: 16,
+    },
+    buttonDisabled: {
+        opacity: 0.65,
+    },
+    notificationButton: {
+        width: '100%',
+        justifyContent: 'center',
+    },
+    skipButton: {
+        paddingVertical: 12,
+        paddingHorizontal: 8,
+    },
+    skipButtonText: {
+        color: Colors.light.subtext,
+        fontSize: 14,
+        fontWeight: '600',
     },
     // Widget Preview Styles
     widgetPreview: {

@@ -12,6 +12,19 @@ export const TriviaLocationManager = {
         return requested.status === Location.PermissionStatus.GRANTED ? 'granted' : 'denied';
     },
 
+    async requestBackgroundPermission(): Promise<TriviaLocationStatus> {
+        const current = await Location.getBackgroundPermissionsAsync();
+        if (current.status === Location.PermissionStatus.GRANTED) return 'granted';
+
+        const requested = await Location.requestBackgroundPermissionsAsync();
+        return requested.status === Location.PermissionStatus.GRANTED ? 'granted' : 'denied';
+    },
+
+    async hasBackgroundPermission() {
+        const permission = await Location.getBackgroundPermissionsAsync();
+        return permission.status === Location.PermissionStatus.GRANTED;
+    },
+
     async getCurrentLocation(): Promise<Coordinates | null> {
         const position = await Location.getCurrentPositionAsync({
             accuracy: Location.Accuracy.Balanced,
@@ -21,6 +34,21 @@ export const TriviaLocationManager = {
             latitude: position.coords.latitude,
             longitude: position.coords.longitude,
         };
+    },
+
+    async getBackgroundLocation(): Promise<Coordinates | null> {
+        const lastKnown = await Location.getLastKnownPositionAsync({
+            maxAge: 60_000,
+            requiredAccuracy: 500,
+        });
+        const position = lastKnown ?? await Location.getCurrentPositionAsync({
+            accuracy: Location.Accuracy.Balanced,
+        });
+
+        return position ? {
+            latitude: position.coords.latitude,
+            longitude: position.coords.longitude,
+        } : null;
     },
 
     async watchLocation(onChange: (location: Coordinates) => void) {

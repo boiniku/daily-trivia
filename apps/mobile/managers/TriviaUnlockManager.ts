@@ -2,6 +2,22 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Coordinates, TriviaSpot, UnlockedTriviaRecord } from '../models/TriviaSpot';
 
 const STORAGE_KEY = 'triviaMapUnlockedRecords';
+let unlockQueue: Promise<unknown> = Promise.resolve();
+
+const runWithUnlockLock = async <T>(operation: () => Promise<T>): Promise<T> => {
+    const previous = unlockQueue;
+    let release: () => void = () => undefined;
+    unlockQueue = new Promise<void>((resolve) => {
+        release = resolve;
+    });
+
+    await previous.catch(() => undefined);
+    try {
+        return await operation();
+    } finally {
+        release();
+    }
+};
 
 const toRadians = (value: number) => (value * Math.PI) / 180;
 
@@ -55,45 +71,49 @@ export const TriviaUnlockManager = {
     },
 
     async unlockTrivia(spot: TriviaSpot) {
-        const records = await readRecords();
-        if (records[spot.id]) return null;
+        return runWithUnlockLock(async () => {
+            const records = await readRecords();
+            if (records[spot.id]) return null;
 
-        const record = {
-            id: spot.id,
-            unlockedAt: new Date().toISOString(),
-        };
-        records[spot.id] = record;
-        await writeRecords(records);
+            const record = {
+                id: spot.id,
+                unlockedAt: new Date().toISOString(),
+            };
+            records[spot.id] = record;
+            await writeRecords(records);
 
-        return record;
+            return record;
+        });
     },
 
     async unlockNearbySpots(spots: TriviaSpot[], userLocation: Coordinates) {
-        const records = await readRecords();
-        const newlyUnlocked: UnlockedTriviaRecord[] = [];
+        return runWithUnlockLock(async () => {
+            const records = await readRecords();
+            const newlyUnlocked: UnlockedTriviaRecord[] = [];
 
-        spots.forEach((spot) => {
-            if (records[spot.id]) return;
+            spots.forEach((spot) => {
+                if (records[spot.id]) return;
 
-            const distance = calculateDistanceMeters(userLocation, {
-                latitude: spot.latitude,
-                longitude: spot.longitude,
+                const distance = calculateDistanceMeters(userLocation, {
+                    latitude: spot.latitude,
+                    longitude: spot.longitude,
+                });
+
+                if (distance <= spot.unlockRadiusMeters) {
+                    const record = {
+                        id: spot.id,
+                        unlockedAt: new Date().toISOString(),
+                    };
+                    records[spot.id] = record;
+                    newlyUnlocked.push(record);
+                }
             });
 
-            if (distance <= spot.unlockRadiusMeters) {
-                const record = {
-                    id: spot.id,
-                    unlockedAt: new Date().toISOString(),
-                };
-                records[spot.id] = record;
-                newlyUnlocked.push(record);
+            if (newlyUnlocked.length > 0) {
+                await writeRecords(records);
             }
+
+            return newlyUnlocked;
         });
-
-        if (newlyUnlocked.length > 0) {
-            await writeRecords(records);
-        }
-
-        return newlyUnlocked;
     },
 };

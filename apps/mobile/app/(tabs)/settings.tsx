@@ -1,18 +1,72 @@
-import { View, Text, StyleSheet, Pressable, Alert, ScrollView, ActivityIndicator, Linking } from 'react-native';
+import { View, Text, StyleSheet, Pressable, Alert, AppState, ScrollView, ActivityIndicator, Linking, Platform, Switch } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useRouter } from 'expo-router';
 import { Colors, Theme } from '../../constants/Colors';
 import { useRevenueCat } from '../../contexts/RevenueCatContext';
 import { useAuth } from '../../contexts/AuthContext';
 import LoginModal from '../../components/LoginModal';
+import { TriviaGeofenceManager, TriviaGeofenceStatus } from '../../managers/TriviaGeofenceManager';
 
 export default function SettingsScreen() {
     const router = useRouter();
     const { isPro, currentOffering, purchasePackage, restorePurchases, retryLoadOfferings, loading } = useRevenueCat();
     const { userId, isGuest, signOut, deleteAccount } = useAuth();
     const [loginVisible, setLoginVisible] = useState(false);
+    const [notificationStatus, setNotificationStatus] = useState<TriviaGeofenceStatus>('off');
+    const [isUpdatingNotifications, setIsUpdatingNotifications] = useState(false);
+
+    const refreshNotificationStatus = async () => {
+        setNotificationStatus(await TriviaGeofenceManager.getStatus());
+    };
+
+    useEffect(() => {
+        refreshNotificationStatus().catch(error => console.error('Notification status error:', error));
+        const subscription = AppState.addEventListener('change', (state) => {
+            if (state === 'active') {
+                refreshNotificationStatus().catch(error => console.error('Notification status error:', error));
+            }
+        });
+        return () => subscription.remove();
+    }, []);
+
+    const handleNotificationToggle = async (enabled: boolean) => {
+        setIsUpdatingNotifications(true);
+        try {
+            if (!enabled) {
+                await TriviaGeofenceManager.disable();
+            } else {
+                const result = await TriviaGeofenceManager.enable();
+                if (result !== 'enabled') {
+                    Alert.alert(
+                        '許可が必要です',
+                        result === 'notification-denied'
+                            ? 'iPhoneの設定で通知を許可してください。'
+                            : 'バックグラウンドで雑学を見つけるには、位置情報を「常に」に設定してください。',
+                        [
+                            { text: 'キャンセル', style: 'cancel' },
+                            { text: 'iPhoneの設定を開く', onPress: () => Linking.openSettings() },
+                        ]
+                    );
+                }
+            }
+            await refreshNotificationStatus();
+        } catch (error) {
+            console.error('Notification setting update failed:', error);
+            Alert.alert('設定できませんでした', '時間をおいて、もう一度お試しください。');
+        } finally {
+            setIsUpdatingNotifications(false);
+        }
+    };
+
+    const notificationStatusText = notificationStatus === 'active'
+        ? 'アプリを開いていないときも通知します'
+        : notificationStatus === 'notification-denied'
+            ? 'iPhoneの通知設定がOFFです'
+            : notificationStatus === 'location-denied'
+                ? '位置情報を「常に」に設定してください'
+                : '近くの雑学の通知はOFFです';
 
 
     const handlePurchase = async (pack: any) => {
@@ -197,6 +251,30 @@ export default function SettingsScreen() {
                 </View>
 
                 <View style={styles.section}>
+                    <Text style={styles.sectionHeader}>通知</Text>
+                    <View style={styles.notificationRow}>
+                        <View style={styles.notificationTextContainer}>
+                            <Text style={styles.infoLabel}>近くの雑学</Text>
+                            <Text style={styles.notificationDescription}>{notificationStatusText}</Text>
+                        </View>
+                        {isUpdatingNotifications ? (
+                            <ActivityIndicator color={Colors.light.primary} />
+                        ) : (
+                            <Switch
+                                value={notificationStatus !== 'off'}
+                                onValueChange={handleNotificationToggle}
+                                disabled={Platform.OS !== 'ios'}
+                                trackColor={{ false: '#D8D8D8', true: Colors.light.accent }}
+                                thumbColor={notificationStatus !== 'off' ? Colors.light.primary : '#F4F4F4'}
+                            />
+                        )}
+                    </View>
+                    <Text style={styles.notificationPrivacy}>
+                        位置情報は端末内で雑学の開放を判定するために使い、移動履歴は保存しません。
+                    </Text>
+                </View>
+
+                <View style={styles.section}>
                     <Text style={styles.sectionHeader}>アプリについて</Text>
                     <View style={styles.infoRow}>
                         <Text style={styles.infoLabel}>バージョン</Text>
@@ -345,6 +423,27 @@ const styles = StyleSheet.create({
         fontSize: 16,
         color: Colors.light.subtext,
         fontWeight: 'bold',
+    },
+    notificationRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        gap: 16,
+    },
+    notificationTextContainer: {
+        flex: 1,
+    },
+    notificationDescription: {
+        color: Colors.light.subtext,
+        fontSize: 12,
+        marginTop: 4,
+        lineHeight: 18,
+    },
+    notificationPrivacy: {
+        color: Colors.light.subtext,
+        fontSize: 12,
+        lineHeight: 18,
+        marginTop: 14,
     },
     proBadge: {
         backgroundColor: '#E8F5E9',
