@@ -4,9 +4,66 @@ import re
 from typing import Any
 
 from openai import OpenAI
+from pydantic import BaseModel, ConfigDict
 
 
 URL_PATTERN = re.compile(r"https?://\S+")
+
+
+class StrictModel(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+
+class ResearchBrief(StrictModel):
+    subject: str
+    common_misconception: str
+    verified_fact: str
+    explanation: str
+    supporting_details: list[str]
+    caveats: list[str]
+    visual_anchors: list[str]
+    sources: list[str]
+
+
+class TextPost(StrictModel):
+    text: str
+
+
+class ThreadsPost(TextPost):
+    topic_tag: str
+
+
+class CaptionPost(StrictModel):
+    caption: str
+    hashtags: list[str]
+
+
+class VideoScene(StrictModel):
+    duration: float
+    role: str
+    narration: str
+    subtitle: str
+    image_prompt: str
+    motion: str
+
+
+class VisualPrompt(StrictModel):
+    duration: int
+    prompt: str
+
+
+class VideoDraft(StrictModel):
+    hook_candidates: list[str]
+    scenes: list[VideoScene]
+    visual_prompts: list[VisualPrompt]
+
+
+class SocialDraft(StrictModel):
+    x: TextPost
+    threads: ThreadsPost
+    instagram: CaptionPost
+    tiktok: CaptionPost
+    video: VideoDraft
 
 
 def x_weighted_length(text: str) -> int:
@@ -44,47 +101,56 @@ def trim_for_x(text: str, limit: int = 280) -> str:
     return value.rstrip() + suffix
 
 
-def build_social_prompt(trivia: Any) -> str:
+def build_research_prompt(trivia: Any) -> str:
     return f"""
-次の承認済み雑学だけを根拠に、SNS投稿セットを日本語で作成してください。
-元データにない数値、固有名詞、因果関係、断定を追加してはいけません。
+次のDB雑学を出発点としてWeb検索し、短いSNS動画の脚本に使える事実メモを日本語で作成してください。
+DBの記述を無条件に正しいとみなさず、検索結果と照合してください。
+元の出典を優先し、可能なら公的機関、博物館、大学、学術資料、専門団体など信頼性の高い情報でも確認してください。
+動画の主役は一つに絞り、subjectは冒頭でそのまま読める2〜15文字程度の具体的な名詞にしてください。
+確認できなかった情報は追加せず、異説や断定できない点はcaveatsへ入れてください。
+sourcesには実際に確認に使ったURLだけを入れてください。
 
 タイトル: {trivia.title}
 本文: {trivia.content}
 解説: {trivia.explanation or ''}
 カテゴリ: {trivia.category or 'その他'}
-出典: {trivia.source or ''}
+DBに登録された出典: {trivia.source or 'なし'}
+""".strip()
 
-JSONオブジェクトだけを返してください。形式:
-{{
-  "x": {{"text": "280ウェイト以内の短い投稿。日本語は1文字を概ね2として、ハッシュタグ込みで120文字程度"}},
-  "threads": {{"text": "結論、説明、最後の問いかけを含む読みやすい投稿", "topic_tag": "雑学"}},
-  "instagram": {{"caption": "動画用キャプション", "hashtags": ["雑学", "毎日雑学"]}},
-  "tiktok": {{"caption": "短い動画用キャプション", "hashtags": ["雑学", "豆知識"]}},
-  "video": {{
-    "hook_candidates": ["意外性のある冒頭案1", "疑問形の冒頭案2", "常識を覆す冒頭案3"],
-    "scenes": [
-      {{"duration": 2.5, "role": "hook", "narration": "最初の2秒で続きを見たくなる一言", "subtitle": "短く強い字幕", "image_prompt": "英語の9:16画像プロンプト", "motion": "zoom_in"}},
-      {{"duration": 3.5, "role": "question", "narration": "答えをまだ明かさず疑問を深める", "subtitle": "疑問を示す字幕", "image_prompt": "英語の9:16画像プロンプト", "motion": "pan_left"}},
-      {{"duration": 7.0, "role": "reveal", "narration": "答えと根拠を分かりやすく明かす", "subtitle": "答えの要点", "image_prompt": "英語の9:16画像プロンプト", "motion": "zoom_in"}},
-      {{"duration": 6.0, "role": "payoff", "narration": "具体例と記憶に残る締め。過度なフォロー誘導は禁止", "subtitle": "覚えやすい締め", "image_prompt": "英語の9:16画像プロンプト", "motion": "pan_right"}}
-    ],
-    "visual_prompts": [
-      {{"duration": 8, "prompt": "英語の9:16ドキュメンタリー映像プロンプト。文字、字幕、ロゴ、透かしは禁止"}},
-      {{"duration": 8, "prompt": "英語の9:16ドキュメンタリー映像プロンプト。文字、字幕、ロゴ、透かしは禁止"}}
-    ]
-  }}
-}}
+
+def build_social_prompt(trivia: Any, research: dict, quality_feedback: list[str] | None = None) -> str:
+    feedback = ""
+    if quality_feedback:
+        feedback = "\n前回案の問題点。すべて修正してください:\n- " + "\n- ".join(quality_feedback)
+    return f"""
+次の調査済み事実メモだけを根拠に、SNS投稿セットを日本語で作成してください。
+DBや事実メモにない数値、固有名詞、因果関係を追加してはいけません。
+
+元タイトル: {trivia.title}
+元カテゴリ: {trivia.category or 'その他'}
+調査済み事実メモ:
+{json.dumps(research, ensure_ascii=False, indent=2)}
 
 動画脚本の条件:
-- 全体を18〜22秒、4シーンにする
-- 最初の2秒は挨拶やタイトル紹介をせず、意外な事実・矛盾・問いのいずれかから始める
-- hookでは結論を全部説明せず、questionで知識の空白を作り、revealで答えを明かす
-- 最後は「フォローして」だけで終わらず、誰かに出題したくなる一言や冒頭につながる言葉で締める
-- 字幕は1シーン18文字程度まで。ナレーションの全文をそのまま字幕にしない
+- 4シーンの時間は順に2.5秒、3.5秒、7秒、6秒とし、roleはhook、question、reveal、payoffにする
+- 動画の主役はresearch.subject一つに絞る
+- hookは映像なしでも意味が通る文章にし、research.subjectを必ず明記する
+- 冒頭を「これ」「それ」「あれ」など、映像を見ないと対象が分からない言葉から始めない
+- hookでは答えを説明し切らず、questionで知識の空白を作り、revealで答えを明かす
+- ナレーションは順に25、32、57、50文字以内を目安にし、7秒の場面へ説明を詰め込まない
+- 字幕は1シーン22文字以内。ナレーション全文を字幕にしない
 - 断定できない内容は「一説では」「といわれます」を維持する
-- 4枚の画像は、完成形・疑問を表す対比・理由となる動作・印象的な結果のように役割を変える
+- payoffは新しい理解を短く言い直して締める。「誰かに出題」「フォローして」「知っていましたか」だけで終えない
+- hook_candidatesは3案すべてにresearch.subjectを明記し、そのうち最も自然な案をhookのnarrationに使う
+- 4枚の画像は、対象・勘違い・正体や仕組み・印象的な結果のように役割を変える
 - image_promptは英語で、9:16、同じ画風、文字・字幕・ラベル・ロゴ・透かしなしを明記する
+- visual_promptsはSeedance用に2本、各8秒で作る
+
+投稿の条件:
+- Xはハッシュタグ込みで日本語120文字程度、280ウェイト以内
+- Threadsは結論、短い説明、自然な問いかけを含める
+- InstagramとTikTokのhashtagsは各2〜4個にする
+{feedback}
 """.strip()
 
 
@@ -188,24 +254,187 @@ def _normalize_scenes(raw_scenes: Any) -> list[dict]:
     return scenes
 
 
+def script_quality_issues(data: dict, subject: str) -> list[str]:
+    video = data.get("video") if isinstance(data, dict) else None
+    scenes = video.get("scenes") if isinstance(video, dict) else None
+    if not isinstance(scenes, list) or len(scenes) != 4:
+        return ["動画は4シーンにしてください"]
+
+    issues = []
+    expected_roles = ("hook", "question", "reveal", "payoff")
+    for index, (scene, role) in enumerate(zip(scenes, expected_roles)):
+        if scene.get("role") != role:
+            issues.append(f"シーン{index + 1}のroleは{role}にしてください")
+        narration = str(scene.get("narration", "")).strip()
+        subtitle = str(scene.get("subtitle", "")).strip()
+        duration = float(scene.get("duration", 5) or 5)
+        max_narration = int(duration * 7) + 8
+        if len(_spoken_text(narration)) > max_narration:
+            issues.append(
+                f"シーン{index + 1}のナレーションを{max_narration}文字程度まで短くしてください"
+            )
+        if len(subtitle) > 22:
+            issues.append(f"シーン{index + 1}の字幕を22文字以内にしてください")
+
+    hook = str(scenes[0].get("narration", "")).strip()
+    if subject and subject not in hook:
+        issues.append(f"冒頭のナレーションに対象名「{subject}」を明記してください")
+    if re.match(r"^(これ|それ|あれ)(?:[、。！？!?はをがって]|$)", hook):
+        issues.append("冒頭を「これ・それ・あれ」から始めず、対象名を明記してください")
+
+    hooks = [str(item).strip() for item in video.get("hook_candidates", [])]
+    if len(hooks) != 3 or any(subject and subject not in hook_item for hook_item in hooks):
+        issues.append(f"冒頭候補を3案作り、すべてに対象名「{subject}」を明記してください")
+
+    payoff = str(scenes[-1].get("narration", ""))
+    if any(phrase in payoff for phrase in ("誰かに出題", "フォローして", "知っていましたか？")):
+        issues.append("最後は一般的な行動誘導ではなく、雑学の意味を短く言い直してください")
+    return issues
+
+
+def _spoken_text(text: str) -> str:
+    return re.sub(r"[\s、。！？!?『』「」・…]", "", text)
+
+
+def _response_usage(response: Any) -> dict[str, int]:
+    usage = getattr(response, "usage", None)
+    output = getattr(response, "output", None) or []
+    return {
+        "input_tokens": int(getattr(usage, "input_tokens", 0) or 0),
+        "output_tokens": int(getattr(usage, "output_tokens", 0) or 0),
+        "web_search_calls": sum(
+            1
+            for item in output
+            if (getattr(item, "type", None) or (item.get("type") if isinstance(item, dict) else None))
+            == "web_search_call"
+        ),
+    }
+
+
+def _web_source_urls(response: Any) -> list[str]:
+    urls = []
+    for item in getattr(response, "output", None) or []:
+        item_type = getattr(item, "type", None) or (
+            item.get("type") if isinstance(item, dict) else None
+        )
+        if item_type != "web_search_call":
+            continue
+        action = getattr(item, "action", None) or (
+            item.get("action") if isinstance(item, dict) else None
+        )
+        sources = getattr(action, "sources", None) or (
+            action.get("sources", []) if isinstance(action, dict) else []
+        )
+        for source in sources:
+            url = getattr(source, "url", None) or (
+                source.get("url") if isinstance(source, dict) else None
+            )
+            if url and str(url).startswith(("http://", "https://")) and url not in urls:
+                urls.append(str(url))
+    return urls[:8]
+
+
+def _parsed_response(response: Any, label: str) -> BaseModel:
+    parsed = getattr(response, "output_parsed", None)
+    if parsed is None:
+        detail = getattr(response, "incomplete_details", None)
+        raise RuntimeError(f"{label} did not return structured output: {detail or 'unknown'}")
+    return parsed
+
+
+def _max_research_calls() -> int:
+    try:
+        value = int(os.getenv("SOCIAL_RESEARCH_MAX_SEARCH_CALLS", "1"))
+    except ValueError:
+        value = 1
+    return max(1, min(value, 2))
+
+
+def _estimated_generation_cost(usage: dict[str, int]) -> float:
+    input_rate = float(os.getenv("SOCIAL_INPUT_USD_PER_MILLION", "0.20"))
+    output_rate = float(os.getenv("SOCIAL_OUTPUT_USD_PER_MILLION", "1.20"))
+    search_rate = float(os.getenv("SOCIAL_WEB_SEARCH_USD_PER_1000", "10.0"))
+    return round(
+        usage["input_tokens"] * input_rate / 1_000_000
+        + usage["output_tokens"] * output_rate / 1_000_000
+        + usage["web_search_calls"] * search_rate / 1_000,
+        6,
+    )
+
+
 def generate_social_content(trivia: Any, client: OpenAI | None = None) -> dict:
     api_key = os.getenv("OPENAI_API_KEY", "").strip()
     if client is None:
         if not api_key:
             raise RuntimeError("OPENAI_API_KEY is not configured")
         client = OpenAI(api_key=api_key)
-    response = client.chat.completions.create(
-        model=os.getenv("SOCIAL_CONTENT_MODEL", "gpt-5-mini"),
-        messages=[
-            {
-                "role": "system",
-                "content": (
-                    "You adapt already-verified Japanese trivia for social media. "
-                    "Never introduce facts that are absent from the supplied record. Return JSON only."
-                ),
+    model = os.getenv("SOCIAL_CONTENT_MODEL", "gpt-5.6-luna").strip()
+    research_response = client.responses.parse(
+        model=model,
+        tools=[{
+            "type": "web_search",
+            "search_context_size": os.getenv("SOCIAL_RESEARCH_SEARCH_CONTEXT_SIZE", "low"),
+            "user_location": {
+                "type": "approximate",
+                "country": "JP",
+                "timezone": "Asia/Tokyo",
             },
-            {"role": "user", "content": build_social_prompt(trivia)},
-        ],
-        response_format={"type": "json_object"},
+        }],
+        tool_choice="required",
+        max_tool_calls=_max_research_calls(),
+        include=["web_search_call.action.sources"],
+        reasoning={"effort": "low"},
+        max_output_tokens=3000,
+        text_format=ResearchBrief,
+        input=build_research_prompt(trivia),
     )
-    return normalize_social_content(json.loads(response.choices[0].message.content))
+    research = _parsed_response(research_response, "Social research").model_dump()
+    sources = _web_source_urls(research_response)
+    if not sources:
+        sources = [str(item).strip() for item in research.get("sources", [])]
+    research["sources"] = [item for item in sources if item.startswith(("http://", "https://"))][:8]
+    if not research["sources"]:
+        raise RuntimeError("Social research returned no source URLs")
+
+    script_response = client.responses.parse(
+        model=model,
+        reasoning={"effort": "low"},
+        max_output_tokens=5000,
+        text_format=SocialDraft,
+        input=build_social_prompt(trivia, research),
+    )
+    draft = _parsed_response(script_response, "Social script").model_dump()
+    draft = normalize_social_content(draft)
+    issues = script_quality_issues(draft, research["subject"])
+    responses = [research_response, script_response]
+    repaired = False
+    if issues:
+        repair_response = client.responses.parse(
+            model=model,
+            reasoning={"effort": "low"},
+            max_output_tokens=5000,
+            text_format=SocialDraft,
+            input=build_social_prompt(trivia, research, issues),
+        )
+        draft = normalize_social_content(
+            _parsed_response(repair_response, "Social script repair").model_dump()
+        )
+        responses.append(repair_response)
+        repaired = True
+        remaining = script_quality_issues(draft, research["subject"])
+        if remaining:
+            raise RuntimeError("Social script quality check failed: " + "; ".join(remaining))
+
+    usage = {"input_tokens": 0, "output_tokens": 0, "web_search_calls": 0}
+    for response in responses:
+        item_usage = _response_usage(response)
+        for key in usage:
+            usage[key] += item_usage[key]
+    draft["research"] = research
+    draft["generation_meta"] = {
+        "model": model,
+        **usage,
+        "repaired": repaired,
+        "estimated_cost_usd": _estimated_generation_cost(usage),
+    }
+    return draft

@@ -12,6 +12,7 @@ from services.social_pipeline import (
     create_content_job,
     poll_seedance_job,
     publish_due_text_jobs,
+    regenerate_content_job,
     render_static_video_job,
     submit_seedance_job,
 )
@@ -68,6 +69,20 @@ def approve_social_content(
     db = SessionLocal()
     try:
         job = approve_content_job(db, content_job_id)
+        return _content_job_response(job)
+    finally:
+        db.close()
+
+
+@router.post("/content/{content_job_id}/regenerate")
+def regenerate_social_content(
+    content_job_id: int,
+    authorization: str | None = Header(default=None),
+):
+    _authorize(authorization)
+    db = SessionLocal()
+    try:
+        job = regenerate_content_job(db, content_job_id)
         return _content_job_response(job)
     finally:
         db.close()

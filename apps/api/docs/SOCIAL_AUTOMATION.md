@@ -13,6 +13,30 @@ SOCIAL_THREADS_PUBLISH_ENABLED=true
 
 通常の`prepare`は`static`動画ジョブを作ります。脚本は「冒頭の意外性→疑問→答え→記憶に残る締め」の4シーン、18〜22秒で生成します。各シーン用の縦画像を最大4枚作り、ズームや左右パン、字幕、ナレーションを付けたH.264 MP4をFFmpegで作成します。生成画像は1枚ごとにR2へ保存するため、途中で処理が失敗しても再利用できます。
 
+脚本の前に`gpt-5.6-luna`とWeb検索でDBの短い雑学を調査し、主題、よくある勘違い、確認済み事実、補足、注意点、出典を事実メモにします。脚本はこのメモだけを根拠に生成し、対象不明の「これ」から始まる導入、場面時間に対して長すぎるナレーション、一般的すぎる締めを機械的に検査します。検査に失敗した場合は画像生成前に一度だけ自動修正します。
+
+調査結果と生成使用量はコンテンツJSONの`research`と`generation_meta`へ保存されます。標準ではWeb検索を1回に制限します。
+
+```text
+SOCIAL_CONTENT_MODEL=gpt-5.6-luna
+SOCIAL_RESEARCH_MAX_SEARCH_CALLS=1
+SOCIAL_RESEARCH_SEARCH_CONTEXT_SIZE=low
+```
+
+### 1投稿あたりの概算費用
+
+標準設定、約20秒、画像4枚の場合の目安です。実際の文字数、検索結果、自動修正の有無で変動します。
+
+| 処理 | 概算 |
+| --- | ---: |
+| Web調査1回 | $0.010 |
+| Lunaによる事実メモ・脚本 | $0.001〜0.004 |
+| 縦長low画像4枚 | $0.024 |
+| 約120文字のTTS | 約$0.002 |
+| 合計 | 約$0.037〜0.040 |
+
+毎日1本を30日作る場合は約$1.1〜1.2です。Seedance、SNS各社の有料API、Renderの有料プランは含みません。`generation_meta.estimated_cost_usd`には各ジョブの調査・脚本部分の実測トークンに基づく概算が保存されます。
+
 ## 共通BGM
 
 複数SNSでの利用が許可された歌詞なしのMP3を1曲だけ用意し、R2などの公開URLをRenderの環境変数へ設定します。
@@ -54,6 +78,7 @@ python -m scripts.social.run_social_pipeline prepare --trivia-id 123 --video-mod
 ```text
 POST /internal/social/prepare
 GET  /internal/social/jobs
+POST /internal/social/content/{id}/regenerate
 POST /internal/social/content/{id}/approve
 POST /internal/social/video/{id}/submit
 POST /internal/social/video/{id}/poll

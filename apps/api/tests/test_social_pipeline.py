@@ -13,13 +13,20 @@ from sqlalchemy.pool import StaticPool
 
 from models import Base, SocialPublishJob, SocialVideoJob, Trivia
 from services.seedance import SeedanceClient, SeedanceTask
-from services.social_content import normalize_social_content, trim_for_x, x_weighted_length
+from services.social_content import (
+    generate_social_content,
+    normalize_social_content,
+    script_quality_issues,
+    trim_for_x,
+    x_weighted_length,
+)
 from services.static_video import compose_static_video
 from services.social_pipeline import (
     approve_content_job,
     create_content_job,
     poll_seedance_job,
     publish_due_text_jobs,
+    regenerate_content_job,
     render_static_video_job,
     submit_seedance_job,
 )
@@ -133,6 +140,46 @@ class FakePublisher:
         return SimpleNamespace(remote_post_id="remote-1", remote_post_url="https://example.com/post")
 
 
+class FakeParsed:
+    def __init__(self, data):
+        self.data = data
+
+    def model_dump(self):
+        return self.data
+
+
+class FakeResponsesApi:
+    def __init__(self, responses):
+        self.responses = list(responses)
+        self.calls = []
+
+    def parse(self, **kwargs):
+        self.calls.append(kwargs)
+        return self.responses.pop(0)
+
+
+class FakeOpenAI:
+    def __init__(self, responses):
+        self.responses = FakeResponsesApi(responses)
+
+
+def fake_model_response(data, *, searches=0, input_tokens=100, output_tokens=50):
+    search_items = [
+        SimpleNamespace(
+            type="web_search_call",
+            action=SimpleNamespace(
+                sources=[SimpleNamespace(url="https://example.com/verified-source")]
+            ),
+        )
+        for _ in range(searches)
+    ]
+    return SimpleNamespace(
+        output_parsed=FakeParsed(data),
+        usage=SimpleNamespace(input_tokens=input_tokens, output_tokens=output_tokens),
+        output=search_items,
+    )
+
+
 class SocialPipelineTests(unittest.TestCase):
     def setUp(self):
         self.engine = create_engine(
@@ -176,6 +223,79 @@ class SocialPipelineTests(unittest.TestCase):
         self.assertGreaterEqual(sum(item["duration"] for item in normalized["video"]["scenes"]), 18)
         self.assertEqual(normalized["video"]["scenes"][1]["motion"], "pan_left")
 
+    def test_quality_check_rejects_contextless_hook_and_overlong_scene(self):
+        content = sample_scene_content()
+        content["video"]["hook_candidates"] = ["これ、脳に見える？"] * 3
+        content["video"]["scenes"][0]["narration"] = "これ、脳に見える？"
+        content["video"]["scenes"][2]["narration"] = "長い説明です。" * 20
+        issues = script_quality_issues(content, "カニみそ")
+        self.assertTrue(any("これ・それ・あれ" in issue for issue in issues))
+        self.assertTrue(any("対象名" in issue for issue in issues))
+        self.assertTrue(any("シーン3" in issue for issue in issues))
+
+    def test_content_generation_researches_then_writes_script(self):
+        research = {
+            "subject": "タコ",
+            "common_misconception": "心臓は一つだと思われやすい",
+            "verified_fact": "タコの心臓は三つある",
+            "explanation": "二つはえらへ血液を送る",
+            "supporting_details": ["残る一つは全身へ送る"],
+            "caveats": [],
+            "visual_anchors": ["タコ", "心臓を示す抽象表現"],
+            "sources": ["https://example.com/source"],
+        }
+        draft = sample_scene_content()
+        draft["video"]["hook_candidates"] = [
+            "タコの心臓、いくつだと思う？",
+            "タコには心臓が一つでは足りない？",
+            "タコの体には心臓が三つある",
+        ]
+        client = FakeOpenAI([
+            fake_model_response(research, searches=1, input_tokens=400, output_tokens=150),
+            fake_model_response(draft, input_tokens=700, output_tokens=500),
+        ])
+        generated = generate_social_content(self.trivia, client=client)
+        self.assertEqual(len(client.responses.calls), 2)
+        self.assertEqual(client.responses.calls[0]["tool_choice"], "required")
+        self.assertNotIn("tools", client.responses.calls[1])
+        self.assertEqual(generated["research"]["subject"], "タコ")
+        self.assertEqual(
+            generated["research"]["sources"], ["https://example.com/verified-source"]
+        )
+        self.assertEqual(generated["generation_meta"]["web_search_calls"], 1)
+        self.assertFalse(generated["generation_meta"]["repaired"])
+        self.assertGreater(generated["generation_meta"]["estimated_cost_usd"], 0)
+
+    def test_content_generation_repairs_an_unnatural_script_once(self):
+        research = {
+            "subject": "タコ",
+            "common_misconception": "心臓は一つだと思われやすい",
+            "verified_fact": "タコの心臓は三つある",
+            "explanation": "二つはえらへ血液を送る",
+            "supporting_details": [],
+            "caveats": [],
+            "visual_anchors": ["タコ"],
+            "sources": ["https://example.com/source"],
+        }
+        invalid = sample_scene_content()
+        invalid["video"]["hook_candidates"] = ["これ、いくつ？"] * 3
+        invalid["video"]["scenes"][0]["narration"] = "これ、いくつだと思う？"
+        repaired = sample_scene_content()
+        repaired["video"]["hook_candidates"] = [
+            "タコの心臓はいくつ？",
+            "タコには心臓が三つある？",
+            "タコの体は心臓が一つではない",
+        ]
+        client = FakeOpenAI([
+            fake_model_response(research, searches=1),
+            fake_model_response(invalid),
+            fake_model_response(repaired),
+        ])
+        generated = generate_social_content(self.trivia, client=client)
+        self.assertEqual(len(client.responses.calls), 3)
+        self.assertTrue(generated["generation_meta"]["repaired"])
+        self.assertIn("前回案の問題点", client.responses.calls[2]["input"])
+
     def test_seedance_client_sends_vertical_silent_video(self):
         session = FakeHttpSession()
         client = SeedanceClient(api_key="test", base_url="https://ark.example/v3", session=session)
@@ -193,6 +313,17 @@ class SocialPipelineTests(unittest.TestCase):
         self.assertEqual(len(first.publish_jobs), 4)
         self.assertEqual(len(first.video_jobs), 1)
         self.assertEqual(first.video_jobs[0].provider, "static")
+
+    def test_unapproved_content_can_be_regenerated_before_media_creation(self):
+        content_job = create_content_job(self.db, self.trivia.id, generator=lambda trivia: sample_content())
+        regenerated = regenerate_content_job(
+            self.db,
+            content_job.id,
+            generator=lambda trivia: normalize_social_content(sample_scene_content()),
+        )
+        self.assertEqual(len(regenerated.content_json["video"]["scenes"]), 4)
+        self.assertEqual(len(regenerated.video_jobs[0].prompt_json["image_prompts"]), 4)
+        self.assertEqual(regenerated.video_jobs[0].status, "pending")
 
     def test_static_video_render_archives_image_and_video(self):
         content_job = create_content_job(self.db, self.trivia.id, generator=lambda trivia: sample_content())

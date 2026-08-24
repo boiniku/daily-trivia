@@ -17,7 +17,17 @@ services:
       - key: SOCIAL_AUTOMATION_SECRET
         generateValue: true
       - key: SOCIAL_CONTENT_MODEL
-        value: gpt-5-mini
+        value: gpt-5.6-luna
+      - key: SOCIAL_RESEARCH_MAX_SEARCH_CALLS
+        value: "1"
+      - key: SOCIAL_RESEARCH_SEARCH_CONTEXT_SIZE
+        value: low
+      - key: SOCIAL_INPUT_USD_PER_MILLION
+        value: "0.20"
+      - key: SOCIAL_OUTPUT_USD_PER_MILLION
+        value: "1.20"
+      - key: SOCIAL_WEB_SEARCH_USD_PER_1000
+        value: "10.0"
       - key: SOCIAL_IMAGE_MODEL
         value: gpt-image-1-mini
       - key: SOCIAL_IMAGE_QUALITY
@@ -114,7 +124,17 @@ services:
       - key: SOCIAL_AUTOMATION_SECRET
         generateValue: true
       - key: SOCIAL_CONTENT_MODEL
-        value: gpt-5-mini
+        value: gpt-5.6-luna
+      - key: SOCIAL_RESEARCH_MAX_SEARCH_CALLS
+        value: "1"
+      - key: SOCIAL_RESEARCH_SEARCH_CONTEXT_SIZE
+        value: low
+      - key: SOCIAL_INPUT_USD_PER_MILLION
+        value: "0.20"
+      - key: SOCIAL_OUTPUT_USD_PER_MILLION
+        value: "1.20"
+      - key: SOCIAL_WEB_SEARCH_USD_PER_1000
+        value: "10.0"
       - key: SOCIAL_IMAGE_MODEL
         value: gpt-image-1-mini
       - key: SOCIAL_IMAGE_QUALITY

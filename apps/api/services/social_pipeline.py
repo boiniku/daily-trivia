@@ -23,6 +23,17 @@ TEXT_PLATFORMS = ("x", "threads")
 VIDEO_PLATFORMS = ("instagram", "tiktok")
 
 
+def _video_prompt_json(video_content: dict) -> dict:
+    return {
+        "image_prompt": video_content.get("image_prompt", ""),
+        "image_prompts": [
+            scene["image_prompt"] for scene in video_content.get("scenes", [])
+        ],
+        "image_urls": [],
+        "visual_prompts": video_content.get("visual_prompts", []),
+    }
+
+
 def select_unused_trivia(db: Session) -> Trivia | None:
     used_ids = db.query(SocialContentJob.trivia_id)
     return (
@@ -69,14 +80,7 @@ def create_content_job(
             else os.getenv("SOCIAL_IMAGE_MODEL", "gpt-image-1-mini").strip()
         ),
         status="pending",
-        prompt_json={
-            "image_prompt": video_content.get("image_prompt", ""),
-            "image_prompts": [
-                scene["image_prompt"] for scene in video_content.get("scenes", [])
-            ],
-            "image_urls": [],
-            "visual_prompts": video_content.get("visual_prompts", []),
-        },
+        prompt_json=_video_prompt_json(video_content),
     )
     db.add(video)
     for platform in TEXT_PLATFORMS:
@@ -95,6 +99,42 @@ def create_content_job(
             status="waiting_video",
             scheduled_at=scheduled_at,
         ))
+    db.commit()
+    db.refresh(job)
+    return job
+
+
+def regenerate_content_job(
+    db: Session,
+    content_job_id: int,
+    *,
+    generator: Callable = generate_social_content,
+) -> SocialContentJob:
+    """Replace an unapproved draft without creating paid image assets."""
+    job = db.query(SocialContentJob).filter_by(id=content_job_id).one()
+    if job.status != "review" or job.approved_at:
+        raise ValueError("Only an unapproved review job can be regenerated")
+    if any(video.final_video_url or video.thumbnail_url for video in job.video_jobs):
+        raise ValueError("A job with generated media cannot be regenerated")
+    if any(item.status == "published" for item in job.publish_jobs):
+        raise ValueError("A published job cannot be regenerated")
+
+    content = generator(job.trivia)
+    job.content_json = content
+    video_content = content["video"]
+    for video in job.video_jobs:
+        video.status = "pending"
+        video.error = None
+        video.prompt_json = _video_prompt_json(video_content)
+        video.provider_task_ids = []
+        video.source_video_urls = []
+        video.duration_seconds = None
+    for publish_job in job.publish_jobs:
+        publish_job.status = (
+            "waiting_approval" if publish_job.content_type == "text" else "waiting_video"
+        )
+        publish_job.attempt_count = 0
+        publish_job.last_error = None
     db.commit()
     db.refresh(job)
     return job
