@@ -37,6 +37,18 @@ python -m unittest discover -s tests -v
 
 LINE管理機能の設定は[`docs/LINE_ADMIN_SETUP.md`](docs/LINE_ADMIN_SETUP.md)を参照してください。
 
+## 雑学の自動収集元
+
+自動収集は、`services/trivia_collection.py` の許可リストにある雑学・豆知識サイトだけを検索します。検索ツール側のドメイン制限に加え、保存前にも出典URLのホスト名を検証します。
+
+収集元を変更する場合は、カンマ区切りの `TRIVIA_DISCOVERY_DOMAINS` で上書きできます。空値は制限解除にはならず、組み込みの許可リストへ戻ります。
+
+```text
+TRIVIA_DISCOVERY_DOMAINS=zatsuneta.com,kerokero-info.com,i-trivia.net
+```
+
+日次のランダム収集では、公開済み・承認待ちに同じ中心対象がある候補も除外します。テーマを明示した手動収集では、同じ対象でも事実が異なる候補を調査できます。
+
 ## 運用スクリプト
 
 APIディレクトリからモジュールとして実行します。

@@ -1,6 +1,7 @@
 from datetime import datetime
 import difflib
 import re
+import unicodedata
 from typing import Iterable, Optional
 
 from sqlalchemy.orm import Session
@@ -12,6 +13,17 @@ VALID_CANDIDATE_STATUSES = {"pending", "approved", "rejected"}
 NUMBER_TRANSLATION = str.maketrans(
     "０１２３４５６７８９一二三四五六七八九",
     "0123456789123456789",
+)
+
+SIMILARITY_REPLACEMENTS = (
+    ("センチメートル", "cm"),
+    ("センチ", "cm"),
+    ("メートル", "m"),
+    ("キログラム", "kg"),
+    ("個", "つ"),
+    ("匹", "頭"),
+    ("エラ", "えら"),
+    ("心ぞう", "心臓"),
 )
 
 
@@ -36,9 +48,10 @@ def _optional_int(value):
 
 
 def _normalize_for_similarity(value: str) -> str:
-    normalized = (value or "").lower().translate(NUMBER_TRANSLATION)
-    normalized = normalized.replace("センチメートル", "cm").replace("センチ", "cm")
-    normalized = normalized.replace("個", "つ")
+    normalized = unicodedata.normalize("NFKC", value or "").lower()
+    normalized = normalized.translate(NUMBER_TRANSLATION)
+    for before, after in SIMILARITY_REPLACEMENTS:
+        normalized = normalized.replace(before, after)
     return re.sub(r"[\W_]+", "", normalized, flags=re.UNICODE)
 
 
@@ -69,27 +82,56 @@ def _ngram_similarity(left: str, right: str, size: int = 2) -> float:
     )
 
 
-def _duplicate_reason(
+def _contained_similarity(left: str, right: str) -> float:
+    """Return how much of the shorter normalized text occurs in the longer one."""
+    normalized_left = _normalize_for_similarity(left)
+    normalized_right = _normalize_for_similarity(right)
+    if not normalized_left or not normalized_right:
+        return 0.0
+    shorter, longer = sorted((normalized_left, normalized_right), key=len)
+    if len(shorter) < 8:
+        return 0.0
+    if shorter in longer:
+        return len(shorter) / len(longer)
+    return 0.0
+
+
+def _numeric_signals(value: str) -> set[str]:
+    normalized = unicodedata.normalize("NFKC", value or "").translate(NUMBER_TRANSLATION)
+    return set(re.findall(r"\d+(?:\.\d+)?", normalized))
+
+
+def duplicate_reason(
     *,
     title: str,
     content: str,
     source: str,
+    explanation: str = "",
     other_title: str,
     other_content: str,
     other_source: str,
+    other_explanation: str = "",
 ) -> Optional[str]:
-    if _similarity(title, other_title) > 0.70:
+    if _similarity(title, other_title) >= 0.68:
         return "タイトルが類似しています"
-    if _similarity(content, other_content) > 0.70:
+    if _similarity(content, other_content) >= 0.68:
         return "本文が類似しています"
 
-    combined = f"{title} {content}"
-    other_combined = f"{other_title} {other_content}"
+    combined = f"{title} {content} {explanation}"
+    other_combined = f"{other_title} {other_content} {other_explanation}"
+    if _contained_similarity(combined, other_combined) >= 0.55:
+        return "同じ説明を含んでいます"
+
+    title_ngrams = _ngram_similarity(title, other_title)
+    combined_ngrams = _ngram_similarity(combined, other_combined)
     if (
-        _ngram_similarity(title, other_title) >= 0.27
-        and _ngram_similarity(combined, other_combined) >= 0.33
+        title_ngrams >= 0.27
+        and combined_ngrams >= 0.32
     ):
         return "同じ事実の言い換えに見えます"
+    shared_numbers = _numeric_signals(combined) & _numeric_signals(other_combined)
+    if shared_numbers and title_ngrams >= 0.22 and combined_ngrams >= 0.27:
+        return "対象と数値が共通する同じ事実に見えます"
     return None
 
 
@@ -98,6 +140,7 @@ def find_duplicate(
     *,
     title: str,
     content: str,
+    explanation: str = "",
     source: str = "",
     exclude_candidate_id: Optional[int] = None,
     include_pending: bool = True,
@@ -106,14 +149,17 @@ def find_duplicate(
         Trivia.id,
         Trivia.title,
         Trivia.content,
+        Trivia.explanation,
         Trivia.source,
     ).all():
-        reason = _duplicate_reason(
+        reason = duplicate_reason(
             title=title,
             content=content,
+            explanation=explanation,
             source=source,
             other_title=trivia.title,
             other_content=trivia.content,
+            other_explanation=trivia.explanation,
             other_source=trivia.source,
         )
         if reason:
@@ -124,17 +170,20 @@ def find_duplicate(
             TriviaCandidate.id,
             TriviaCandidate.title,
             TriviaCandidate.content,
+            TriviaCandidate.explanation,
             TriviaCandidate.source,
         ).filter(TriviaCandidate.status == "pending")
         if exclude_candidate_id is not None:
             query = query.filter(TriviaCandidate.id != exclude_candidate_id)
         for candidate in query.all():
-            reason = _duplicate_reason(
+            reason = duplicate_reason(
                 title=title,
                 content=content,
+                explanation=explanation,
                 source=source,
                 other_title=candidate.title,
                 other_content=candidate.content,
+                other_explanation=candidate.explanation,
                 other_source=candidate.source,
             )
             if reason:
@@ -153,6 +202,7 @@ def create_candidates(db: Session, items: Iterable[dict]) -> list[TriviaCandidat
             db,
             title=title,
             content=content,
+            explanation=(item.get("explanation") or "").strip(),
             source=(item.get("source") or "").strip(),
         ):
             continue
@@ -172,6 +222,7 @@ def create_candidate(db: Session, item: dict) -> TriviaCandidate:
         db,
         title=title,
         content=content,
+        explanation=(item.get("explanation") or "").strip(),
         source=(item.get("source") or "").strip(),
     )
     if duplicate:
@@ -231,6 +282,7 @@ def update_candidate(
         db,
         title=title,
         content=content,
+        explanation=explanation,
         source=source,
         exclude_candidate_id=candidate_id,
     )
@@ -273,6 +325,7 @@ def approve_candidate(db: Session, candidate_id: int, reviewed_by: str) -> Trivi
         db,
         title=candidate.title,
         content=candidate.content,
+        explanation=candidate.explanation,
         source=candidate.source,
         exclude_candidate_id=candidate.id,
         include_pending=False,

@@ -37,6 +37,7 @@ from services.trivia_collection import (
     get_max_search_calls,
     get_search_context_size,
     has_complete_map_fields,
+    is_allowed_source_url,
     parse_collection_output,
     remove_existing_duplicates,
     review_map_trivia_quality,
@@ -535,6 +536,7 @@ class LineSecurityTests(unittest.TestCase):
             with patch.dict(os.environ, {
                 "OPENAI_API_KEY": "test-key",
                 "TRIVIA_MAX_SEARCH_CALLS": "5",
+                "TRIVIA_DISCOVERY_DOMAINS": "example.com",
             }, clear=False), patch(
                 "services.trivia_collection.OpenAI",
                 return_value=client,
@@ -621,13 +623,123 @@ class LineSecurityTests(unittest.TestCase):
         self.assertFalse(has_complete_map_fields(missing_hint))
         self.assertFalse(has_complete_map_fields(invalid_radius))
 
-    def test_collection_search_is_unrestricted_by_default(self):
+    def test_collection_deduplicates_reworded_facts_within_same_response(self):
+        engine = create_engine("sqlite:///:memory:")
+        Base.metadata.create_all(engine)
+        db = sessionmaker(bind=engine)()
+        items = [
+            CollectedTrivia(
+                subject_key="タコ",
+                title="タコには心臓が3つある",
+                content="タコは全身用が一つ、えら用が二つの心臓を持っています。",
+                explanation="三つの心臓は血液を送る先によって役割が分かれます。",
+                category="生物",
+                source="https://zatsuneta.com/octopus-a",
+            ),
+            CollectedTrivia(
+                subject_key="タコ",
+                title="心臓を3個備えるタコ",
+                content="タコの心臓は、体へ送る一つとえらへ送る二つの合計三つです。",
+                explanation="全身向けとえら向けで血液を送る役目を分担しています。",
+                category="生物",
+                source="https://zatsuneta.com/octopus-b",
+            ),
+        ]
+
+        try:
+            novel, duplicates = remove_existing_duplicates(
+                db,
+                items,
+                allowed_domains=["zatsuneta.com"],
+            )
+        finally:
+            db.close()
+            engine.dispose()
+
+        self.assertEqual(len(novel), 1)
+        self.assertEqual(duplicates, ["心臓を3個備えるタコ"])
+
+    def test_random_collection_rejects_an_already_used_subject(self):
+        engine = create_engine("sqlite:///:memory:")
+        Base.metadata.create_all(engine)
+        db = sessionmaker(bind=engine)()
+        db.add(Trivia(
+            title="タコの血液は青い",
+            content="タコの血液は銅を含む成分のため青く見えます。",
+            explanation="",
+            source="https://zatsuneta.com/octopus-blood",
+            category="生物",
+        ))
+        db.commit()
+        item = CollectedTrivia(
+            subject_key="タコ",
+            title="タコには心臓が3つある",
+            content="タコは全身用が一つ、えら用が二つの心臓を持っています。",
+            explanation="役割の異なる心臓を使います。",
+            category="生物",
+            source="https://zatsuneta.com/octopus-heart",
+        )
+
+        try:
+            novel, related = remove_existing_duplicates(
+                db,
+                [item],
+                allowed_domains=["zatsuneta.com"],
+                reject_related_topics=True,
+            )
+        finally:
+            db.close()
+            engine.dispose()
+
+        self.assertEqual(novel, [])
+        self.assertEqual(related, [item.title])
+
+    def test_collection_search_uses_curated_domains_by_default(self):
         with patch.dict(os.environ, {}, clear=False):
             os.environ.pop("TRIVIA_DISCOVERY_DOMAINS", None)
             self.assertEqual(
                 get_discovery_domains(),
                 list(DEFAULT_DISCOVERY_DOMAINS),
             )
+            self.assertGreaterEqual(len(get_discovery_domains()), 10)
+            self.assertIn("zatsuneta.com", get_discovery_domains())
+
+    def test_source_allowlist_accepts_subdomains_but_not_lookalikes(self):
+        domains = ["zatsuneta.com"]
+        self.assertTrue(is_allowed_source_url(
+            "https://www.zatsuneta.com/article/1",
+            domains,
+        ))
+        self.assertFalse(is_allowed_source_url(
+            "https://zatsuneta.com.evil.example/article/1",
+            domains,
+        ))
+        self.assertFalse(is_allowed_source_url(
+            "https://example.com/?source=zatsuneta.com",
+            domains,
+        ))
+
+    def test_collected_items_reject_sources_outside_allowlist(self):
+        items = [
+            CollectedTrivia(
+                subject_key="タコ",
+                title="タコには心臓が三つある",
+                content="タコは役割の異なる心臓を合計三つ持っています。",
+                explanation="解説",
+                category="生物",
+                source="https://zatsuneta.com/article/1",
+            ),
+            CollectedTrivia(
+                subject_key="金星",
+                title="金星の一日は一年より長い",
+                content="金星は自転が遅く、一日の長さが公転周期を上回ります。",
+                explanation="解説",
+                category="宇宙・天体",
+                source="https://example.com/article/2",
+            ),
+        ]
+        valid = validate_collected_items(items, allowed_domains=["zatsuneta.com"])
+        self.assertEqual([item["title"] for item in valid], ["タコには心臓が三つある"])
 
     def test_collection_search_limit_is_configurable_and_bounded(self):
         with patch.dict(os.environ, {}, clear=False):
@@ -821,6 +933,7 @@ class LineSecurityTests(unittest.TestCase):
             with patch.dict(os.environ, {
                 "OPENAI_API_KEY": "test-key",
                 "TRIVIA_COLLECTION_ATTEMPTS": "3",
+                "TRIVIA_DISCOVERY_DOMAINS": "example.com",
             }, clear=False), patch(
                 "services.trivia_collection.OpenAI",
                 return_value=client,

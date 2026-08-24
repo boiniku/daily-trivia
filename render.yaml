@@ -16,6 +16,8 @@ services:
         sync: false
       - key: TRIVIA_COLLECTION_MODEL
         value: gpt-5-mini
+      - key: TRIVIA_DISCOVERY_DOMAINS
+        value: zatsuneta.com,kerokero-info.com,zatsugaku-company.com,i-trivia.net,10zatsugaku.info,m-mom.net,memozaru.com,omoshiro-zatsugaku.com,omoshirozatsugaku.jp,chigai-allguide.com
       - key: TRIVIA_MAX_SEARCH_CALLS
         value: 5
       - key: TRIVIA_COLLECTION_ATTEMPTS
@@ -77,6 +79,8 @@ services:
         sync: false
       - key: OPENAI_API_KEY
         sync: false
+      - key: TRIVIA_DISCOVERY_DOMAINS
+        value: zatsuneta.com,kerokero-info.com,zatsugaku-company.com,i-trivia.net,10zatsugaku.info,m-mom.net,memozaru.com,omoshiro-zatsugaku.com,omoshirozatsugaku.jp,chigai-allguide.com
       - key: FIREBASE_SERVICE_ACCOUNT_JSON
         sync: false
       - key: LINE_CHANNEL_SECRET

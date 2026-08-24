@@ -4,19 +4,34 @@ import os
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
+from urllib.parse import urlsplit
 
 from openai import OpenAI
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
 
 from models import Trivia, TriviaCandidate
-from services.trivia_candidates import create_candidates, find_duplicate
+from services.trivia_candidates import create_candidates, duplicate_reason, find_duplicate
 from services.trivia_generation import TRIVIA_CATEGORIES
 
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_DISCOVERY_DOMAINS: tuple[str, ...] = ()
+# Deliberately limited to established Japanese trivia/knowledge sites. The web
+# search filter and the post-response URL check both use this list, so a model
+# cannot persist a source from the open web by merely returning another URL.
+DEFAULT_DISCOVERY_DOMAINS: tuple[str, ...] = (
+    "zatsuneta.com",
+    "kerokero-info.com",
+    "zatsugaku-company.com",
+    "i-trivia.net",
+    "10zatsugaku.info",
+    "m-mom.net",
+    "memozaru.com",
+    "omoshiro-zatsugaku.com",
+    "omoshirozatsugaku.jp",
+    "chigai-allguide.com",
+)
 DEFAULT_MAX_SEARCH_CALLS = 5
 DEFAULT_COLLECTION_ATTEMPTS = 3
 RECENT_FACT_EXCLUSION_LIMIT = 100
@@ -137,7 +152,7 @@ def get_collection_usage(response) -> TriviaCollectionUsage:
 
 def get_discovery_domains() -> list[str]:
     raw_domains = os.getenv("TRIVIA_DISCOVERY_DOMAINS")
-    if raw_domains is None:
+    if raw_domains is None or not raw_domains.strip():
         return list(DEFAULT_DISCOVERY_DOMAINS)
 
     domains = []
@@ -147,6 +162,20 @@ def get_discovery_domains() -> list[str]:
         if domain and domain not in domains:
             domains.append(domain)
     return domains[:100]
+
+
+def is_allowed_source_url(source: str, allowed_domains: list[str] | tuple[str, ...]) -> bool:
+    try:
+        parsed = urlsplit((source or "").strip())
+        hostname = (parsed.hostname or "").rstrip(".").lower()
+    except ValueError:
+        return False
+    if parsed.scheme not in {"http", "https"} or not hostname:
+        return False
+    return any(
+        hostname == domain or hostname.endswith(f".{domain}")
+        for domain in allowed_domains
+    )
 
 
 def get_max_search_calls() -> int:
@@ -363,12 +392,21 @@ def build_collection_prompt(
     max_search_calls: int = DEFAULT_MAX_SEARCH_CALLS,
     map_mode: bool = False,
     existing_facts: list[str] | None = None,
+    source_domains: list[str] | None = None,
 ) -> str:
     output_count = output_count or count
     subject = f"「{topic}」に関する" if topic else "ジャンルを限定しない"
     categories = ", ".join(TRIVIA_CATEGORIES)
     exclusions = "\n".join(f"- {title}" for title in exclusion_titles)
     fact_exclusions = "\n".join(f"- {fact}" for fact in (existing_facts or []))
+    domain_list = "、".join(source_domains or [])
+    source_restriction = (
+        "【使用できる収集元（厳守）】\n"
+        f"- 検索・記事閲覧・sourceへの記載は次のドメインだけに限定する: {domain_list}\n"
+        "- 上記以外のサイト、検索結果だけの情報、モデルの内部知識は使わない\n"
+        "- sourceは上記ドメイン内の、中心事実と解説を確認できる個別記事URLにする\n"
+        if source_domains else ""
+    )
     map_focus = build_map_collection_focus(output_count) if map_mode else ""
     if map_mode:
         content_rule = (
@@ -397,6 +435,8 @@ Web検索を最大{max_search_calls}回まで行い、Web上の個別ページ�
 除外リストを新しい候補の発想元にせず、Web検索で別の対象から候補を発見してください。
 十分に良い候補が集まった時点で検索を止め、回数を使い切る必要はありません。
 
+{source_restriction}
+
 【必須の検索手順】
 - モデルの内部知識だけで題材、理由、例外、因果関係を作らない。出力する全候補について必ずWeb検索結果の個別ページを開く
 - まず雑学・豆知識サイトなどから意外な起点となる事実を探す
@@ -406,8 +446,7 @@ Web検索を最大{max_search_calls}回まで行い、Web上の個別ページ�
 - 検索結果のスニペットだけで判断せず、最終的な主張を直接説明する個別ページを確認する
 - 1段目の事実だけよりも、2段目の理由・例外・意外な繋がりまで確認できた候補を優先する
 
-題材発見には雑学サイトも使えます。深掘りと検証には、企業・団体の公式ページ、官公庁、
-大学・研究機関、博物館、専門メディアなど、その主張を直接確認できる情報源を優先してください。
+題材の発見、深掘り、最終確認は、指定された収集元の個別記事だけで行ってください。
 出力対象は、生物、人体、自然、科学、歴史、文化、生活、食べ物などに関する具体的な事実です。
 ジャンル自体を目的にせず、日常会話で誰かに話したくなる面白さと分かりやすさを最優先してください。
 
@@ -459,6 +498,7 @@ Web検索を最大{max_search_calls}回まで行い、Web上の個別ページ�
 - 複数の事例をまとめた総論、傾向の紹介、一覧記事の要約ではなく、その中から具体的な事実を1つ選ぶ
 - 「多くあります」「さまざまです」「〜ことがあります」だけで終わる広すぎる主張は採用しない
 - {output_count}件は対象と事実が互いに異なるものにし、同じ事実の言い換えや似たネタを含めない
+- 許可された収集元で新鮮な題材が見つからない場合は、件数を満たすために既出対象の近い話、弱い周辺情報、推測を採用せず、{output_count}件未満で返す
 - テーマ指定がない場合、特定ジャンルに偏らず、同じ動物、食品、人物、天体など同一対象から選ぶのは1件までにする
 - テーマ指定がない場合、{output_count}件のうち可能な限り異なるカテゴリを選び、3件以上なら最低3カテゴリに分ける
 - subject_keyには中心対象を短い一般名詞で1つだけ入れる。例: 目、タコ、金星、ハチミツ、江戸時代
@@ -581,10 +621,13 @@ def parse_collection_output(output_text: str) -> list[dict]:
     ]
 
 
-def validate_collected_items(items: list[CollectedTrivia]) -> list[dict]:
+def validate_collected_items(
+    items: list[CollectedTrivia],
+    allowed_domains: list[str] | tuple[str, ...] | None = None,
+) -> list[dict]:
     valid_items = []
     for item in items:
-        if not is_valid_collected_item(item):
+        if not is_valid_collected_item(item, allowed_domains=allowed_domains):
             continue
         data = item.model_dump()
         if data["category"] not in TRIVIA_CATEGORIES:
@@ -611,7 +654,10 @@ def has_complete_map_fields(item: CollectedTrivia) -> bool:
     )
 
 
-def is_valid_collected_item(item: CollectedTrivia) -> bool:
+def is_valid_collected_item(
+    item: CollectedTrivia,
+    allowed_domains: list[str] | tuple[str, ...] | None = None,
+) -> bool:
     topic_text = " ".join((item.title, item.content))
     if any(phrase in topic_text for phrase in META_TOPIC_PHRASES):
         logger.warning("Discarded meta-site trivia candidate: %s", item.title)
@@ -619,30 +665,92 @@ def is_valid_collected_item(item: CollectedTrivia) -> bool:
     if any(phrase in topic_text for phrase in GENERIC_TOPIC_PHRASES):
         logger.warning("Discarded overly broad trivia candidate: %s", item.title)
         return False
-    return (
+    basic_valid = (
         bool(item.title.strip())
         and bool(item.content.strip())
         and item.source.strip().startswith(("http://", "https://"))
     )
+    if not basic_valid:
+        return False
+    if allowed_domains is not None and not is_allowed_source_url(item.source, allowed_domains):
+        logger.warning("Discarded source outside allowlist: %s", item.source)
+        return False
+    return True
+
+
+def _has_existing_subject(db: Session, subject_key: str) -> bool:
+    subject = normalize_subject_key(subject_key)
+    if not subject:
+        return False
+    aliases = SUBJECT_ALIASES.get(subject, (subject,))
+    searchable_aliases = {
+        re.sub(r"[\W_]+", "", alias.lower())
+        for alias in aliases
+        if len(re.sub(r"[\W_]+", "", alias.lower())) >= 2
+        or subject in SUBJECT_ALIASES
+    }
+    if not searchable_aliases:
+        return False
+    rows = (
+        db.query(Trivia.title, Trivia.content).all()
+        + db.query(TriviaCandidate.title, TriviaCandidate.content)
+        .filter(TriviaCandidate.status == "pending")
+        .all()
+    )
+    for title, content in rows:
+        existing = re.sub(r"[\W_]+", "", f"{title or ''}{content or ''}".lower())
+        if any(alias in existing for alias in searchable_aliases):
+            return True
+    return False
 
 
 def remove_existing_duplicates(
     db: Session,
     items: list[CollectedTrivia],
+    *,
+    allowed_domains: list[str] | tuple[str, ...] | None = None,
+    reject_related_topics: bool = False,
+    prior_items: list[CollectedTrivia] | None = None,
 ) -> tuple[list[CollectedTrivia], list[str]]:
     novel_items = []
     duplicate_titles = []
     for item in items:
-        if not is_valid_collected_item(item):
+        if not is_valid_collected_item(item, allowed_domains=allowed_domains):
             continue
         duplicate = find_duplicate(
             db,
             title=item.title,
             content=item.content,
+            explanation=item.explanation,
             source=item.source,
         )
         if duplicate:
             logger.info("Discarded collected duplicate %r: %s", item.title, duplicate)
+            duplicate_titles.append(item.title)
+            continue
+        if reject_related_topics and _has_existing_subject(db, item.subject_key):
+            logger.info("Discarded collected related topic %r (%s)", item.title, item.subject_key)
+            duplicate_titles.append(item.title)
+            continue
+        batch_duplicate = next((
+            other for other in [*(prior_items or []), *novel_items]
+            if duplicate_reason(
+                title=item.title,
+                content=item.content,
+                explanation=item.explanation,
+                source=item.source,
+                other_title=other.title,
+                other_content=other.content,
+                other_explanation=other.explanation,
+                other_source=other.source,
+            )
+        ), None)
+        if batch_duplicate:
+            logger.info(
+                "Discarded duplicate within collection %r (matches %r)",
+                item.title,
+                batch_duplicate.title,
+            )
             duplicate_titles.append(item.title)
             continue
         novel_items.append(item)
@@ -808,6 +916,7 @@ def collect_trivia(
                 max_search_calls=max_search_calls,
                 map_mode=map_mode,
                 existing_facts=existing_facts,
+                source_domains=domains,
             ),
         )
         usage = get_collection_usage(response)
@@ -862,7 +971,13 @@ def collect_trivia(
             )
             if usage_callback:
                 usage_callback(total_usage)
-        novel_items, duplicate_titles = remove_existing_duplicates(db, source_items)
+        novel_items, duplicate_titles = remove_existing_duplicates(
+            db,
+            source_items,
+            allowed_domains=domains,
+            reject_related_topics=not bool(topic),
+            prior_items=collected_items,
+        )
         diagnostics.duplicates += len(duplicate_titles)
         logger.info(
             "Web collection attempt %s: generated=%s complete_map=%s "
@@ -888,7 +1003,10 @@ def collect_trivia(
 
     if not topic:
         collected_items = select_diverse_items(collected_items, count)
-    final_items = validate_collected_items(collected_items)[:count]
+    final_items = validate_collected_items(
+        collected_items,
+        allowed_domains=domains,
+    )[:count]
     diagnostics.final_candidates = len(final_items)
     publish_diagnostics()
     return final_items
