@@ -31,6 +31,11 @@ def migrate():
         from models import DailyTriviaCollectionRun
         DailyTriviaCollectionRun.__table__.create(bind=engine)
         inspector = inspect(engine)
+    from models import SocialContentJob, SocialPublishJob, SocialVideoJob
+    for model in (SocialContentJob, SocialVideoJob, SocialPublishJob):
+        if not inspector.has_table(model.__tablename__):
+            model.__table__.create(bind=engine)
+            inspector = inspect(engine)
 
     existing = {column["name"] for column in inspector.get_columns("trivia_candidates")}
     with engine.begin() as conn:

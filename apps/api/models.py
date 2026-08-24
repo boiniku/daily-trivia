@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Text, ForeignKey, Boolean, DateTime, Date, JSON, Float
+from sqlalchemy import Column, Integer, String, Text, ForeignKey, Boolean, DateTime, Date, JSON, Float, UniqueConstraint
 from sqlalchemy.orm import relationship
 from datetime import datetime
 from database import Base
@@ -114,6 +114,84 @@ class DailyTriviaCollectionRun(Base):
     error = Column(Text, nullable=True)
     started_at = Column(DateTime, nullable=False, default=datetime.utcnow)
     completed_at = Column(DateTime, nullable=True)
+
+
+class SocialContentJob(Base):
+    """One approved trivia transformed into platform-specific social content."""
+
+    __tablename__ = "social_content_jobs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    trivia_id = Column(Integer, ForeignKey("trivia.id"), nullable=False, unique=True, index=True)
+    status = Column(String, nullable=False, default="draft", index=True)
+    content_json = Column(JSON, nullable=False, default=dict)
+    scheduled_at = Column(DateTime, nullable=True, index=True)
+    approved_at = Column(DateTime, nullable=True)
+    error = Column(Text, nullable=True)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    trivia = relationship("Trivia")
+    video_jobs = relationship("SocialVideoJob", back_populates="content_job")
+    publish_jobs = relationship("SocialPublishJob", back_populates="content_job")
+
+
+class SocialVideoJob(Base):
+    """Tracks either automatic static rendering or manual Seedance generation."""
+
+    __tablename__ = "social_video_jobs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    content_job_id = Column(
+        Integer,
+        ForeignKey("social_content_jobs.id"),
+        nullable=False,
+        index=True,
+    )
+    provider = Column(String, nullable=False, default="static")
+    model = Column(String, nullable=False)
+    status = Column(String, nullable=False, default="pending", index=True)
+    prompt_json = Column(JSON, nullable=False, default=dict)
+    provider_task_ids = Column(JSON, nullable=False, default=list)
+    source_video_urls = Column(JSON, nullable=False, default=list)
+    final_video_url = Column(String, nullable=True)
+    thumbnail_url = Column(String, nullable=True)
+    duration_seconds = Column(Float, nullable=True)
+    error = Column(Text, nullable=True)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    content_job = relationship("SocialContentJob", back_populates="video_jobs")
+
+
+class SocialPublishJob(Base):
+    """An idempotent delivery attempt for one platform."""
+
+    __tablename__ = "social_publish_jobs"
+    __table_args__ = (
+        UniqueConstraint("content_job_id", "platform", name="uq_social_publish_job_platform"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    content_job_id = Column(
+        Integer,
+        ForeignKey("social_content_jobs.id"),
+        nullable=False,
+        index=True,
+    )
+    platform = Column(String, nullable=False, index=True)
+    content_type = Column(String, nullable=False)
+    status = Column(String, nullable=False, default="queued", index=True)
+    scheduled_at = Column(DateTime, nullable=True, index=True)
+    attempt_count = Column(Integer, nullable=False, default=0)
+    remote_post_id = Column(String, nullable=True)
+    remote_post_url = Column(String, nullable=True)
+    last_error = Column(Text, nullable=True)
+    published_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    content_job = relationship("SocialContentJob", back_populates="publish_jobs")
 
 class TriviaHee(Base):
     __tablename__ = "trivia_hees"

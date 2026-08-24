@@ -37,6 +37,8 @@ python -m unittest discover -s tests -v
 
 LINE管理機能の設定は[`docs/LINE_ADMIN_SETUP.md`](docs/LINE_ADMIN_SETUP.md)を参照してください。
 
+Seedance動画とX・Threads投稿の自動化は[`docs/SOCIAL_AUTOMATION.md`](docs/SOCIAL_AUTOMATION.md)を参照してください。
+
 ## 雑学の自動収集元
 
 自動収集は、`services/trivia_collection.py` の許可リストにある雑学・豆知識サイトだけを検索します。検索ツール側のドメイン制限に加え、保存前にも出典URLのホスト名を検証します。

@@ -14,3 +14,5 @@ pillow
 streamlit-cropper
 requests
 python-multipart
+imageio-ffmpeg
+japanize-matplotlib

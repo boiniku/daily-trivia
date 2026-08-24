@@ -14,6 +14,36 @@ services:
         sync: false
       - key: OPENAI_API_KEY
         sync: false
+      - key: SOCIAL_AUTOMATION_SECRET
+        generateValue: true
+      - key: SOCIAL_CONTENT_MODEL
+        value: gpt-5-mini
+      - key: SOCIAL_IMAGE_MODEL
+        value: gpt-image-1-mini
+      - key: SOCIAL_IMAGE_QUALITY
+        value: low
+      - key: SOCIAL_TTS_ENABLED
+        value: "true"
+      - key: R2_SOCIAL_PREFIX
+        value: social
+      - key: SOCIAL_ASSET_R2_BASE_URL
+        sync: false
+      - key: SEEDANCE_API_KEY
+        sync: false
+      - key: SEEDANCE_MODEL
+        sync: false
+      - key: SOCIAL_X_PUBLISH_ENABLED
+        value: "false"
+      - key: X_ACCESS_TOKEN
+        sync: false
+      - key: X_USERNAME
+        sync: false
+      - key: SOCIAL_THREADS_PUBLISH_ENABLED
+        value: "false"
+      - key: THREADS_ACCESS_TOKEN
+        sync: false
+      - key: THREADS_USER_ID
+        sync: false
       - key: TRIVIA_COLLECTION_MODEL
         value: gpt-5-mini
       - key: TRIVIA_DISCOVERY_DOMAINS
@@ -78,6 +108,36 @@ services:
       - key: APP_DATABASE_URL
         sync: false
       - key: OPENAI_API_KEY
+        sync: false
+      - key: SOCIAL_AUTOMATION_SECRET
+        generateValue: true
+      - key: SOCIAL_CONTENT_MODEL
+        value: gpt-5-mini
+      - key: SOCIAL_IMAGE_MODEL
+        value: gpt-image-1-mini
+      - key: SOCIAL_IMAGE_QUALITY
+        value: low
+      - key: SOCIAL_TTS_ENABLED
+        value: "true"
+      - key: R2_SOCIAL_PREFIX
+        value: staging/social
+      - key: SOCIAL_ASSET_R2_BASE_URL
+        sync: false
+      - key: SEEDANCE_API_KEY
+        sync: false
+      - key: SEEDANCE_MODEL
+        sync: false
+      - key: SOCIAL_X_PUBLISH_ENABLED
+        value: "false"
+      - key: X_ACCESS_TOKEN
+        sync: false
+      - key: X_USERNAME
+        sync: false
+      - key: SOCIAL_THREADS_PUBLISH_ENABLED
+        value: "false"
+      - key: THREADS_ACCESS_TOKEN
+        sync: false
+      - key: THREADS_USER_ID
         sync: false
       - key: TRIVIA_DISCOVERY_DOMAINS
         value: zatsuneta.com,kerokero-info.com,zatsugaku-company.com,i-trivia.net,10zatsugaku.info,m-mom.net,memozaru.com,omoshiro-zatsugaku.com,omoshirozatsugaku.jp,chigai-allguide.com

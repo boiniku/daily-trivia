@@ -62,6 +62,8 @@ from routers import line_admin
 app.include_router(line_admin.router)
 from routers import daily_collection
 app.include_router(daily_collection.router)
+from routers import social_automation
+app.include_router(social_automation.router)
 
 # Pydantic Schemas
 from pydantic import BaseModel
