@@ -12,8 +12,10 @@ from openai import OpenAI
 from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageFont, ImageOps
 
 
-WIDTH = 1080
-HEIGHT = 1920
+# 720p is accepted by short-video platforms and keeps the complete rendering
+# pipeline within small Render instances. 1080p x264 encoding can exceed 512 MB.
+WIDTH = 720
+HEIGHT = 1280
 FPS = 30
 
 
@@ -91,9 +93,11 @@ def compose_static_video(
             source = ImageOps.exif_transpose(source).convert("RGB")
             for index, subtitle in enumerate(subtitles):
                 frame_path = temp / f"frame-{index:02d}.jpg"
-                _render_card(source, title, subtitle, index, len(subtitles)).save(
-                    frame_path, "JPEG", quality=91, optimize=True
-                )
+                card = _render_card(source, title, subtitle, index, len(subtitles))
+                try:
+                    card.save(frame_path, "JPEG", quality=88, optimize=True)
+                finally:
+                    card.close()
                 frame_paths.append(frame_path)
 
         concat_path = temp / "frames.txt"
@@ -113,8 +117,9 @@ def compose_static_video(
             audio_path.write_bytes(audio_data)
             command.extend(["-i", str(audio_path)])
         command.extend([
-            "-r", str(FPS), "-c:v", "libx264", "-preset", "medium",
-            "-crf", "21", "-pix_fmt", "yuv420p", "-movflags", "+faststart",
+            "-r", str(FPS), "-c:v", "libx264", "-preset", "veryfast",
+            "-threads", "1", "-x264-params", "ref=1:bframes=0:rc-lookahead=0",
+            "-crf", "23", "-pix_fmt", "yuv420p", "-movflags", "+faststart",
         ])
         if audio_data:
             command.extend(["-c:a", "aac", "-b:a", "128k", "-shortest"])
@@ -128,23 +133,54 @@ def compose_static_video(
 
 
 def _render_card(source: Image.Image, title: str, subtitle: str, index: int, total: int) -> Image.Image:
-    background = ImageOps.fit(source, (WIDTH, HEIGHT), method=Image.Resampling.LANCZOS)
-    background = background.filter(ImageFilter.GaussianBlur(22))
-    background = ImageEnhance.Brightness(background).enhance(0.48)
-    foreground = ImageOps.contain(source, (WIDTH - 100, 1180), method=Image.Resampling.LANCZOS)
+    fitted = ImageOps.fit(source, (WIDTH, HEIGHT), method=Image.Resampling.LANCZOS)
+    background = fitted.filter(ImageFilter.GaussianBlur(_scale(22)))
+    fitted.close()
+    dimmed = ImageEnhance.Brightness(background).enhance(0.48)
+    background.close()
+    background = dimmed
+    foreground = ImageOps.contain(
+        source,
+        (WIDTH - _scale(100), _scale(1180)),
+        method=Image.Resampling.LANCZOS,
+    )
     canvas = background.copy()
-    canvas.paste(foreground, ((WIDTH - foreground.width) // 2, 260), foreground if foreground.mode == "RGBA" else None)
+    canvas.paste(
+        foreground,
+        ((WIDTH - foreground.width) // 2, _scale(260)),
+        foreground if foreground.mode == "RGBA" else None,
+    )
     overlay = Image.new("RGBA", (WIDTH, HEIGHT), (0, 0, 0, 0))
     draw = ImageDraw.Draw(overlay)
-    draw.rounded_rectangle((55, 65, WIDTH - 55, 230), radius=32, fill=(8, 12, 20, 205))
-    draw.rounded_rectangle((55, 1500, WIDTH - 55, 1815), radius=38, fill=(8, 12, 20, 225))
-    font_title = _font(50)
-    font_subtitle = _font(72)
-    font_small = _font(30)
-    _draw_centered(draw, _wrap(title, 17), 100, font_title, fill="white", spacing=10)
-    _draw_centered(draw, _wrap(subtitle, 12), 1570, font_subtitle, fill="#fff4a8", spacing=16)
-    draw.text((WIDTH - 145, 1845), f"{index + 1}/{total}", font=font_small, fill=(255, 255, 255, 190))
-    return Image.alpha_composite(canvas.convert("RGBA"), overlay).convert("RGB")
+    draw.rounded_rectangle(
+        (_scale(55), _scale(65), WIDTH - _scale(55), _scale(230)),
+        radius=_scale(32), fill=(8, 12, 20, 205),
+    )
+    draw.rounded_rectangle(
+        (_scale(55), _scale(1500), WIDTH - _scale(55), _scale(1815)),
+        radius=_scale(38), fill=(8, 12, 20, 225),
+    )
+    font_title = _font(_scale(50))
+    font_subtitle = _font(_scale(72))
+    font_small = _font(_scale(30))
+    _draw_centered(draw, _wrap(title, 17), _scale(100), font_title, fill="white", spacing=_scale(10))
+    _draw_centered(draw, _wrap(subtitle, 12), _scale(1570), font_subtitle, fill="#fff4a8", spacing=_scale(16))
+    draw.text(
+        (WIDTH - _scale(145), _scale(1845)),
+        f"{index + 1}/{total}",
+        font=font_small,
+        fill=(255, 255, 255, 190),
+    )
+    canvas_rgba = canvas.convert("RGBA")
+    composited = Image.alpha_composite(canvas_rgba, overlay)
+    result = composited.convert("RGB")
+    for image in (background, foreground, canvas, overlay, canvas_rgba, composited):
+        image.close()
+    return result
+
+
+def _scale(value: int) -> int:
+    return max(1, round(value * WIDTH / 1080))
 
 
 def _draw_centered(draw: ImageDraw.ImageDraw, text: str, y: int, font, **kwargs) -> None:

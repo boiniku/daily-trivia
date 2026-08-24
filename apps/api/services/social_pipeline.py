@@ -203,14 +203,18 @@ def render_static_video_job(
     try:
         content_job = video_job.content_job
         video_content = content_job.content_json["video"]
-        if content_job.trivia.image_url:
-            image_data = image_downloader(content_job.trivia.image_url)
-            video_job.thumbnail_url = content_job.trivia.image_url
+        reusable_image_url = video_job.thumbnail_url or content_job.trivia.image_url
+        if reusable_image_url:
+            image_data = image_downloader(reusable_image_url)
+            video_job.thumbnail_url = reusable_image_url
         else:
             image_data = image_generator(video_job.prompt_json["image_prompt"])
             video_job.thumbnail_url = uploader(
                 image_data, "image/png", "png", prefix="images"
             )
+            # Keep the paid generated image even when TTS/FFmpeg fails or the
+            # small Render instance restarts later in the pipeline.
+            db.commit()
 
         audio_data = None
         if os.getenv("SOCIAL_TTS_ENABLED", "true").lower() == "true":
