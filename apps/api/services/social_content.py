@@ -62,15 +62,29 @@ JSONオブジェクトだけを返してください。形式:
   "instagram": {{"caption": "動画用キャプション", "hashtags": ["雑学", "毎日雑学"]}},
   "tiktok": {{"caption": "短い動画用キャプション", "hashtags": ["雑学", "豆知識"]}},
   "video": {{
-    "narration": ["短いナレーション1", "短いナレーション2", "短いナレーション3"],
-    "subtitles": ["短い字幕1", "短い字幕2", "短い字幕3"],
-    "image_prompt": "英語の9:16イラスト生成プロンプト。文字、字幕、ロゴ、透かしは禁止",
+    "hook_candidates": ["意外性のある冒頭案1", "疑問形の冒頭案2", "常識を覆す冒頭案3"],
+    "scenes": [
+      {{"duration": 2.5, "role": "hook", "narration": "最初の2秒で続きを見たくなる一言", "subtitle": "短く強い字幕", "image_prompt": "英語の9:16画像プロンプト", "motion": "zoom_in"}},
+      {{"duration": 3.5, "role": "question", "narration": "答えをまだ明かさず疑問を深める", "subtitle": "疑問を示す字幕", "image_prompt": "英語の9:16画像プロンプト", "motion": "pan_left"}},
+      {{"duration": 7.0, "role": "reveal", "narration": "答えと根拠を分かりやすく明かす", "subtitle": "答えの要点", "image_prompt": "英語の9:16画像プロンプト", "motion": "zoom_in"}},
+      {{"duration": 6.0, "role": "payoff", "narration": "具体例と記憶に残る締め。過度なフォロー誘導は禁止", "subtitle": "覚えやすい締め", "image_prompt": "英語の9:16画像プロンプト", "motion": "pan_right"}}
+    ],
     "visual_prompts": [
       {{"duration": 8, "prompt": "英語の9:16ドキュメンタリー映像プロンプト。文字、字幕、ロゴ、透かしは禁止"}},
       {{"duration": 8, "prompt": "英語の9:16ドキュメンタリー映像プロンプト。文字、字幕、ロゴ、透かしは禁止"}}
     ]
   }}
 }}
+
+動画脚本の条件:
+- 全体を18〜22秒、4シーンにする
+- 最初の2秒は挨拶やタイトル紹介をせず、意外な事実・矛盾・問いのいずれかから始める
+- hookでは結論を全部説明せず、questionで知識の空白を作り、revealで答えを明かす
+- 最後は「フォローして」だけで終わらず、誰かに出題したくなる一言や冒頭につながる言葉で締める
+- 字幕は1シーン18文字程度まで。ナレーションの全文をそのまま字幕にしない
+- 断定できない内容は「一説では」「といわれます」を維持する
+- 4枚の画像は、完成形・疑問を表す対比・理由となる動作・印象的な結果のように役割を変える
+- image_promptは英語で、9:16、同じ画風、文字・字幕・ラベル・ロゴ・透かしなしを明記する
 """.strip()
 
 
@@ -88,27 +102,38 @@ def normalize_social_content(data: dict) -> dict:
     if not str(data["threads"].get("text", "")).strip():
         raise ValueError("Threads text is empty")
 
-    narration = [str(item).strip() for item in data["video"].get("narration", []) if str(item).strip()]
-    subtitles = [str(item).strip() for item in data["video"].get("subtitles", []) if str(item).strip()]
-    if not narration or not subtitles:
-        raise ValueError("Video narration and subtitles are required")
-    data["video"]["narration"] = narration[:5]
-    data["video"]["subtitles"] = subtitles[:5]
+    video = data["video"]
+    scenes = _normalize_scenes(video.get("scenes"))
+    if scenes:
+        video["scenes"] = scenes
+        video["narration"] = [scene["narration"] for scene in scenes]
+        video["subtitles"] = [scene["subtitle"] for scene in scenes]
+        video["image_prompt"] = scenes[0]["image_prompt"]
+    else:
+        narration = [str(item).strip() for item in video.get("narration", []) if str(item).strip()]
+        subtitles = [str(item).strip() for item in video.get("subtitles", []) if str(item).strip()]
+        if not narration or not subtitles:
+            raise ValueError("Video narration and subtitles are required")
+        video["narration"] = narration[:5]
+        video["subtitles"] = subtitles[:5]
 
-    image_prompt = str(data["video"].get("image_prompt", "")).strip()
+    hooks = video.get("hook_candidates")
+    video["hook_candidates"] = [str(item).strip() for item in hooks or [] if str(item).strip()][:3]
+
+    image_prompt = str(video.get("image_prompt", "")).strip()
     if not image_prompt:
         # Backward compatibility for content generated before static videos
         # became the default.
-        old_prompts = data["video"].get("visual_prompts") or []
+        old_prompts = video.get("visual_prompts") or []
         if old_prompts and isinstance(old_prompts[0], dict):
             image_prompt = str(old_prompts[0].get("prompt", "")).strip()
     if not image_prompt:
         raise ValueError("A static video image prompt is required")
     if "no text" not in image_prompt.lower():
         image_prompt += " No text, no subtitles, no labels, no logo, no watermark."
-    data["video"]["image_prompt"] = image_prompt
+    video["image_prompt"] = image_prompt
 
-    prompts = data["video"].get("visual_prompts")
+    prompts = video.get("visual_prompts")
     if not isinstance(prompts, list):
         prompts = []
     normalized_prompts = []
@@ -121,8 +146,46 @@ def normalize_social_content(data: dict) -> dict:
         if "no text" not in prompt.lower():
             prompt += guard
         normalized_prompts.append({"duration": duration, "prompt": prompt})
-    data["video"]["visual_prompts"] = normalized_prompts
+    video["visual_prompts"] = normalized_prompts
     return data
+
+
+def _normalize_scenes(raw_scenes: Any) -> list[dict]:
+    if not isinstance(raw_scenes, list) or len(raw_scenes) < 3:
+        return []
+    allowed_motions = {"zoom_in", "zoom_out", "pan_left", "pan_right"}
+    scenes = []
+    for index, item in enumerate(raw_scenes[:4]):
+        if not isinstance(item, dict):
+            continue
+        narration = str(item.get("narration", "")).strip()
+        subtitle = str(item.get("subtitle", "")).strip()
+        prompt = str(item.get("image_prompt", "")).strip()
+        if not narration or not subtitle or not prompt:
+            continue
+        if "no text" not in prompt.lower():
+            prompt += " No text, no subtitles, no labels, no logo, no watermark."
+        try:
+            duration = float(item.get("duration", 5))
+        except (TypeError, ValueError):
+            duration = 5.0
+        motion = str(item.get("motion", "zoom_in")).strip()
+        scenes.append({
+            "duration": max(2.0, min(duration, 8.0)),
+            "role": str(item.get("role", f"scene_{index + 1}")).strip(),
+            "narration": narration,
+            "subtitle": subtitle,
+            "image_prompt": prompt,
+            "motion": motion if motion in allowed_motions else "zoom_in",
+        })
+    if len(scenes) < 3:
+        return []
+    total = sum(scene["duration"] for scene in scenes)
+    if total < 18.0 or total > 22.0:
+        target = 20.0
+        for scene in scenes:
+            scene["duration"] = round(scene["duration"] * target / total, 2)
+    return scenes
 
 
 def generate_social_content(trivia: Any, client: OpenAI | None = None) -> dict:

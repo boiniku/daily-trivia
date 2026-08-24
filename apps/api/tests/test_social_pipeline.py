@@ -43,6 +43,46 @@ def sample_content():
     }
 
 
+def sample_scene_content():
+    content = sample_content()
+    content["video"]["hook_candidates"] = ["タコの心臓、いくつだと思う？"]
+    content["video"]["scenes"] = [
+        {
+            "duration": 2.5,
+            "role": "hook",
+            "narration": "タコの心臓、いくつだと思いますか？",
+            "subtitle": "心臓はいくつ？",
+            "image_prompt": "Vertical close-up of an octopus. No text.",
+            "motion": "zoom_in",
+        },
+        {
+            "duration": 3.5,
+            "role": "question",
+            "narration": "人間と同じひとつではありません。",
+            "subtitle": "1つではない",
+            "image_prompt": "Vertical mysterious octopus silhouette. No text.",
+            "motion": "pan_left",
+        },
+        {
+            "duration": 7,
+            "role": "reveal",
+            "narration": "答えは三つです。",
+            "subtitle": "答えは3つ",
+            "image_prompt": "Vertical scientific octopus illustration. No text.",
+            "motion": "zoom_out",
+        },
+        {
+            "duration": 6,
+            "role": "payoff",
+            "narration": "二つはえらへ血液を送ります。",
+            "subtitle": "2つはえらへ送る",
+            "image_prompt": "Vertical underwater octopus portrait. No text.",
+            "motion": "pan_right",
+        },
+    ]
+    return content
+
+
 class FakeResponse:
     def __init__(self, data):
         self.data = data
@@ -129,6 +169,13 @@ class SocialPipelineTests(unittest.TestCase):
         self.assertEqual(normalized["video"]["visual_prompts"][1]["duration"], 15)
         self.assertIn("No text", normalized["video"]["visual_prompts"][1]["prompt"])
 
+    def test_normalization_builds_retention_scenes(self):
+        normalized = normalize_social_content(sample_scene_content())
+        self.assertEqual(len(normalized["video"]["scenes"]), 4)
+        self.assertEqual(normalized["video"]["subtitles"][0], "心臓はいくつ？")
+        self.assertGreaterEqual(sum(item["duration"] for item in normalized["video"]["scenes"]), 18)
+        self.assertEqual(normalized["video"]["scenes"][1]["motion"], "pan_left")
+
     def test_seedance_client_sends_vertical_silent_video(self):
         session = FakeHttpSession()
         client = SeedanceClient(api_key="test", base_url="https://ark.example/v3", session=session)
@@ -178,6 +225,35 @@ class SocialPipelineTests(unittest.TestCase):
         video_publish_jobs = [job for job in content_job.publish_jobs if job.content_type == "video"]
         self.assertTrue(all(job.status == "queued" for job in video_publish_jobs))
 
+    def test_static_video_render_generates_and_archives_each_scene_image(self):
+        content_job = create_content_job(
+            self.db, self.trivia.id, generator=lambda trivia: normalize_social_content(sample_scene_content())
+        )
+        video_job = self.db.query(SocialVideoJob).filter_by(content_job_id=content_job.id).one()
+        uploads = []
+
+        def fake_uploader(data, content_type, extension, **kwargs):
+            uploads.append((data, kwargs["prefix"]))
+            return f"https://cdn.example/{kwargs['prefix']}-{len(uploads)}.{extension}"
+
+        def fake_composer(images, title, subtitles, output_path, **kwargs):
+            self.assertEqual(len(images), 4)
+            self.assertEqual(len(kwargs["scenes"]), 4)
+            output_path.write_bytes(b"mp4")
+            return 19.0
+
+        render_static_video_job(
+            self.db,
+            video_job.id,
+            image_generator=lambda prompt: prompt.encode(),
+            narration_generator=lambda lines: b"audio",
+            background_music_loader=lambda: b"bgm",
+            composer=fake_composer,
+            uploader=fake_uploader,
+        )
+        self.assertEqual([prefix for _, prefix in uploads], ["images"] * 4 + ["videos"])
+        self.assertEqual(len(video_job.prompt_json["image_urls"]), 4)
+
     def test_static_video_composer_creates_vertical_mp4(self):
         source = BytesIO()
         Image.new("RGB", (200, 300), "#325b8c").save(source, "PNG")
@@ -189,7 +265,7 @@ class SocialPipelineTests(unittest.TestCase):
                 patch("services.static_video.FPS", 5),
             ):
                 duration = compose_static_video(
-                    source.getvalue(),
+                    [source.getvalue(), source.getvalue()],
                     "タコの心臓",
                     ["タコには", "心臓が3つあります"],
                     output_path,

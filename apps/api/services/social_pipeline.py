@@ -15,6 +15,7 @@ from services.static_video import (
     download_image,
     generate_narration_audio,
     generate_social_image,
+    load_background_music,
 )
 
 
@@ -70,6 +71,10 @@ def create_content_job(
         status="pending",
         prompt_json={
             "image_prompt": video_content.get("image_prompt", ""),
+            "image_prompts": [
+                scene["image_prompt"] for scene in video_content.get("scenes", [])
+            ],
+            "image_urls": [],
             "visual_prompts": video_content.get("visual_prompts", []),
         },
     )
@@ -184,6 +189,7 @@ def render_static_video_job(
     image_generator: Callable = generate_social_image,
     image_downloader: Callable = download_image,
     narration_generator: Callable = generate_narration_audio,
+    background_music_loader: Callable = load_background_music,
     composer: Callable = compose_static_video,
     uploader: Callable = upload_social_asset,
 ) -> SocialVideoJob:
@@ -203,22 +209,40 @@ def render_static_video_job(
     try:
         content_job = video_job.content_job
         video_content = content_job.content_json["video"]
-        reusable_image_url = video_job.thumbnail_url or content_job.trivia.image_url
-        if reusable_image_url:
-            image_data = image_downloader(reusable_image_url)
-            video_job.thumbnail_url = reusable_image_url
-        else:
-            image_data = image_generator(video_job.prompt_json["image_prompt"])
-            video_job.thumbnail_url = uploader(
-                image_data, "image/png", "png", prefix="images"
-            )
-            # Keep the paid generated image even when TTS/FFmpeg fails or the
-            # small Render instance restarts later in the pipeline.
+        scenes = video_content.get("scenes") or []
+        prompts = video_job.prompt_json.get("image_prompts") or []
+        if not prompts:
+            prompts = [video_job.prompt_json["image_prompt"]]
+        image_urls = list(video_job.prompt_json.get("image_urls") or [])
+        if not image_urls:
+            reusable_image_url = video_job.thumbnail_url or content_job.trivia.image_url
+            if reusable_image_url:
+                image_urls.append(reusable_image_url)
+                video_job.thumbnail_url = reusable_image_url
+
+        image_items = []
+        for index, prompt in enumerate(prompts):
+            if index < len(image_urls):
+                image_items.append(image_downloader(image_urls[index]))
+                continue
+            generated = image_generator(prompt)
+            generated_url = uploader(generated, "image/png", "png", prefix="images")
+            image_urls.append(generated_url)
+            image_items.append(generated)
+            video_job.prompt_json = {**video_job.prompt_json, "image_urls": image_urls}
+            if not video_job.thumbnail_url:
+                video_job.thumbnail_url = generated_url
+            # Preserve each paid image if a later API call or FFmpeg run fails.
             db.commit()
+        if image_urls and not video_job.thumbnail_url:
+            video_job.thumbnail_url = image_urls[0]
+
+        image_data = image_items if len(image_items) > 1 else image_items[0]
 
         audio_data = None
         if os.getenv("SOCIAL_TTS_ENABLED", "true").lower() == "true":
             audio_data = narration_generator(video_content["narration"])
+        background_music_data = background_music_loader()
 
         with tempfile.TemporaryDirectory(prefix="daily-trivia-output-") as temp_dir:
             output_path = Path(temp_dir) / f"social-video-{video_job.id}.mp4"
@@ -229,6 +253,8 @@ def render_static_video_job(
                 output_path,
                 audio_data=audio_data,
                 narration=video_content["narration"],
+                scenes=scenes,
+                background_music_data=background_music_data,
             )
             video_job.final_video_url = uploader(
                 output_path.read_bytes(), "video/mp4", "mp4", prefix="videos"
