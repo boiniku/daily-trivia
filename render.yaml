@@ -42,6 +42,8 @@ services:
         value: 47e53151-a378-46f3-abee-ce13aa07feb1
       - key: AIVIS_STYLE_NAME
         value: ノーマル
+      - key: AIVIS_SELECTED_STYLE
+        value: Surprise
       - key: AIVIS_HOOK_STYLE_NAME
         value: Surprise
       - key: SOCIAL_BGM_URL
@@ -175,6 +177,8 @@ services:
         value: 47e53151-a378-46f3-abee-ce13aa07feb1
       - key: AIVIS_STYLE_NAME
         value: ノーマル
+      - key: AIVIS_SELECTED_STYLE
+        value: Surprise
       - key: AIVIS_HOOK_STYLE_NAME
         value: Surprise
       - key: SOCIAL_BGM_URL

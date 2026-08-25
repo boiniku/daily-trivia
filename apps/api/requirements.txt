@@ -16,3 +16,4 @@ requests
 python-multipart
 imageio-ffmpeg
 japanize-matplotlib
+cryptography==46.0.4

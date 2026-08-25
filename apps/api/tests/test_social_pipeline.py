@@ -22,7 +22,7 @@ from services.social_content import (
     x_weighted_length,
 )
 from services.static_video import compose_static_video
-from services.aivis_tts import AivisTTSClient, build_narration_ssml
+from services.aivis_tts import AivisTTSClient, build_narration_ssml, generate_aivis_narration
 from services.story_patterns import select_story_pattern
 from services.social_pipeline import (
     approve_content_job,
@@ -324,6 +324,21 @@ class SocialPipelineTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "API key was rejected") as raised:
             client.synthesize("テスト", model_uuid="model-1")
         self.assertNotIn("private-secret", str(raised.exception))
+
+    def test_aivis_production_narration_uses_selected_surprise_style(self):
+        class RecordingAivis:
+            def __init__(self):
+                self.style_name = None
+
+            def synthesize(self, text, *, style_name=None, **kwargs):
+                self.style_name = style_name
+                return b"audio"
+
+        client = RecordingAivis()
+        with patch.dict("os.environ", {"AIVIS_SELECTED_STYLE": "Surprise"}):
+            audio = generate_aivis_narration(["タコの雑学です。"], client=client)
+        self.assertEqual(audio, b"audio")
+        self.assertEqual(client.style_name, "Surprise")
 
     def test_normalization_clamps_seedance_duration_and_adds_guard(self):
         content = sample_content()

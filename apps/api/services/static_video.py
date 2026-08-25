@@ -1,4 +1,5 @@
 import base64
+import hashlib
 import importlib.util
 import os
 import subprocess
@@ -10,6 +11,7 @@ from typing import Iterable
 import requests
 from openai import OpenAI
 from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageFont, ImageOps
+from cryptography.fernet import Fernet, InvalidToken
 
 from services.aivis_tts import generate_aivis_narration
 
@@ -79,6 +81,10 @@ def download_image(url: str, session=requests) -> bytes:
 
 def load_background_music(location: str | None = None, session=requests) -> bytes | None:
     """Load one reusable, cross-platform licensed BGM track when configured."""
+    if location is None and os.getenv("SOCIAL_PRIVATE_BGM_ENABLED", "true").lower() == "true":
+        private_audio = _load_private_r2_bgm()
+        if private_audio is not None:
+            return private_audio
     location = (location or os.getenv("SOCIAL_BGM_URL", "")).strip()
     if not location:
         return None
@@ -96,6 +102,54 @@ def load_background_music(location: str | None = None, session=requests) -> byte
     if len(data) > 20 * 1024 * 1024:
         raise ValueError("Background music exceeds 20 MB")
     return data
+
+
+def _load_private_r2_bgm() -> bytes | None:
+    endpoint_url = os.getenv("R2_ENDPOINT_URL", "").strip()
+    access_key_id = os.getenv("R2_ACCESS_KEY_ID", "").strip()
+    secret_access_key = os.getenv("R2_SECRET_ACCESS_KEY", "").strip()
+    bucket = os.getenv("R2_BUCKET_NAME", "").strip()
+    if not all((endpoint_url, access_key_id, secret_access_key, bucket)):
+        return None
+    root = os.getenv("R2_SOCIAL_PREFIX", "social").strip().strip("/")
+    suffix = os.getenv(
+        "SOCIAL_PRIVATE_BGM_R2_KEY", "private-assets/bgm/escort.mp3.enc"
+    ).strip().strip("/")
+    object_key = "/".join(part for part in (root, suffix) if part)
+
+    import boto3
+    from botocore.config import Config as BotoConfig
+    from botocore.exceptions import ClientError
+
+    client = boto3.client(
+        "s3",
+        endpoint_url=endpoint_url,
+        aws_access_key_id=access_key_id,
+        aws_secret_access_key=secret_access_key,
+        region_name="auto",
+        config=BotoConfig(connect_timeout=5, read_timeout=30, retries={"max_attempts": 2}),
+    )
+    try:
+        encrypted = client.get_object(Bucket=bucket, Key=object_key)["Body"].read()
+    except ClientError as exc:
+        status_code = exc.response.get("ResponseMetadata", {}).get("HTTPStatusCode")
+        if status_code == 404:
+            return None
+        raise
+    try:
+        audio = Fernet(_private_bgm_key(secret_access_key)).decrypt(encrypted)
+    except InvalidToken as exc:
+        raise RuntimeError("Private background music could not be decrypted") from exc
+    if not audio.startswith((b"ID3", b"\xff")):
+        raise RuntimeError("Private background music is not an MP3")
+    return audio
+
+
+def _private_bgm_key(secret_access_key: str) -> bytes:
+    digest = hashlib.sha256(
+        f"daily-trivia-private-bgm-v1:{secret_access_key}".encode("utf-8")
+    ).digest()
+    return base64.urlsafe_b64encode(digest)
 
 
 def load_promo_video(location: str | None = None, session=requests) -> bytes | None:

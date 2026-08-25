@@ -46,8 +46,11 @@ SOCIAL_TTS_PROVIDER=aivis
 AIVIS_API_KEY=...
 AIVIS_MODEL_UUID=47e53151-a378-46f3-abee-ce13aa07feb1
 AIVIS_STYLE_NAME=ノーマル
+AIVIS_SELECTED_STYLE=Surprise
 AIVIS_HOOK_STYLE_NAME=Surprise
 ```
+
+標準運用では選定済みの`Surprise`を全編へ利用します。`AIVIS_STYLE_NAME`は低レベルクライアントのフォールバック設定です。
 
 無料クレジットで声を決める間は、動画をレンダリングせず試聴APIを使います。指定したコンテンツの冒頭2場面だけを合成し、MP3をR2へ保存します。1回のリクエストは最大180文字、3スタイルまでです。
 
@@ -73,6 +76,8 @@ SOCIAL_BGM_URL=https://your-public-r2.example/social/assets/bgm/main-loop.mp3
 ```
 
 設定すると全動画で同じ曲をループし、ナレーションの10%の音量で自動ミックスします。未設定でも動画生成は成功します。TikTokなど各媒体のアプリ内楽曲をダウンロードして他媒体へ転用しないでください。
+
+現在の標準曲はDOVA-SYNDROMEの「Escort」（もっぴーさうんど）です。DOVAの再配布禁止条件を守るため、元MP3はR2上で暗号化し、Render内でのみ復号して完成動画へミックスします。公開R2 URLで元音源を配信しません。
 
 ## 毎日雑学への誘導
 

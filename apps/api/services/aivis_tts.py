@@ -128,10 +128,15 @@ def generate_aivis_narration(
     style_name: str | None = None,
 ) -> bytes:
     client = client or AivisTTSClient()
-    hook_style = style_name or os.getenv("AIVIS_HOOK_STYLE_NAME", "").strip() or None
+    selected_style = (
+        style_name
+        or os.getenv("AIVIS_SELECTED_STYLE", "").strip()
+        or "Surprise"
+    )
+    hook_style = os.getenv("AIVIS_HOOK_STYLE_NAME", "").strip() or selected_style
     return client.synthesize(
         build_narration_ssml(lines, style_name=hook_style),
-        style_name=style_name,
+        style_name=selected_style,
     )
 
 
