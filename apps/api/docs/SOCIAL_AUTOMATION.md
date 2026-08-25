@@ -16,6 +16,14 @@ GitHub Actionsの`social-video-review.yml`は毎日1回`run-due`を呼びます�
 - Actions variable `SOCIAL_AUTOMATION_URL`: `https://daily-trivia-e7ge.onrender.com`
 - Actions secret `SOCIAL_AUTOMATION_SECRET`: Renderの同名環境変数と同じ値
 
+## X・Threadsの毎日投稿
+
+動画とは別に、`run-due-text`が24時間に最大1件の共通本文を作ります。文章は「具体的な引き→答え→理由または意味」までを280ウェイト内で完結させ、XとThreadsに完全に同じ文章を使います。問いかけだけで答えがない文章は品質検査で作り直します。
+
+画像生成は行わず、雑学DBの既存画像を1枚共通で添付します。公開画像URLのある未使用雑学だけを選ぶため、新たな画像料金はかかりません。Web事実確認と本文生成のAI料金は1日1回分かかります。
+
+X APIは従量課金で、公式価格のContent Createは1リクエス`$0.015`です。画像アップロードと投稿作成を合わせ、毎日運用のX API料金は月`$0.45〜0.90`程度を見込みます。Developer Consoleで月間上限を設定してください。
+
 ## 安全な初期状態
 
 すべての実投稿は既定で無効です。認証情報を設定したうえで、対応するフラグを`true`にした媒体だけが投稿されます。
@@ -183,6 +191,7 @@ python -m scripts.social.run_social_pipeline poll-video VIDEO_JOB_ID
 ```text
 POST /internal/social/prepare
 POST /internal/social/run-due
+POST /internal/social/run-due-text
 GET  /internal/social/jobs
 POST /internal/social/content/{id}/regenerate
 POST /internal/social/content/{id}/voice-previews

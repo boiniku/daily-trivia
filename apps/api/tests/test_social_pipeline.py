@@ -17,17 +17,21 @@ from services.kling import KlingClient, KlingTask
 from services.seedance import SeedanceClient, SeedanceTask
 from services.social_content import (
     build_social_prompt,
+    build_shared_text_prompt,
     generate_social_content,
     normalize_social_content,
     script_quality_issues,
+    shared_text_quality_issues,
     trim_for_x,
     x_weighted_length,
 )
 from services.static_video import compose_static_video, _fit_scene_durations_to_audio
 from services.aivis_tts import AivisTTSClient, build_narration_ssml, generate_aivis_narration
 from services.story_patterns import select_story_pattern
+from services.social_publishers import ThreadsTextPublisher, XTextPublisher
 from services.social_pipeline import (
     approve_content_job,
+    create_daily_text_job,
     create_content_job,
     poll_seedance_job,
     poll_kling_job,
@@ -213,6 +217,46 @@ class FakePublisher:
         return SimpleNamespace(remote_post_id="remote-1", remote_post_url="https://example.com/post")
 
 
+class FakePublishResponse:
+    def __init__(self, data, *, content=b"", content_type="application/json"):
+        self._data = data
+        self.content = content
+        self.headers = {"content-type": content_type}
+
+    def raise_for_status(self):
+        return None
+
+    def json(self):
+        return self._data
+
+
+class FakeXPublishSession:
+    def __init__(self, image_data):
+        self.image_data = image_data
+        self.requests = []
+
+    def get(self, url, **kwargs):
+        self.requests.append(("GET", url, kwargs))
+        return FakePublishResponse({}, content=self.image_data, content_type="image/png")
+
+    def post(self, url, **kwargs):
+        self.requests.append(("POST", url, kwargs))
+        if url.endswith("/media/upload"):
+            return FakePublishResponse({"data": {"id": "media-1"}})
+        return FakePublishResponse({"data": {"id": "post-1"}})
+
+
+class FakeThreadsPublishSession:
+    def __init__(self):
+        self.requests = []
+
+    def post(self, url, **kwargs):
+        self.requests.append(("POST", url, kwargs))
+        if url.endswith("/threads_publish"):
+            return FakePublishResponse({"id": "thread-1"})
+        return FakePublishResponse({"id": "container-1"})
+
+
 class FakeInstagramPublisher:
     def __init__(self):
         self.submissions = []
@@ -372,6 +416,36 @@ class SocialPipelineTests(unittest.TestCase):
         self.assertEqual(audio, b"audio")
         self.assertEqual(client.style_name, "Surprise")
 
+    def test_x_publisher_uploads_image_and_attaches_media_id(self):
+        source = BytesIO()
+        Image.new("RGB", (320, 480), "teal").save(source, format="PNG")
+        session = FakeXPublishSession(source.getvalue())
+        publisher = XTextPublisher("token", session=session)
+
+        result = publisher.publish("完結した雑学です。", "https://cdn.example/image.png", "画像説明")
+
+        self.assertEqual(result.remote_post_id, "post-1")
+        upload_request = session.requests[1]
+        post_request = session.requests[2]
+        self.assertTrue(upload_request[1].endswith("/media/upload"))
+        self.assertEqual(post_request[2]["json"]["media"]["media_ids"], ["media-1"])
+
+    def test_threads_publisher_creates_and_publishes_image_container(self):
+        session = FakeThreadsPublishSession()
+        publisher = ThreadsTextPublisher("token", "user-1", session=session)
+
+        result = publisher.publish(
+            "完結した雑学です。",
+            "雑学",
+            "https://cdn.example/image.png",
+            "画像説明",
+        )
+
+        self.assertEqual(result.remote_post_id, "thread-1")
+        self.assertEqual(session.requests[0][2]["params"]["media_type"], "IMAGE")
+        self.assertEqual(session.requests[0][2]["params"]["image_url"], "https://cdn.example/image.png")
+        self.assertTrue(session.requests[1][1].endswith("/threads_publish"))
+
     def test_normalization_clamps_seedance_duration_and_adds_guard(self):
         content = sample_content()
         content["video"]["visual_prompts"][1]["duration"] = 50
@@ -385,6 +459,7 @@ class SocialPipelineTests(unittest.TestCase):
         self.assertEqual(normalized["video"]["subtitles"][0], "心臓はいくつ？")
         self.assertGreaterEqual(sum(item["duration"] for item in normalized["video"]["scenes"]), 18)
         self.assertEqual(normalized["video"]["scenes"][1]["motion"], "pan_left")
+        self.assertEqual(normalized["x"]["text"], normalized["threads"]["text"])
 
     def test_quality_check_rejects_contextless_hook_and_overlong_scene(self):
         content = sample_scene_content()
@@ -443,6 +518,40 @@ class SocialPipelineTests(unittest.TestCase):
         issues = script_quality_issues(content, "タコ")
 
         self.assertTrue(any("硬い解説口調" in issue for issue in issues))
+
+    def test_shared_text_requires_an_explicit_answer_and_explanation(self):
+        research = {
+            "subject": "タコ",
+            "verified_fact": "タコの心臓は三つある",
+        }
+        vague = {
+            "text": "タコの心臓には、とても意外な秘密があります。知っていましたか？ #雑学",
+            "answer": "タコの心臓は三つあります。",
+            "alt_text": "海中を泳ぐタコの写真",
+        }
+
+        issues = shared_text_quality_issues(vague, research)
+
+        self.assertTrue(any("答えを明言" in issue for issue in issues))
+        self.assertTrue(any("問いかけで終わらず" in issue for issue in issues))
+
+    def test_shared_text_prompt_uses_one_complete_post_for_both_platforms(self):
+        research = {
+            "subject": "タコ",
+            "common_misconception": "心臓は一つ",
+            "verified_fact": "心臓は三つ",
+            "explanation": "二つはえらへ血液を送る",
+            "supporting_details": [],
+            "caveats": [],
+            "visual_anchors": ["タコ"],
+            "sources": ["https://example.com"],
+        }
+
+        prompt = build_shared_text_prompt(self.trivia, research)
+
+        self.assertIn("XとThreadsの両方へそのまま投稿する共通本文", prompt)
+        self.assertIn("結論を明言", prompt)
+        self.assertIn("問いかけたまま答えを伏せて終わらない", prompt)
 
     def test_content_generation_researches_then_writes_script(self):
         research = {
@@ -543,7 +652,7 @@ class SocialPipelineTests(unittest.TestCase):
         first = create_content_job(self.db, self.trivia.id, generator=lambda trivia: sample_content())
         second = create_content_job(self.db, self.trivia.id, generator=lambda trivia: sample_content())
         self.assertEqual(first.id, second.id)
-        self.assertEqual(len(first.publish_jobs), 4)
+        self.assertEqual(len(first.publish_jobs), 2)
         self.assertEqual(len(first.video_jobs), 1)
         self.assertEqual(first.video_jobs[0].provider, "static")
 
@@ -743,8 +852,17 @@ class SocialPipelineTests(unittest.TestCase):
         )
 
     def test_approved_text_jobs_publish_once(self):
-        content_job = create_content_job(self.db, self.trivia.id, generator=lambda trivia: sample_content())
-        approve_content_job(self.db, content_job.id)
+        self.trivia.image_url = "https://cdn.example/octopus.png"
+        self.db.commit()
+        text = "タコの心臓は一つではありません。実は三つあります。二つがえらへ血液を送ります。 #雑学"
+        content_job = create_daily_text_job(
+            self.db,
+            generator=lambda trivia: {
+                "x": {"text": text},
+                "threads": {"text": text, "topic_tag": "雑学"},
+                "shared_image": {"url": trivia.image_url, "alt_text": "海中にいるタコの画像"},
+            },
+        )
         x = FakePublisher()
         threads = FakePublisher()
         completed = publish_due_text_jobs(
@@ -768,6 +886,39 @@ class SocialPipelineTests(unittest.TestCase):
             ),
             [],
         )
+
+    def test_daily_text_job_reuses_one_image_for_x_and_threads(self):
+        self.trivia.image_url = "https://cdn.example/octopus.png"
+        self.db.commit()
+        shared_text = (
+            "タコの心臓は一つでは足りません。実は三つあります。"
+            "二つがえらへ、残る一つが全身へ血液を送ります。 #雑学"
+        )
+        content = {
+            "automation": {"mode": "daily_text"},
+            "x": {"text": shared_text},
+            "threads": {"text": shared_text, "topic_tag": "雑学"},
+            "shared_image": {
+                "url": self.trivia.image_url,
+                "alt_text": "海中にいるタコの姿を撮影した画像",
+            },
+        }
+        job = create_daily_text_job(self.db, generator=lambda trivia: content)
+        x = FakePublisher()
+        threads = FakePublisher()
+
+        completed = publish_due_text_jobs(
+            self.db,
+            enabled_platforms={"x", "threads"},
+            publishers={"x": x, "threads": threads},
+            content_job_id=job.id,
+        )
+
+        self.assertEqual(job.status, "approved")
+        self.assertEqual(job.video_jobs, [])
+        self.assertEqual(len(completed), 2)
+        self.assertEqual(x.calls[0][1], self.trivia.image_url)
+        self.assertEqual(threads.calls[0][2], self.trivia.image_url)
 
     def test_line_review_contains_video_and_explicit_approval(self):
         content_job = create_content_job(self.db, self.trivia.id, generator=lambda trivia: sample_content())

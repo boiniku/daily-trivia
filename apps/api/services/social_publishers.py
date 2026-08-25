@@ -1,7 +1,10 @@
+import base64
 import os
 from dataclasses import dataclass
+from io import BytesIO
 
 import requests
+from PIL import Image
 
 
 @dataclass(frozen=True)
@@ -18,14 +21,49 @@ class XTextPublisher:
         if not self.access_token:
             raise RuntimeError("X_ACCESS_TOKEN is not configured")
 
-    def publish(self, text: str) -> PublishResult:
+    def publish(
+        self,
+        text: str,
+        image_url: str | None = None,
+        alt_text: str | None = None,
+    ) -> PublishResult:
+        media_ids = []
+        if image_url:
+            image_response = self.session.get(image_url, timeout=(10, 30))
+            image_response.raise_for_status()
+            image_data, media_type = _x_ready_image(
+                image_response.content,
+                image_response.headers.get("content-type", ""),
+            )
+            upload_response = self.session.post(
+                "https://api.x.com/2/media/upload",
+                headers={
+                    "Authorization": f"Bearer {self.access_token}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "media": base64.b64encode(image_data).decode("ascii"),
+                    "media_category": "tweet_image",
+                    "media_type": media_type,
+                    "shared": False,
+                },
+                timeout=(10, 60),
+            )
+            upload_response.raise_for_status()
+            media_id = str((upload_response.json().get("data") or {}).get("id", ""))
+            if not media_id:
+                raise RuntimeError("X did not return a media id")
+            media_ids.append(media_id)
+        payload = {"text": text, "made_with_ai": True}
+        if media_ids:
+            payload["media"] = {"media_ids": media_ids}
         response = self.session.post(
             "https://api.x.com/2/tweets",
             headers={
                 "Authorization": f"Bearer {self.access_token}",
                 "Content-Type": "application/json",
             },
-            json={"text": text},
+            json=payload,
             timeout=(10, 30),
         )
         response.raise_for_status()
@@ -54,12 +92,23 @@ class ThreadsTextPublisher:
         if not self.access_token or not self.user_id:
             raise RuntimeError("THREADS_ACCESS_TOKEN and THREADS_USER_ID are required")
 
-    def publish(self, text: str, topic_tag: str | None = None) -> PublishResult:
+    def publish(
+        self,
+        text: str,
+        topic_tag: str | None = None,
+        image_url: str | None = None,
+        alt_text: str | None = None,
+    ) -> PublishResult:
         params = {
-            "media_type": "TEXT",
+            "media_type": "IMAGE" if image_url else "TEXT",
             "text": text,
-            "auto_publish_text": "true",
         }
+        if image_url:
+            params["image_url"] = image_url
+            if alt_text:
+                params["alt_text"] = alt_text
+        else:
+            params["auto_publish_text"] = "true"
         if topic_tag:
             params["topic_tag"] = topic_tag
         response = self.session.post(
@@ -72,8 +121,36 @@ class ThreadsTextPublisher:
         raw = response.json()
         post_id = str(raw.get("id", ""))
         if not post_id:
-            raise RuntimeError("Threads did not return a post id")
-        return PublishResult(post_id, None, raw)
+            raise RuntimeError("Threads did not return a container id")
+        if not image_url:
+            return PublishResult(post_id, None, raw)
+        publish_response = self.session.post(
+            f"https://graph.threads.net/{self.api_version}/{self.user_id}/threads_publish",
+            headers={"Authorization": f"Bearer {self.access_token}"},
+            params={"creation_id": post_id},
+            timeout=(10, 30),
+        )
+        publish_response.raise_for_status()
+        published_raw = publish_response.json()
+        published_id = str(published_raw.get("id", ""))
+        if not published_id:
+            raise RuntimeError("Threads did not return a published post id")
+        return PublishResult(published_id, None, published_raw)
+
+
+def _x_ready_image(data: bytes, content_type: str) -> tuple[bytes, str]:
+    normalized_type = content_type.split(";", 1)[0].strip().lower()
+    if normalized_type in {"image/jpeg", "image/png", "image/webp"} and len(data) <= 5 * 1024 * 1024:
+        return data, normalized_type
+    with Image.open(BytesIO(data)) as source:
+        image = source.convert("RGB")
+        image.thumbnail((2048, 2048), Image.Resampling.LANCZOS)
+        output = BytesIO()
+        image.save(output, format="JPEG", quality=85, optimize=True)
+        ready = output.getvalue()
+    if len(ready) > 5 * 1024 * 1024:
+        raise ValueError("Image remains larger than X's 5 MB limit")
+    return ready, "image/jpeg"
 
 
 class InstagramReelPublisher:

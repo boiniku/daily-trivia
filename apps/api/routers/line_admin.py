@@ -409,7 +409,11 @@ async def line_webhook(request: Request, background_tasks: BackgroundTasks):
                             reply_message(reply_token, [_text_message("この動画はすでに承認済みです。")])
                             continue
                         job = approve_content_job(db, content_job_id)
-                        enabled = configured_text_platforms() | configured_video_platforms()
+                        configured = configured_text_platforms() | configured_video_platforms()
+                        enabled = {
+                            item.platform for item in job.publish_jobs
+                            if item.platform in configured
+                        }
                         if enabled:
                             names = ", ".join(sorted(enabled))
                             reply_message(

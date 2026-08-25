@@ -69,6 +69,12 @@ class SocialDraft(StrictModel):
     video: VideoDraft
 
 
+class SharedTextDraft(StrictModel):
+    text: str
+    answer: str
+    alt_text: str
+
+
 def x_weighted_length(text: str) -> int:
     """Close server-side guard for X's weighted 280-character limit."""
     total = 0
@@ -175,11 +181,72 @@ DBの元タイトル・本文・言い回しは参照せず、模倣もしない
 - visual_promptsはSeedance用に2本、各8秒で作る
 
 投稿の条件:
-- Xはハッシュタグ込みで日本語120文字程度、280ウェイト以内
-- Threadsは結論、短い説明、自然な問いかけを含める
+- Xはハッシュタグ込みで日本語120文字程度、280ウェイト以内。引き、結論、理由まで完結させる
+- ThreadsはXと完全に同じ本文にする。問いかけたまま答えを伏せて終わらない
 - InstagramとTikTokのhashtagsは各2〜4個にする
 {feedback}
 """.strip()
+
+
+def build_shared_text_prompt(
+    trivia: Any,
+    research: dict,
+    quality_feedback: list[str] | None = None,
+) -> str:
+    feedback = ""
+    if quality_feedback:
+        feedback = "\n前回案の問題点。すべて修正してください:\n- " + "\n- ".join(quality_feedback)
+    return f"""
+あなたは、短い文章だけで雑学を面白く伝えるSNS編集者です。
+次の調査済み事実だけを根拠に、XとThreadsの両方へそのまま投稿する共通本文を日本語で作ってください。
+DB本文の言い換えではなく、初見の人が一読で「何が意外で、答えは何で、なぜそうなるか」まで理解できる順番へ再構成してください。
+
+調査済み事実メモ:
+{json.dumps(research, ensure_ascii=False, indent=2)}
+
+条件:
+- 丁寧なです・ます調を保つが、ニュース見出しや教科書ではなく、話がうまい友人の自然な文章にする
+- 全体をおよそ70〜130文字、Xの280ウェイト以内に収める
+- 1文目はsubjectを明記し、思い込みとのズレや具体的な違和感で続きを読みたくさせる
+- 2文目までにverified_factの結論を明言する。問いかけたまま答えを伏せて終わらない
+- 最後はexplanationまたはsupporting_detailsから理由、仕組み、身近な意味のどれか一つを具体的に伝える
+- 「意外です」「秘密があります」だけの抽象的な煽り、過剰な驚き、ダジャレ、ネットスラングは禁止
+- 「結論として」「説明すると」「〜ということです」のような硬い解説口調は禁止
+- 末尾を「知っていましたか？」などの問いかけだけにせず、読み手が人へ話せる知識を残す
+- 事実を2〜3文で完結させ、同じ内容を言い換えて繰り返さない
+- ハッシュタグは末尾に「#雑学」一つだけ付ける
+- answerには、投稿内でそのまま使った結論の一文を句読点込みで完全一致させる
+- alt_textは添付画像の説明として、subjectを含む20〜60文字の客観的な日本語にする
+{feedback}
+""".strip()
+
+
+def shared_text_quality_issues(data: dict, research: dict) -> list[str]:
+    text = str(data.get("text", "")).strip()
+    answer = str(data.get("answer", "")).strip()
+    alt_text = str(data.get("alt_text", "")).strip()
+    subject = str(research.get("subject", "")).strip()
+    issues = []
+    if subject and subject not in text:
+        issues.append(f"本文に対象名「{subject}」を明記してください")
+    if not answer or answer not in text:
+        issues.append("answerの結論文を本文内に完全一致で入れ、答えを明言してください")
+    plain_text = re.sub(r"\s*#\S+\s*$", "", text).strip()
+    if plain_text.endswith(("？", "?")):
+        issues.append("問いかけで終わらず、答えや意味まで言い切ってください")
+    if len(_spoken_text(plain_text)) < 45:
+        issues.append("本文を短くしすぎず、答えに加えて理由または意味まで説明してください")
+    if x_weighted_length(text) > 280:
+        issues.append("本文をXの280ウェイト以内にしてください")
+    if sum(plain_text.count(mark) for mark in ("。", "！", "？")) < 2:
+        issues.append("2〜3文で、引き・答え・理由が読み分けられる文章にしてください")
+    if any(phrase in text for phrase in ("意外です", "秘密があります", "結論として", "説明すると")):
+        issues.append("抽象的な煽りや硬い解説口調を避け、具体的な事実を自然に説明してください")
+    if subject and subject not in alt_text:
+        issues.append(f"alt_textに対象名「{subject}」を入れてください")
+    if not 20 <= len(alt_text) <= 60:
+        issues.append("alt_textを20〜60文字にしてください")
+    return issues
 
 
 def normalize_social_content(data: dict) -> dict:
@@ -193,8 +260,8 @@ def normalize_social_content(data: dict) -> dict:
     data["x"]["text"] = trim_for_x(str(data["x"].get("text", "")))
     if not data["x"]["text"]:
         raise ValueError("X text is empty")
-    if not str(data["threads"].get("text", "")).strip():
-        raise ValueError("Threads text is empty")
+    # X and Threads intentionally share one fully self-contained explanation.
+    data["threads"]["text"] = data["x"]["text"]
 
     video = data["video"]
     pattern = str(video.get("story_pattern", "classic_reveal")).strip()
@@ -505,3 +572,90 @@ def generate_social_content(trivia: Any, client: OpenAI | None = None) -> dict:
         "estimated_cost_usd": _estimated_generation_cost(usage),
     }
     return draft
+
+
+def generate_shared_text_content(trivia: Any, client: OpenAI | None = None) -> dict:
+    """Research and write one complete daily post shared by X and Threads."""
+    api_key = os.getenv("OPENAI_API_KEY", "").strip()
+    if client is None:
+        if not api_key:
+            raise RuntimeError("OPENAI_API_KEY is not configured")
+        client = OpenAI(api_key=api_key)
+    model = os.getenv("SOCIAL_CONTENT_MODEL", "gpt-5.6-luna").strip()
+    research_response = client.responses.parse(
+        model=model,
+        tools=[{
+            "type": "web_search",
+            "search_context_size": os.getenv("SOCIAL_RESEARCH_SEARCH_CONTEXT_SIZE", "low"),
+            "user_location": {
+                "type": "approximate",
+                "country": "JP",
+                "timezone": "Asia/Tokyo",
+            },
+        }],
+        tool_choice="required",
+        max_tool_calls=_max_research_calls(),
+        include=["web_search_call.action.sources"],
+        reasoning={"effort": "low"},
+        max_output_tokens=3000,
+        text_format=ResearchBrief,
+        input=build_research_prompt(trivia),
+    )
+    research = _parsed_response(research_response, "Social text research").model_dump()
+    sources = _web_source_urls(research_response)
+    if not sources:
+        sources = [str(item).strip() for item in research.get("sources", [])]
+    research["sources"] = [item for item in sources if item.startswith(("http://", "https://"))][:8]
+    if not research["sources"]:
+        raise RuntimeError("Social text research returned no source URLs")
+
+    responses = [research_response]
+    text_response = client.responses.parse(
+        model=model,
+        reasoning={"effort": "low"},
+        max_output_tokens=1200,
+        text_format=SharedTextDraft,
+        input=build_shared_text_prompt(trivia, research),
+    )
+    draft = _parsed_response(text_response, "Social shared text").model_dump()
+    responses.append(text_response)
+    issues = shared_text_quality_issues(draft, research)
+    repaired = False
+    if issues:
+        repair_response = client.responses.parse(
+            model=model,
+            reasoning={"effort": "low"},
+            max_output_tokens=1200,
+            text_format=SharedTextDraft,
+            input=build_shared_text_prompt(trivia, research, issues),
+        )
+        draft = _parsed_response(repair_response, "Social shared text repair").model_dump()
+        responses.append(repair_response)
+        repaired = True
+        remaining = shared_text_quality_issues(draft, research)
+        if remaining:
+            raise RuntimeError("Social shared text quality check failed: " + "; ".join(remaining))
+
+    text = trim_for_x(draft["text"])
+    usage = {"input_tokens": 0, "output_tokens": 0, "web_search_calls": 0}
+    for response in responses:
+        item_usage = _response_usage(response)
+        for key in usage:
+            usage[key] += item_usage[key]
+    return {
+        "automation": {"mode": "daily_text"},
+        "x": {"text": text},
+        "threads": {"text": text, "topic_tag": "雑学"},
+        "shared_image": {
+            "url": str(getattr(trivia, "image_url", "") or "").strip(),
+            "alt_text": draft["alt_text"],
+        },
+        "post_meta": {"answer": draft["answer"]},
+        "research": research,
+        "generation_meta": {
+            "model": model,
+            **usage,
+            "repaired": repaired,
+            "estimated_cost_usd": _estimated_generation_cost(usage),
+        },
+    }

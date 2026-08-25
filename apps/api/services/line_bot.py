@@ -231,15 +231,11 @@ def social_review_messages(content_job: SocialContentJob, video_job: SocialVideo
     content = content_job.content_json or {}
     instagram = content.get("instagram") or {}
     tiktok = content.get("tiktok") or {}
-    x_content = content.get("x") or {}
-    threads = content.get("threads") or {}
     video = content.get("video") or {}
     title = (content_job.trivia.title or f"動画 #{content_job.id}")[:80]
     narration = " ".join(str(item).strip() for item in video.get("narration", []) if str(item).strip())
     detail_text = (
         f"【脚本】\n{narration}\n\n"
-        f"【X】\n{x_content.get('text', '')}\n\n"
-        f"【Threads】\n{threads.get('text', '')}\n\n"
         f"【Instagram】\n{instagram.get('caption', '')}\n\n"
         f"【TikTok】\n{tiktok.get('caption', '')}"
     )[:5000]
@@ -255,7 +251,7 @@ def social_review_messages(content_job: SocialContentJob, video_job: SocialVideo
         {
             "type": "text",
             "text": (
-                "承認すると、有効化済みのX・Threads・Instagram・TikTokへ投稿を開始します。"
+                "承認すると、有効化済みのInstagram・TikTokへ動画投稿を開始します。"
                 f"\nTikTok公開範囲: {os.getenv('TIKTOK_PRIVACY_LEVEL', 'SELF_ONLY')}"
             ),
             "size": "xs",

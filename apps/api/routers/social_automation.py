@@ -10,6 +10,7 @@ from models import SocialContentJob, SocialPublishJob, SocialVideoJob
 from services.social_pipeline import (
     STATIC_RENDER_VERSION,
     approve_content_job,
+    create_daily_text_job,
     create_content_job,
     poll_video_job,
     publish_due_text_jobs,
@@ -151,6 +152,42 @@ def run_due_social_content(
             "status": "review",
             "content_job_id": content_job.id,
             "video_job": _video_job_response(video_job),
+        }
+    finally:
+        db.close()
+
+
+@router.post("/run-due-text")
+def run_due_social_text(
+    authorization: str | None = Header(default=None),
+):
+    """Create and publish at most one shared X/Threads image post per day."""
+    _authorize(authorization)
+    db = SessionLocal()
+    try:
+        # Resume a previously queued post first, without creating a duplicate.
+        publish_due_text_jobs(db)
+        latest = (
+            db.query(SocialContentJob)
+            .filter(~SocialContentJob.video_jobs.any())
+            .order_by(SocialContentJob.created_at.desc())
+            .first()
+        )
+        interval_hours = max(1, min(int(os.getenv("SOCIAL_TEXT_INTERVAL_HOURS", "24")), 168))
+        if latest and latest.created_at > datetime.utcnow() - timedelta(hours=interval_hours):
+            return {
+                "status": "skipped",
+                "reason": "interval_not_elapsed",
+                "content_job_id": latest.id,
+                "next_at": (latest.created_at + timedelta(hours=interval_hours)).isoformat(),
+            }
+        job = create_daily_text_job(db)
+        published = publish_due_text_jobs(db, content_job_id=job.id)
+        db.refresh(job)
+        return {
+            "status": "published" if published else "queued",
+            "content_job": _content_job_response(job),
+            "published_job_ids": [item.id for item in published],
         }
     finally:
         db.close()

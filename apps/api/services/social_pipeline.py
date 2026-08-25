@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 from models import SocialContentJob, SocialPublishJob, SocialVideoJob, Trivia
 from services.kling import KlingClient, download_kling_video
 from services.seedance import SeedanceClient
-from services.social_content import generate_social_content
+from services.social_content import generate_shared_text_content, generate_social_content
 from services.social_publishers import (
     InstagramReelPublisher,
     ThreadsTextPublisher,
@@ -60,6 +60,55 @@ def select_unused_trivia(db: Session) -> Trivia | None:
     )
 
 
+def select_unused_trivia_with_image(db: Session) -> Trivia | None:
+    used_ids = db.query(SocialContentJob.trivia_id)
+    return (
+        db.query(Trivia)
+        .filter(
+            ~Trivia.id.in_(used_ids),
+            Trivia.image_url.isnot(None),
+            Trivia.image_url.like("http%"),
+        )
+        .order_by(Trivia.hee_count.desc(), Trivia.id.asc())
+        .first()
+    )
+
+
+def create_daily_text_job(
+    db: Session,
+    *,
+    generator: Callable = generate_shared_text_content,
+    scheduled_at: datetime | None = None,
+) -> SocialContentJob:
+    trivia = select_unused_trivia_with_image(db)
+    if trivia is None:
+        raise ValueError("No unused trivia with a public image is available")
+    content = generator(trivia)
+    image_url = str((content.get("shared_image") or {}).get("url") or "").strip()
+    if not image_url.startswith(("http://", "https://")):
+        raise ValueError("Daily text content requires one public image URL")
+    job = SocialContentJob(
+        trivia_id=trivia.id,
+        status="approved",
+        content_json=content,
+        scheduled_at=scheduled_at,
+        approved_at=datetime.utcnow(),
+    )
+    db.add(job)
+    db.flush()
+    for platform in TEXT_PLATFORMS:
+        db.add(SocialPublishJob(
+            content_job_id=job.id,
+            platform=platform,
+            content_type="text",
+            status="queued",
+            scheduled_at=scheduled_at,
+        ))
+    db.commit()
+    db.refresh(job)
+    return job
+
+
 def create_content_job(
     db: Session,
     trivia_id: int | None = None,
@@ -103,14 +152,6 @@ def create_content_job(
         prompt_json=_video_prompt_json(video_content),
     )
     db.add(video)
-    for platform in TEXT_PLATFORMS:
-        db.add(SocialPublishJob(
-            content_job_id=job.id,
-            platform=platform,
-            content_type="text",
-            status="waiting_approval",
-            scheduled_at=scheduled_at,
-        ))
     for platform in VIDEO_PLATFORMS:
         db.add(SocialPublishJob(
             content_job_id=job.id,
@@ -168,7 +209,9 @@ def approve_content_job(db: Session, content_job_id: int) -> SocialContentJob:
     job.approved_at = datetime.utcnow()
     for publish_job in job.publish_jobs:
         if publish_job.content_type == "text" and publish_job.status == "waiting_approval":
-            publish_job.status = "queued"
+            # Legacy video jobs used to include X/Threads. The daily text lane
+            # now owns those platforms, so approving a video must not duplicate them.
+            publish_job.status = "cancelled" if job.video_jobs else "queued"
         elif publish_job.content_type == "video" and publish_job.status == "waiting_video":
             if any(video.status == "ready" for video in job.video_jobs):
                 publish_job.status = "queued"
@@ -562,13 +605,14 @@ def publish_due_text_jobs(
     now: datetime | None = None,
     enabled_platforms: set[str] | None = None,
     publishers: dict | None = None,
+    content_job_id: int | None = None,
 ) -> list[SocialPublishJob]:
     now = now or datetime.utcnow()
     enabled = configured_text_platforms() if enabled_platforms is None else enabled_platforms
     if not enabled:
         return []
     publishers = publishers or {}
-    jobs = (
+    query = (
         db.query(SocialPublishJob)
         .join(SocialContentJob)
         .filter(
@@ -578,9 +622,10 @@ def publish_due_text_jobs(
             SocialPublishJob.content_type == "text",
             or_(SocialPublishJob.scheduled_at.is_(None), SocialPublishJob.scheduled_at <= now),
         )
-        .order_by(SocialPublishJob.id.asc())
-        .all()
     )
+    if content_job_id is not None:
+        query = query.filter(SocialPublishJob.content_job_id == content_job_id)
+    jobs = query.order_by(SocialPublishJob.id.asc()).all()
     completed = []
     for job in jobs:
         job.status = "publishing"
@@ -588,12 +633,17 @@ def publish_due_text_jobs(
         db.commit()
         try:
             content = job.content_job.content_json[job.platform]
+            shared_image = job.content_job.content_json.get("shared_image") or {}
+            image_url = str(shared_image.get("url") or "").strip() or None
+            alt_text = str(shared_image.get("alt_text") or "").strip() or None
             if job.platform == "x":
                 publisher = publishers.get("x") or XTextPublisher()
-                result = publisher.publish(content["text"])
+                result = publisher.publish(content["text"], image_url, alt_text)
             elif job.platform == "threads":
                 publisher = publishers.get("threads") or ThreadsTextPublisher()
-                result = publisher.publish(content["text"], content.get("topic_tag"))
+                result = publisher.publish(
+                    content["text"], content.get("topic_tag"), image_url, alt_text
+                )
             else:
                 continue
             job.status = "published"
