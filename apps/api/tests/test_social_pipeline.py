@@ -16,6 +16,7 @@ from services.line_bot import make_line_video_preview, social_review_messages
 from services.kling import KlingClient, KlingTask
 from services.seedance import SeedanceClient, SeedanceTask
 from services.social_content import (
+    build_social_prompt,
     generate_social_content,
     normalize_social_content,
     script_quality_issues,
@@ -415,6 +416,33 @@ class SocialPipelineTests(unittest.TestCase):
         issues = script_quality_issues(content, "タコ")
 
         self.assertTrue(any("異なる角度" in issue for issue in issues))
+
+    def test_social_prompt_requests_polite_but_conversational_narration(self):
+        research = {
+            "subject": "タコ",
+            "common_misconception": "心臓は一つだと思われやすい",
+            "verified_fact": "心臓は三つある",
+            "explanation": "二つはえらへ血液を送る",
+            "supporting_details": ["残る一つは全身へ送る"],
+            "caveats": [],
+            "visual_anchors": ["タコ"],
+            "sources": ["https://example.com"],
+        }
+
+        prompt = build_social_prompt(self.trivia, research)
+
+        self.assertIn("丁寧だけれど話がうまい友人", prompt)
+        self.assertIn("敬語のです・ます調", prompt)
+        self.assertIn("思い込みと事実の差", prompt)
+        self.assertIn("結論として", prompt)
+
+    def test_quality_check_rejects_stiff_explanatory_narration(self):
+        content = sample_scene_content()
+        content["video"]["scenes"][2]["narration"] = "結論として、心臓は三つあるということです。"
+
+        issues = script_quality_issues(content, "タコ")
+
+        self.assertTrue(any("硬い解説口調" in issue for issue in issues))
 
     def test_content_generation_researches_then_writes_script(self):
         research = {

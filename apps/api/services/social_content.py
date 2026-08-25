@@ -146,6 +146,15 @@ DBの元タイトル・本文・言い回しは参照せず、模倣もしない
 - {story_pattern_instruction(story_pattern)}
 - 人気動画の固有表現はコピーせず、「冒頭で期待を作る→情報を小分けにする→回収する」という構造だけを使う
 - 動画の主役はresearch.subject一つに絞る
+- 語り手は「丁寧だけれど話がうまい友人」。敬語のです・ます調を最後まで保ち、講義・ニュース・論文の読み上げにはしない
+- 面白さは大げさな煽りや冗談ではなく、「思い込みと事実の差」「頭に浮かぶ具体的な情景」「短い文のリズム」で作る
+- 事実自体の驚きが弱い場合も誇張しない。supporting_detailsから、見た目、動き、身近な比較、次に対象を見た時の見え方を一つ選んで具体化する
+- 各シーンは一つの役割だけを持たせる。前の文を言い換えて尺を埋めず、聞くたびに情報か見方が一段進むようにする
+- revealの答えは最も短く気持ちよく言い切り、その直後の場面で理由や仕組みを具体的に説明する
+- 「実は」「ところが」「つまり」は効果がある箇所で一つだけ使い、毎シーン同じ接続語や「〜です。」を機械的に繰り返さない
+- 1シーンは原則1〜2文。声に出して一度読み、息継ぎしやすく、初見で意味を取り違えない自然な話し言葉にする
+- 「結論として」「説明すると」「〜にあたる」「極めて」「〜ということです」「ご紹介します」「〜について解説します」などの硬い解説口調は禁止
+- 内輪ノリ、ダジャレ、ネットスラング、子ども扱いする口調、馴れ馴れしいタメ口は禁止
 - 書き始める前に、common_misconceptionとverified_factの差から「最も意外な一点」を内部で選ぶ
 - hookはその意外な一点を具体的に匂わせ、映像なしでも意味が通る文章にする
 - hookにはresearch.subjectを必ず明記し、ニュースの見出しではなく友人へ話す自然な口調にする
@@ -328,6 +337,22 @@ def script_quality_issues(data: dict, subject: str) -> list[str]:
     payoff = str(scenes[-1].get("narration", ""))
     if any(phrase in payoff for phrase in ("誰かに出題", "フォローして", "知っていましたか？")):
         issues.append("最後は一般的な行動誘導ではなく、雑学の意味を短く言い直してください")
+    all_narration = " ".join(str(scene.get("narration", "")) for scene in scenes)
+    stiff_phrases = (
+        "結論として",
+        "説明すると",
+        "にあたる部分です",
+        "極めて",
+        "ということです",
+        "ご紹介します",
+        "について解説します",
+    )
+    used_stiff_phrases = [phrase for phrase in stiff_phrases if phrase in all_narration]
+    if used_stiff_phrases:
+        issues.append(
+            "硬い解説口調を避け、です・ます調の自然な会話へ直してください: "
+            + "、".join(used_stiff_phrases)
+        )
     return issues
 
 
