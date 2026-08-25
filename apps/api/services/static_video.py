@@ -2,6 +2,7 @@ import base64
 import hashlib
 import importlib.util
 import os
+import re
 import subprocess
 import tempfile
 from io import BytesIO
@@ -228,7 +229,14 @@ def compose_static_video(
         duration = max(12.0, min(45.0, len(narration_text) / 5.0 + 2.0))
         scene_durations = [duration / len(subtitles)] * len(subtitles)
         motions = ["zoom_in" if index % 2 == 0 else "pan_right" for index in range(len(subtitles))]
-    duration = sum(scene_durations)
+    intro_clip_duration = (
+        max(0.5, min(float(intro_duration), 3.0)) if intro_video_data else 0.0
+    )
+    promo_clip_duration = (
+        max(1.0, min(float(promo_duration), 15.0)) if promo_video_data else 0.0
+    )
+    fixed_duration = intro_clip_duration + promo_clip_duration
+    duration = sum(scene_durations) + fixed_duration
     images = image_data if isinstance(image_data, list) else [image_data]
     if not images or any(not item for item in images):
         raise ValueError("At least one image is required")
@@ -238,12 +246,23 @@ def compose_static_video(
 
     with tempfile.TemporaryDirectory(prefix="daily-trivia-video-") as temp_dir:
         temp = Path(temp_dir)
+        audio_path = None
+        if audio_data:
+            audio_path = temp / "narration.mp3"
+            audio_path.write_bytes(audio_data)
+            audio_duration = _media_duration_seconds(audio_path)
+            if audio_duration:
+                scene_durations = _fit_scene_durations_to_audio(
+                    scene_durations,
+                    audio_duration,
+                    fixed_duration=fixed_duration,
+                )
+                duration = sum(scene_durations) + fixed_duration
         clip_paths = []
         if intro_video_data:
             intro_path = temp / "daily-trivia-intro.mp4"
             intro_path.write_bytes(intro_video_data)
             clip_paths.append(intro_path)
-            duration += max(0.5, min(float(intro_duration), 3.0))
         for index, (raw_image, subtitle, scene_duration, motion) in enumerate(
             zip(images, subtitles, scene_durations, motions)
         ):
@@ -280,7 +299,6 @@ def compose_static_video(
             promo_path = temp / "daily-trivia-promo.mp4"
             promo_path.write_bytes(promo_video_data)
             clip_paths.append(promo_path)
-            duration += max(1.0, min(float(promo_duration), 15.0))
 
         concat_path = temp / "clips.txt"
         lines = [
@@ -294,8 +312,6 @@ def compose_static_video(
             "-i", str(concat_path),
         ]
         if audio_data:
-            audio_path = temp / "narration.mp3"
-            audio_path.write_bytes(audio_data)
             command.extend(["-i", str(audio_path)])
         if background_music_data:
             bgm_path = temp / "background-music.mp3"
@@ -319,6 +335,36 @@ def compose_static_video(
         command.append(str(output_path))
         _run_ffmpeg(command)
     return duration
+
+
+def _fit_scene_durations_to_audio(
+    scene_durations: list[float],
+    audio_duration: float,
+    *,
+    fixed_duration: float = 0.0,
+    tail_padding: float = 0.4,
+) -> list[float]:
+    """Extend visuals so the complete narration always finishes before the video."""
+    current_main = sum(scene_durations)
+    required_main = max(0.0, audio_duration + tail_padding - fixed_duration)
+    if not scene_durations or current_main >= required_main:
+        return scene_durations
+    scale = required_main / current_main
+    return [round(duration * scale, 3) for duration in scene_durations]
+
+
+def _media_duration_seconds(path: Path) -> float | None:
+    result = subprocess.run(
+        [_ffmpeg_executable(), "-hide_banner", "-i", str(path)],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    match = re.search(r"Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)", result.stderr)
+    if not match:
+        return None
+    hours, minutes, seconds = match.groups()
+    return int(hours) * 3600 + int(minutes) * 60 + float(seconds)
 
 
 def _motion_filter(motion: str, duration: float) -> str:

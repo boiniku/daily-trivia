@@ -397,6 +397,7 @@ def render_static_video_job(
     intro_video_loader: Callable = load_intro_video,
     composer: Callable = compose_static_video,
     uploader: Callable = upload_social_asset,
+    force: bool = False,
 ) -> SocialVideoJob:
     """Render the low-cost automatic video lane and archive it in R2."""
     import tempfile
@@ -405,7 +406,7 @@ def render_static_video_job(
     video_job = db.query(SocialVideoJob).filter_by(id=video_job_id).one()
     if video_job.provider != "static":
         raise ValueError("This video job is not a static video job")
-    if video_job.status == "ready" and video_job.final_video_url:
+    if video_job.status == "ready" and video_job.final_video_url and not force:
         return video_job
 
     video_job.status = "rendering"
@@ -471,6 +472,14 @@ def render_static_video_job(
         if os.getenv("SOCIAL_TTS_ENABLED", "true").lower() == "true":
             audio_data = narration_generator(narration)
         background_music_data = background_music_loader()
+        video_job.prompt_json = {
+            **(video_job.prompt_json or {}),
+            "render_meta": {
+                "tts_provider": os.getenv("SOCIAL_TTS_PROVIDER", "openai"),
+                "tts_style": os.getenv("AIVIS_SELECTED_STYLE", "Surprise"),
+                "bgm": "DOVA-SYNDROME Escort" if background_music_data else None,
+            },
+        }
 
         with tempfile.TemporaryDirectory(prefix="daily-trivia-output-") as temp_dir:
             output_path = Path(temp_dir) / f"social-video-{video_job.id}.mp4"

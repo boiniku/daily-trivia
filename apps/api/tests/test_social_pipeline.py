@@ -21,7 +21,7 @@ from services.social_content import (
     trim_for_x,
     x_weighted_length,
 )
-from services.static_video import compose_static_video
+from services.static_video import compose_static_video, _fit_scene_durations_to_audio
 from services.aivis_tts import AivisTTSClient, build_narration_ssml, generate_aivis_narration
 from services.story_patterns import select_story_pattern
 from services.social_pipeline import (
@@ -584,6 +584,49 @@ class SocialPipelineTests(unittest.TestCase):
                 )
             self.assertGreaterEqual(duration, 12)
             self.assertTrue(output_path.read_bytes().startswith(b"\x00\x00\x00"))
+
+    def test_scene_durations_expand_to_fit_complete_narration(self):
+        durations = _fit_scene_durations_to_audio(
+            [2.5, 3.5, 7.0, 6.0],
+            28.0,
+            fixed_duration=0.0,
+        )
+        self.assertGreaterEqual(sum(durations), 28.4)
+        self.assertAlmostEqual(durations[0] / durations[-1], 2.5 / 6.0, places=2)
+
+    def test_ready_static_video_can_be_force_rendered(self):
+        content_job = create_content_job(
+            self.db, self.trivia.id, generator=lambda trivia: sample_content()
+        )
+        video_job = content_job.video_jobs[0]
+        video_job.status = "ready"
+        video_job.final_video_url = "https://cdn.example/old.mp4"
+        self.db.commit()
+        uploads = []
+
+        def fake_uploader(data, content_type, extension, **kwargs):
+            uploads.append(kwargs["prefix"])
+            return f"https://cdn.example/new-{kwargs['prefix']}.{extension}"
+
+        def fake_composer(images, title, subtitles, output_path, **kwargs):
+            output_path.write_bytes(b"new-video")
+            return 30.0
+
+        rendered = render_static_video_job(
+            self.db,
+            video_job.id,
+            force=True,
+            image_generator=lambda prompt: b"image",
+            narration_generator=lambda lines: b"audio",
+            background_music_loader=lambda: b"escort",
+            promo_video_loader=lambda: None,
+            intro_video_loader=lambda: None,
+            composer=fake_composer,
+            uploader=fake_uploader,
+        )
+        self.assertEqual(rendered.final_video_url, "https://cdn.example/new-videos.mp4")
+        self.assertEqual(rendered.duration_seconds, 30.0)
+        self.assertEqual(rendered.prompt_json["render_meta"]["bgm"], "DOVA-SYNDROME Escort")
 
     def test_seedance_submit_and_poll(self):
         content_job = create_content_job(

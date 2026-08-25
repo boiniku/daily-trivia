@@ -165,12 +165,13 @@ def submit_social_video(
 @router.post("/video/{video_job_id}/render-static", status_code=status.HTTP_202_ACCEPTED)
 def render_static_social_video(
     video_job_id: int,
+    force: bool = False,
     authorization: str | None = Header(default=None),
 ):
     _authorize(authorization)
     db = SessionLocal()
     try:
-        job = render_static_video_job(db, video_job_id)
+        job = render_static_video_job(db, video_job_id, force=force)
         return _video_job_response(job)
     finally:
         db.close()
@@ -247,6 +248,7 @@ def _video_job_response(job: SocialVideoJob) -> dict:
         "thumbnail_url": job.thumbnail_url,
         "duration_seconds": job.duration_seconds,
         "error": job.error,
+        "render_meta": (job.prompt_json or {}).get("render_meta"),
     }
 
 
