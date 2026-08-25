@@ -312,6 +312,8 @@ class SocialPipelineTests(unittest.TestCase):
         ssml = build_narration_ssml(["魚 & 肉", "答えです"])
         self.assertIn("魚 &amp; 肉", ssml)
         self.assertIn('<break time="180ms"/>', ssml)
+        self.assertNotIn("<speak>", ssml)
+        self.assertTrue(ssml.startswith("<s>"))
 
     def test_aivis_error_identifies_rejected_key_without_echoing_it(self):
         client = AivisTTSClient(

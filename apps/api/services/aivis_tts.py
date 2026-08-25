@@ -115,7 +115,10 @@ def build_narration_ssml(lines: Iterable[str], *, style_name: str | None = None)
                 f"{escaped}</aivis:emotion>"
             )
         sentences.append(f"<s>{escaped}</s>")
-    return "<speak>" + '<break time="180ms"/>'.join(sentences) + "</speak>"
+    # Aivis accepts an SSML fragment directly. Unlike W3C SSML engines, its
+    # supported subset must not be wrapped in a <speak> root element; doing so
+    # can produce a valid MP3 containing silence only.
+    return '<break time="180ms"/>'.join(sentences)
 
 
 def generate_aivis_narration(
