@@ -1,0 +1,28 @@
+name: Social video review
+
+on:
+  schedule:
+    # GitHub Actions uses UTC. 01:17 UTC is 10:17 JST.
+    - cron: "17 1 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: social-video-review
+  cancel-in-progress: false
+
+jobs:
+  create-review:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Create a due video and send it to LINE
+        env:
+          SOCIAL_AUTOMATION_URL: ${{ vars.SOCIAL_AUTOMATION_URL }}
+          SOCIAL_AUTOMATION_SECRET: ${{ secrets.SOCIAL_AUTOMATION_SECRET }}
+        run: |
+          test -n "$SOCIAL_AUTOMATION_URL"
+          test -n "$SOCIAL_AUTOMATION_SECRET"
+          curl --fail-with-body --max-time 840 \
+            --request POST \
+            --header "Authorization: Bearer ${SOCIAL_AUTOMATION_SECRET}" \
+            "${SOCIAL_AUTOMATION_URL%/}/internal/social/run-due"

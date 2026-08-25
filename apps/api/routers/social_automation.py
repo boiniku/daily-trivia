@@ -1,6 +1,6 @@
 import os
 import secrets
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Header, HTTPException, status
 from pydantic import BaseModel, Field
@@ -12,10 +12,12 @@ from services.social_pipeline import (
     create_content_job,
     poll_video_job,
     publish_due_text_jobs,
+    process_due_video_jobs,
     regenerate_content_job,
     render_static_video_job,
     submit_video_job,
 )
+from services.line_bot import push_social_review
 from services.aivis_tts import generate_aivis_narration
 from services.social_storage import upload_social_asset
 
@@ -47,6 +49,24 @@ def _authorize(authorization: str | None) -> None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid authorization")
 
 
+def _send_line_review_if_needed(db, job: SocialVideoJob) -> None:
+    review_meta = dict((job.prompt_json or {}).get("line_review") or {})
+    if review_meta.get("video_url") == job.final_video_url and review_meta.get("sent_at"):
+        return
+    try:
+        recipients = push_social_review(job.content_job, job)
+        review_meta = {
+            "video_url": job.final_video_url,
+            "sent_at": datetime.utcnow().isoformat(),
+            "recipient_count": recipients,
+        }
+    except Exception as exc:
+        review_meta = {"video_url": job.final_video_url, "error": str(exc)[:500]}
+    job.prompt_json = {**(job.prompt_json or {}), "line_review": review_meta}
+    db.commit()
+    db.refresh(job)
+
+
 @router.post("/prepare", status_code=status.HTTP_201_CREATED)
 def prepare_social_content(
     request: PrepareRequest,
@@ -62,6 +82,65 @@ def prepare_social_content(
             video_mode=request.video_mode,
         )
         return _content_job_response(job)
+    finally:
+        db.close()
+
+
+@router.post("/run-due")
+def run_due_social_content(
+    authorization: str | None = Header(default=None),
+):
+    """Create at most one static video per interval and send it to LINE for review."""
+    _authorize(authorization)
+    db = SessionLocal()
+    try:
+        # Recover safely after a Render restart: only already-approved jobs are processed.
+        publish_due_text_jobs(db)
+        process_due_video_jobs(db)
+        pending_review = (
+            db.query(SocialContentJob)
+            .filter(SocialContentJob.status == "review")
+            .order_by(SocialContentJob.created_at.desc())
+            .first()
+        )
+        if pending_review:
+            video_job = next((item for item in pending_review.video_jobs if item.provider == "static"), None)
+            if video_job and video_job.status == "ready":
+                _send_line_review_if_needed(db, video_job)
+                return {
+                    "status": "skipped",
+                    "reason": "awaiting_line_review",
+                    "content_job_id": pending_review.id,
+                    "line_review": (video_job.prompt_json or {}).get("line_review"),
+                }
+            if video_job and video_job.status == "rendering":
+                return {"status": "skipped", "reason": "rendering", "content_job_id": pending_review.id}
+            if video_job:
+                video_job = render_static_video_job(db, video_job.id)
+                _send_line_review_if_needed(db, video_job)
+                return {
+                    "status": "review",
+                    "content_job_id": pending_review.id,
+                    "video_job": _video_job_response(video_job),
+                }
+
+        interval_days = max(1, min(int(os.getenv("SOCIAL_GENERATION_INTERVAL_DAYS", "4")), 31))
+        latest = db.query(SocialContentJob).order_by(SocialContentJob.created_at.desc()).first()
+        if latest and latest.created_at > datetime.utcnow() - timedelta(days=interval_days):
+            return {
+                "status": "skipped",
+                "reason": "interval_not_elapsed",
+                "content_job_id": latest.id,
+                "next_at": (latest.created_at + timedelta(days=interval_days)).isoformat(),
+            }
+        content_job = create_content_job(db, video_mode="static")
+        video_job = render_static_video_job(db, content_job.video_jobs[0].id)
+        _send_line_review_if_needed(db, video_job)
+        return {
+            "status": "review",
+            "content_job_id": content_job.id,
+            "video_job": _video_job_response(video_job),
+        }
     finally:
         db.close()
 
@@ -172,6 +251,7 @@ def render_static_social_video(
     db = SessionLocal()
     try:
         job = render_static_video_job(db, video_job_id, force=force)
+        _send_line_review_if_needed(db, job)
         return _video_job_response(job)
     finally:
         db.close()
@@ -200,6 +280,19 @@ def publish_social_text(
     try:
         jobs = publish_due_text_jobs(db)
         return {"published_job_ids": [job.id for job in jobs]}
+    finally:
+        db.close()
+
+
+@router.post("/publish-video")
+def publish_social_video(
+    authorization: str | None = Header(default=None),
+):
+    _authorize(authorization)
+    db = SessionLocal()
+    try:
+        jobs = process_due_video_jobs(db)
+        return {"processed_job_ids": [job.id for job in jobs]}
     finally:
         db.close()
 
@@ -249,6 +342,7 @@ def _video_job_response(job: SocialVideoJob) -> dict:
         "duration_seconds": job.duration_seconds,
         "error": job.error,
         "render_meta": (job.prompt_json or {}).get("render_meta"),
+        "line_review": (job.prompt_json or {}).get("line_review"),
     }
 
 

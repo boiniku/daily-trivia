@@ -9,7 +9,12 @@ from models import SocialContentJob, SocialPublishJob, SocialVideoJob, Trivia
 from services.kling import KlingClient, download_kling_video
 from services.seedance import SeedanceClient
 from services.social_content import generate_social_content
-from services.social_publishers import ThreadsTextPublisher, XTextPublisher
+from services.social_publishers import (
+    InstagramReelPublisher,
+    ThreadsTextPublisher,
+    TikTokVideoPublisher,
+    XTextPublisher,
+)
 from services.social_storage import upload_social_asset
 from services.static_video import (
     compose_static_video,
@@ -156,6 +161,8 @@ def regenerate_content_job(
 
 def approve_content_job(db: Session, content_job_id: int) -> SocialContentJob:
     job = db.query(SocialContentJob).filter_by(id=content_job_id).one()
+    if job.status == "approved":
+        return job
     job.status = "approved"
     job.approved_at = datetime.utcnow()
     for publish_job in job.publish_jobs:
@@ -164,6 +171,19 @@ def approve_content_job(db: Session, content_job_id: int) -> SocialContentJob:
         elif publish_job.content_type == "video" and publish_job.status == "waiting_video":
             if any(video.status == "ready" for video in job.video_jobs):
                 publish_job.status = "queued"
+    db.commit()
+    db.refresh(job)
+    return job
+
+
+def reject_content_job(db: Session, content_job_id: int) -> SocialContentJob:
+    job = db.query(SocialContentJob).filter_by(id=content_job_id).one()
+    if any(item.status == "published" for item in job.publish_jobs):
+        raise ValueError("A published content job cannot be rejected")
+    job.status = "rejected"
+    for publish_job in job.publish_jobs:
+        if publish_job.status != "published":
+            publish_job.status = "cancelled"
     db.commit()
     db.refresh(job)
     return job
@@ -525,6 +545,15 @@ def configured_text_platforms() -> set[str]:
     return enabled
 
 
+def configured_video_platforms() -> set[str]:
+    enabled = set()
+    if os.getenv("SOCIAL_INSTAGRAM_PUBLISH_ENABLED", "false").lower() == "true":
+        enabled.add("instagram")
+    if os.getenv("SOCIAL_TIKTOK_PUBLISH_ENABLED", "false").lower() == "true":
+        enabled.add("tiktok")
+    return enabled
+
+
 def publish_due_text_jobs(
     db: Session,
     *,
@@ -576,3 +605,89 @@ def publish_due_text_jobs(
             job.last_error = str(exc)[:2000]
         db.commit()
     return completed
+
+
+def process_due_video_jobs(
+    db: Session,
+    *,
+    now: datetime | None = None,
+    content_job_id: int | None = None,
+    enabled_platforms: set[str] | None = None,
+    publishers: dict | None = None,
+) -> list[SocialPublishJob]:
+    """Submit or advance approved asynchronous Reel/TikTok publishing jobs."""
+    now = now or datetime.utcnow()
+    enabled = configured_video_platforms() if enabled_platforms is None else enabled_platforms
+    if not enabled:
+        return []
+    publishers = publishers or {}
+    query = (
+        db.query(SocialPublishJob)
+        .join(SocialContentJob)
+        .filter(
+            SocialContentJob.status == "approved",
+            SocialPublishJob.status.in_(["queued", "publishing", "retry"]),
+            SocialPublishJob.platform.in_(enabled),
+            SocialPublishJob.content_type == "video",
+            or_(SocialPublishJob.scheduled_at.is_(None), SocialPublishJob.scheduled_at <= now),
+        )
+    )
+    if content_job_id is not None:
+        query = query.filter(SocialPublishJob.content_job_id == content_job_id)
+    jobs = query.order_by(SocialPublishJob.id.asc()).all()
+    changed = []
+    for job in jobs:
+        video = next(
+            (item for item in job.content_job.video_jobs if item.status == "ready" and item.final_video_url),
+            None,
+        )
+        if video is None:
+            continue
+        try:
+            content = job.content_job.content_json[job.platform]
+            caption = str(content.get("caption") or "").strip()
+            hashtags = [str(item).strip().lstrip("#") for item in content.get("hashtags", [])]
+            suffix = " ".join(f"#{item}" for item in hashtags if item and f"#{item}" not in caption)
+            full_caption = " ".join(item for item in (caption, suffix) if item).strip()
+            if job.platform == "instagram":
+                publisher = publishers.get("instagram") or InstagramReelPublisher()
+                if not job.remote_post_id:
+                    result = publisher.submit(video.final_video_url, full_caption)
+                    job.remote_post_id = result.remote_post_id
+                    job.status = "publishing"
+                    job.attempt_count += 1
+                else:
+                    remote_status = publisher.status(job.remote_post_id)
+                    if remote_status == "FINISHED":
+                        result = publisher.publish(job.remote_post_id)
+                        job.remote_post_id = result.remote_post_id
+                        job.status = "published"
+                        job.published_at = datetime.utcnow()
+                    elif remote_status in {"ERROR", "EXPIRED"}:
+                        raise RuntimeError(f"Instagram container status is {remote_status}")
+            elif job.platform == "tiktok":
+                publisher = publishers.get("tiktok") or TikTokVideoPublisher()
+                if not job.remote_post_id:
+                    result = publisher.submit(video.final_video_url, full_caption)
+                    job.remote_post_id = result.remote_post_id
+                    job.status = "publishing"
+                    job.attempt_count += 1
+                else:
+                    remote_status, post_id = publisher.status(job.remote_post_id)
+                    if remote_status == "PUBLISH_COMPLETE":
+                        job.remote_post_id = post_id or job.remote_post_id
+                        username = os.getenv("TIKTOK_USERNAME", "").strip().lstrip("@")
+                        if username and post_id:
+                            job.remote_post_url = f"https://www.tiktok.com/@{username}/video/{post_id}"
+                        job.status = "published"
+                        job.published_at = datetime.utcnow()
+                    elif remote_status == "FAILED":
+                        raise RuntimeError("TikTok publish status is FAILED")
+            job.last_error = None
+            changed.append(job)
+        except Exception as exc:
+            # If an external id exists, retry by polling it rather than submitting a duplicate.
+            job.status = "publishing" if job.remote_post_id else ("retry" if job.attempt_count < 3 else "failed")
+            job.last_error = str(exc)[:2000]
+        db.commit()
+    return changed

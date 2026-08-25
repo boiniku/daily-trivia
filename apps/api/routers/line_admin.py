@@ -1,5 +1,7 @@
 import html
 import json
+import os
+import time
 from types import SimpleNamespace
 from urllib.parse import parse_qs
 
@@ -8,7 +10,7 @@ from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
 from database import SessionLocal
-from models import Trivia, TriviaCandidate
+from models import SocialContentJob, Trivia, TriviaCandidate
 from services.line_bot import (
     candidate_carousel_message,
     is_allowed_user,
@@ -18,6 +20,14 @@ from services.line_bot import (
     read_editor_token,
     reply_message,
     verify_signature,
+)
+from services.social_pipeline import (
+    approve_content_job,
+    configured_text_platforms,
+    configured_video_platforms,
+    process_due_video_jobs,
+    publish_due_text_jobs,
+    reject_content_job,
 )
 from services.trivia_candidates import (
     CandidateError,
@@ -272,6 +282,39 @@ def _push_pending_candidates(user_id: str) -> None:
         db.close()
 
 
+def _social_publish_status_text(job: SocialContentJob) -> str:
+    labels = {"x": "X", "threads": "Threads", "instagram": "Instagram", "tiktok": "TikTok"}
+    rows = [f"{labels.get(item.platform, item.platform)}: {item.status}" for item in job.publish_jobs]
+    return "投稿処理の状況\n" + "\n".join(rows)
+
+
+def _publish_social_after_approval(content_job_id: int, user_id: str) -> None:
+    db = SessionLocal()
+    try:
+        publish_due_text_jobs(db)
+        enabled_video = configured_video_platforms()
+        poll_count = max(1, min(int(os.getenv("SOCIAL_VIDEO_PUBLISH_POLL_COUNT", "5")), 10))
+        poll_seconds = max(15, min(int(os.getenv("SOCIAL_VIDEO_PUBLISH_POLL_SECONDS", "60")), 60))
+        for index in range(poll_count):
+            process_due_video_jobs(db, content_job_id=content_job_id)
+            db.expire_all()
+            job = db.query(SocialContentJob).filter_by(id=content_job_id).one()
+            pending = any(
+                item.platform in enabled_video and item.status == "publishing"
+                for item in job.publish_jobs
+            )
+            if not pending or index == poll_count - 1:
+                break
+            time.sleep(poll_seconds)
+        db.expire_all()
+        job = db.query(SocialContentJob).filter_by(id=content_job_id).one()
+        push_message(user_id, [_text_message(_social_publish_status_text(job))])
+    except Exception as exc:
+        push_message(user_id, [_text_message(f"投稿処理でエラーが発生しました: {exc}")])
+    finally:
+        db.close()
+
+
 @router.post("/line/webhook")
 async def line_webhook(request: Request, background_tasks: BackgroundTasks):
     body = await request.body()
@@ -352,6 +395,50 @@ async def line_webhook(request: Request, background_tasks: BackgroundTasks):
         elif event.get("type") == "postback":
             values = parse_qs(event.get("postback", {}).get("data", ""))
             action = values.get("action", [""])[0]
+            if action in {"social_approve", "social_reject"}:
+                raw_content_id = values.get("content_job_id", [""])[0]
+                if not raw_content_id.isdigit():
+                    reply_message(reply_token, [_text_message("動画ジョブIDを確認できませんでした。")])
+                    continue
+                db = SessionLocal()
+                try:
+                    content_job_id = int(raw_content_id)
+                    if action == "social_approve":
+                        existing = db.query(SocialContentJob).filter_by(id=content_job_id).one()
+                        if existing.status == "approved":
+                            reply_message(reply_token, [_text_message("この動画はすでに承認済みです。")])
+                            continue
+                        job = approve_content_job(db, content_job_id)
+                        enabled = configured_text_platforms() | configured_video_platforms()
+                        if enabled:
+                            names = ", ".join(sorted(enabled))
+                            reply_message(
+                                reply_token,
+                                [_text_message(f"承認しました。投稿を開始します: {names}")],
+                            )
+                            background_tasks.add_task(
+                                _publish_social_after_approval,
+                                job.id,
+                                user_id,
+                            )
+                        else:
+                            reply_message(
+                                reply_token,
+                                [_text_message(
+                                    "承認しました。ただし投稿先がまだ有効化されていないため、投稿待ちにしています。"
+                                )],
+                            )
+                    else:
+                        job = reject_content_job(db, content_job_id)
+                        reply_message(
+                            reply_token,
+                            [_text_message(f"今回は投稿しません: {job.trivia.title}")],
+                        )
+                except Exception as exc:
+                    reply_message(reply_token, [_text_message(str(exc))])
+                finally:
+                    db.close()
+                continue
             raw_id = values.get("candidate_id", [""])[0]
             if not raw_id.isdigit():
                 reply_message(reply_token, [_text_message("候補IDを確認できませんでした。")])

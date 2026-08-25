@@ -1,15 +1,49 @@
 # SNS投稿自動化
 
-承認済みの`trivia`から、TikTok / Instagram向け動画と、X / Threads向けテキストを作成します。通常運用はKling 3.0の短い動画と静止画を組み合わせ、特別な投稿だけ別の動画モデルを選べる構成です。
+承認済みの`trivia`から、TikTok / Instagram向け動画と、X / Threads向けテキストを作成します。通常運用は複数の生成画像、パン・ズーム、字幕、Aivis音声、共通BGMを組み合わせた静止画動画です。外部の動画生成モデルは明示的に選んだ場合だけ使います。
+
+## LINE確認から投稿まで
+
+`render-static`で動画が完成すると、`LINE_ADMIN_USER_IDS`の管理者へ動画、投稿文、次の2ボタンが届きます。
+
+- `承認して投稿`: コンテンツを承認し、有効化済みの媒体へ投稿を開始
+- `今回は投稿しない`: 投稿ジョブを取り消し
+
+承認前の投稿ジョブは`waiting_approval`または`waiting_video`のままで、外部APIへ送信されません。LINEのWebhookは既存の`POST /line/webhook`を使います。承認後はX・Threadsを即時処理し、Instagram・TikTokは非同期処理を数回確認して、最後の状態をLINEへ返します。
+
+GitHub Actionsの`social-video-review.yml`は毎日1回`run-due`を呼びます。API側で前回から4日経ったかを判定するため、実際の生成は4日に最大1本です。完成済みのLINE確認が残っている間も新しい動画を作らず、不要な生成費を防ぎます。GitHubへ次を登録してください。
+
+- Actions variable `SOCIAL_AUTOMATION_URL`: `https://daily-trivia-e7ge.onrender.com`
+- Actions secret `SOCIAL_AUTOMATION_SECRET`: Renderの同名環境変数と同じ値
 
 ## 安全な初期状態
 
-XとThreadsへの実投稿は既定で無効です。認証情報を設定したうえで、対応するフラグを`true`にした媒体だけが投稿されます。
+すべての実投稿は既定で無効です。認証情報を設定したうえで、対応するフラグを`true`にした媒体だけが投稿されます。
 
 ```text
 SOCIAL_X_PUBLISH_ENABLED=true
 SOCIAL_THREADS_PUBLISH_ENABLED=true
+SOCIAL_INSTAGRAM_PUBLISH_ENABLED=true
+SOCIAL_TIKTOK_PUBLISH_ENABLED=true
 ```
+
+Instagramリールにはプロアカウント、`instagram_content_publish`権限、ユーザーIDとアクセストークンが必要です。
+
+```text
+INSTAGRAM_USER_ID=...
+INSTAGRAM_ACCESS_TOKEN=...
+INSTAGRAM_API_VERSION=v23.0
+```
+
+TikTokにはContent Posting API、`video.publish`権限、ユーザーアクセストークン、R2のドメインまたはURL prefixの所有確認が必要です。審査前のAPIクライアントは公開範囲が非公開に制限されるため、最初は`SELF_ONLY`で検証します。
+
+```text
+TIKTOK_ACCESS_TOKEN=...
+TIKTOK_USERNAME=...
+TIKTOK_PRIVACY_LEVEL=SELF_ONLY
+```
+
+TikTokの投稿ガイドラインは、投稿前のプレビューと明示承認に加え、共有動画への宣伝ロゴ・透かしを禁止しています。現在の固定プロモーションを含む動画でDirect Post審査を申請する前に、TikTok用だけCTAを外すか、TikTok側の承認可否を確認してください。
 
 通常の`prepare`は`static`動画ジョブを作ります。調査結果から、勘違いの反転、クイズ、名前の由来、仕組み、基本の答え明かしのいずれかを選び、4〜5シーン、18〜22秒で生成します。人気動画の固有の文章はコピーせず、冒頭で期待を作って情報を小分けにし、最後に回収する構造だけを利用します。各シーン用の縦画像を最大5枚作り、ズームや左右パン、字幕、ナレーションを付けたH.264 MP4をFFmpegで作成します。生成画像は1枚ごとにR2へ保存するため、途中で処理が失敗しても再利用できます。
 
@@ -148,6 +182,7 @@ python -m scripts.social.run_social_pipeline poll-video VIDEO_JOB_ID
 
 ```text
 POST /internal/social/prepare
+POST /internal/social/run-due
 GET  /internal/social/jobs
 POST /internal/social/content/{id}/regenerate
 POST /internal/social/content/{id}/voice-previews
@@ -156,6 +191,7 @@ POST /internal/social/video/{id}/submit
 POST /internal/social/video/{id}/poll
 POST /internal/social/video/{id}/render-static
 POST /internal/social/publish-text
+POST /internal/social/publish-video
 ```
 
 作成直後のX・Threads投稿は`waiting_approval`です。`approve`後に`queued`となり、`publish-text`の対象になります。失敗時は最大3回まで再試行します。
@@ -173,8 +209,10 @@ POST /internal/social/publish-text
 - Kling 3.0の720p・5秒・無音タスク投入、月5本制限、R2退避
 - Xテキスト投稿
 - Threadsテキスト投稿
+- LINEへの完成動画通知と、LINE上の承認・却下
+- InstagramリールとTikTok動画の非同期投稿
 - 投稿の承認、冪等性、再試行、外部投稿の明示的な有効化
 
-Instagram / TikTokへの実投稿はまだ未実装です。各媒体のAPI審査と認証情報を用意した後に追加します。
+Instagram / TikTokへの実投稿は、対応するAPI審査と認証情報を用意して明示的に有効化した後だけ動作します。
 
 画像生成にはOpenAIの画像生成APIを使用します。新形式では通常4枚生成するため、画像料金は旧形式の約4倍になります。雑学の既存画像があれば1シーン目へ再利用し、その分の生成を省略します。

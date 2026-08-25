@@ -5,11 +5,14 @@ import json
 import os
 import time
 from datetime import datetime
+from io import BytesIO
 from urllib.parse import urlencode
 
 import requests
+from PIL import Image
 
-from models import TriviaCandidate
+from models import SocialContentJob, SocialVideoJob, TriviaCandidate
+from services.social_storage import upload_social_asset
 
 
 LINE_API_BASE = "https://api.line.me/v2/bot/message"
@@ -220,3 +223,113 @@ def new_candidate_message(map_mode: bool = False) -> dict:
 
 def mark_line_sent(candidate: TriviaCandidate) -> None:
     candidate.line_sent_at = datetime.utcnow()
+
+
+def social_review_messages(content_job: SocialContentJob, video_job: SocialVideoJob) -> list[dict]:
+    if not video_job.final_video_url or not video_job.thumbnail_url:
+        raise ValueError("A completed video and thumbnail are required for LINE review")
+    content = content_job.content_json or {}
+    instagram = content.get("instagram") or {}
+    tiktok = content.get("tiktok") or {}
+    x_content = content.get("x") or {}
+    threads = content.get("threads") or {}
+    video = content.get("video") or {}
+    title = (content_job.trivia.title or f"動画 #{content_job.id}")[:80]
+    narration = " ".join(str(item).strip() for item in video.get("narration", []) if str(item).strip())
+    detail_text = (
+        f"【脚本】\n{narration}\n\n"
+        f"【X】\n{x_content.get('text', '')}\n\n"
+        f"【Threads】\n{threads.get('text', '')}\n\n"
+        f"【Instagram】\n{instagram.get('caption', '')}\n\n"
+        f"【TikTok】\n{tiktok.get('caption', '')}"
+    )[:5000]
+    body = [
+        {"type": "text", "text": title, "weight": "bold", "size": "lg", "wrap": True},
+        {
+            "type": "text",
+            "text": f"動画完成（{video_job.duration_seconds or 0:.1f}秒）",
+            "size": "sm",
+            "wrap": True,
+            "color": "#555555",
+        },
+        {
+            "type": "text",
+            "text": (
+                "承認すると、有効化済みのX・Threads・Instagram・TikTokへ投稿を開始します。"
+                f"\nTikTok公開範囲: {os.getenv('TIKTOK_PRIVACY_LEVEL', 'SELF_ONLY')}"
+            ),
+            "size": "xs",
+            "wrap": True,
+            "color": "#888888",
+        },
+    ]
+    card = {
+        "type": "flex",
+        "altText": f"動画の投稿確認: {title}",
+        "contents": {
+            "type": "bubble",
+            "size": "kilo",
+            "body": {"type": "box", "layout": "vertical", "spacing": "md", "contents": body},
+            "footer": {
+                "type": "box",
+                "layout": "vertical",
+                "spacing": "sm",
+                "contents": [
+                    {
+                        "type": "button",
+                        "style": "primary",
+                        "color": "#1DB446",
+                        "action": {
+                            "type": "postback",
+                            "label": "承認して投稿",
+                            "data": f"action=social_approve&content_job_id={content_job.id}",
+                            "displayText": f"「{title}」の投稿を承認",
+                        },
+                    },
+                    {
+                        "type": "button",
+                        "style": "secondary",
+                        "action": {
+                            "type": "postback",
+                            "label": "今回は投稿しない",
+                            "data": f"action=social_reject&content_job_id={content_job.id}",
+                            "displayText": f"「{title}」を今回は投稿しない",
+                        },
+                    },
+                ],
+            },
+        },
+    }
+    return [
+        {
+            "type": "video",
+            "originalContentUrl": video_job.final_video_url,
+            "previewImageUrl": video_job.thumbnail_url,
+            "trackingId": f"social-{content_job.id}-{video_job.id}",
+        },
+        {"type": "text", "text": detail_text},
+        card,
+    ]
+
+
+def push_social_review(content_job: SocialContentJob, video_job: SocialVideoJob) -> int:
+    messages = social_review_messages(content_job, video_job)
+    admin_ids = get_admin_user_ids()
+    if not admin_ids:
+        raise RuntimeError("LINE_ADMIN_USER_IDS is not configured")
+    response = requests.get(video_job.thumbnail_url, timeout=(10, 30))
+    response.raise_for_status()
+    with Image.open(BytesIO(response.content)) as preview:
+        preview = preview.convert("RGB")
+        preview.thumbnail((720, 1280), Image.Resampling.LANCZOS)
+        output = BytesIO()
+        preview.save(output, format="JPEG", quality=78, optimize=True)
+    messages[0]["previewImageUrl"] = upload_social_asset(
+        output.getvalue(),
+        "image/jpeg",
+        "jpg",
+        prefix="line-previews",
+    )
+    for user_id in admin_ids:
+        push_message(user_id, messages)
+    return len(admin_ids)

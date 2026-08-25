@@ -12,6 +12,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from models import Base, SocialPublishJob, SocialVideoJob, Trivia
+from services.line_bot import social_review_messages
 from services.kling import KlingClient, KlingTask
 from services.seedance import SeedanceClient, SeedanceTask
 from services.social_content import (
@@ -30,6 +31,7 @@ from services.social_pipeline import (
     poll_seedance_job,
     poll_kling_job,
     publish_due_text_jobs,
+    process_due_video_jobs,
     regenerate_content_job,
     render_static_video_job,
     submit_seedance_job,
@@ -208,6 +210,35 @@ class FakePublisher:
     def publish(self, *args):
         self.calls.append(args)
         return SimpleNamespace(remote_post_id="remote-1", remote_post_url="https://example.com/post")
+
+
+class FakeInstagramPublisher:
+    def __init__(self):
+        self.submissions = []
+        self.published = []
+
+    def submit(self, video_url, caption):
+        self.submissions.append((video_url, caption))
+        return SimpleNamespace(remote_post_id="ig-container-1")
+
+    def status(self, container_id):
+        return "FINISHED"
+
+    def publish(self, container_id):
+        self.published.append(container_id)
+        return SimpleNamespace(remote_post_id="ig-media-1", remote_post_url=None)
+
+
+class FakeTikTokPublisher:
+    def __init__(self):
+        self.submissions = []
+
+    def submit(self, video_url, caption):
+        self.submissions.append((video_url, caption))
+        return SimpleNamespace(remote_post_id="tt-publish-1")
+
+    def status(self, publish_id):
+        return "PUBLISH_COMPLETE", "tt-video-1"
 
 
 class FakeParsed:
@@ -708,6 +739,59 @@ class SocialPipelineTests(unittest.TestCase):
                 publishers={"x": x, "threads": threads},
             ),
             [],
+        )
+
+    def test_line_review_contains_video_and_explicit_approval(self):
+        content_job = create_content_job(self.db, self.trivia.id, generator=lambda trivia: sample_content())
+        video_job = content_job.video_jobs[0]
+        video_job.status = "ready"
+        video_job.final_video_url = "https://cdn.example/video.mp4"
+        video_job.thumbnail_url = "https://cdn.example/preview.png"
+        video_job.duration_seconds = 21.5
+        self.db.commit()
+
+        messages = social_review_messages(content_job, video_job)
+
+        self.assertEqual(messages[0]["type"], "video")
+        self.assertIn("【脚本】", messages[1]["text"])
+        self.assertIn("【Instagram】", messages[1]["text"])
+        approval = messages[2]["contents"]["footer"]["contents"][0]["action"]
+        self.assertEqual(approval["type"], "postback")
+        self.assertIn(f"content_job_id={content_job.id}", approval["data"])
+
+    def test_approved_video_jobs_submit_then_finish_without_duplicates(self):
+        content_job = create_content_job(self.db, self.trivia.id, generator=lambda trivia: sample_content())
+        video_job = content_job.video_jobs[0]
+        video_job.status = "ready"
+        video_job.final_video_url = "https://cdn.example/video.mp4"
+        self.db.commit()
+        approve_content_job(self.db, content_job.id)
+        instagram = FakeInstagramPublisher()
+        tiktok = FakeTikTokPublisher()
+        publishers = {"instagram": instagram, "tiktok": tiktok}
+
+        process_due_video_jobs(
+            self.db,
+            enabled_platforms={"instagram", "tiktok"},
+            publishers=publishers,
+        )
+        self.assertEqual(len(instagram.submissions), 1)
+        self.assertEqual(len(tiktok.submissions), 1)
+        self.assertEqual(
+            self.db.query(SocialPublishJob).filter_by(content_type="video", status="publishing").count(),
+            2,
+        )
+
+        process_due_video_jobs(
+            self.db,
+            enabled_platforms={"instagram", "tiktok"},
+            publishers=publishers,
+        )
+        self.assertEqual(len(instagram.submissions), 1)
+        self.assertEqual(len(tiktok.submissions), 1)
+        self.assertEqual(
+            self.db.query(SocialPublishJob).filter_by(content_type="video", status="published").count(),
+            2,
         )
 
 
