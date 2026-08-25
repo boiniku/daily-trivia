@@ -45,7 +45,7 @@ SOCIAL_RESEARCH_SEARCH_CONTEXT_SIZE=low
 SOCIAL_TTS_PROVIDER=aivis
 AIVIS_API_KEY=...
 AIVIS_MODEL_UUID=47e53151-a378-46f3-abee-ce13aa07feb1
-AIVIS_STYLE_NAME=Normal
+AIVIS_STYLE_NAME=ノーマル
 AIVIS_HOOK_STYLE_NAME=Surprise
 ```
 
@@ -57,7 +57,7 @@ $preview = Invoke-RestMethod `
   -Uri "https://daily-trivia-e7ge.onrender.com/internal/social/content/1/voice-previews" `
   -Headers $SocialHeaders `
   -ContentType "application/json" `
-  -Body '{"styles":["Normal","Calm","Surprise"]}'
+  -Body '{"styles":["ノーマル","Calm","Surprise"]}'
 
 $preview.previews | Format-Table style, audio_url, character_count
 ```

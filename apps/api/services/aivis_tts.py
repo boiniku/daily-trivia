@@ -81,8 +81,20 @@ class AivisTTSClient:
         try:
             response.raise_for_status()
         except requests.HTTPError as exc:
-            detail = response.text[:500] if getattr(response, "text", "") else str(exc)
-            raise RuntimeError(f"Aivis speech generation failed: {detail}") from exc
+            status_code = getattr(response, "status_code", None)
+            reason = {
+                401: "API key was rejected",
+                402: "credit balance is insufficient",
+                404: "voice model was not found",
+                422: "voice model, style, or synthesis settings are invalid",
+                429: "rate limit was reached",
+                503: "service is temporarily unavailable",
+            }.get(status_code, "request failed")
+            detail = _safe_error_detail(response)
+            suffix = f" ({detail})" if detail else ""
+            raise RuntimeError(
+                f"Aivis speech generation failed: {reason}{suffix}"
+            ) from exc
         if not response.content:
             raise RuntimeError("Aivis speech generation returned empty audio")
         return response.content
@@ -126,3 +138,25 @@ def _float_env(name: str, default: float, minimum: float, maximum: float) -> flo
     except ValueError:
         value = default
     return max(minimum, min(value, maximum))
+
+
+def _safe_error_detail(response) -> str:
+    """Return API validation detail while never echoing request headers or keys."""
+    try:
+        payload = response.json()
+    except (ValueError, TypeError):
+        return ""
+    if not isinstance(payload, dict):
+        return ""
+    detail = payload.get("detail")
+    if isinstance(detail, str):
+        return detail[:300]
+    if isinstance(detail, list):
+        messages = []
+        for item in detail[:3]:
+            if isinstance(item, dict):
+                location = ".".join(str(part) for part in item.get("loc", []))
+                message = str(item.get("msg", "invalid value"))
+                messages.append(f"{location}: {message}" if location else message)
+        return "; ".join(messages)[:300]
+    return ""

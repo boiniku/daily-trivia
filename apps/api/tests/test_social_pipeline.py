@@ -110,6 +110,23 @@ class FakeResponse:
         return b"fake-audio"
 
 
+class FakeAivisErrorResponse:
+    status_code = 401
+    content = b'{"detail":"Unauthorized"}'
+
+    def raise_for_status(self):
+        import requests
+        raise requests.HTTPError("401 Client Error")
+
+    def json(self):
+        return {"detail": "Unauthorized"}
+
+
+class FakeAivisErrorSession:
+    def post(self, url, **kwargs):
+        return FakeAivisErrorResponse()
+
+
 class FakeHttpSession:
     def __init__(self):
         self.requests = []
@@ -295,6 +312,16 @@ class SocialPipelineTests(unittest.TestCase):
         ssml = build_narration_ssml(["魚 & 肉", "答えです"])
         self.assertIn("魚 &amp; 肉", ssml)
         self.assertIn('<break time="180ms"/>', ssml)
+
+    def test_aivis_error_identifies_rejected_key_without_echoing_it(self):
+        client = AivisTTSClient(
+            "private-secret",
+            base_url="https://aivis.example/v1",
+            session=FakeAivisErrorSession(),
+        )
+        with self.assertRaisesRegex(RuntimeError, "API key was rejected") as raised:
+            client.synthesize("テスト", model_uuid="model-1")
+        self.assertNotIn("private-secret", str(raised.exception))
 
     def test_normalization_clamps_seedance_duration_and_adds_guard(self):
         content = sample_content()

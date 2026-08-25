@@ -121,16 +121,22 @@ def create_voice_previews(
 
         previews = []
         for selected_style in styles[:3]:
-            audio = generate_aivis_narration(
-                preview_lines,
-                style_name=selected_style or None,
-            )
-            url = upload_social_asset(
-                audio,
-                "audio/mpeg",
-                "mp3",
-                prefix="voice-previews",
-            )
+            try:
+                audio = generate_aivis_narration(
+                    preview_lines,
+                    style_name=selected_style or None,
+                )
+                url = upload_social_asset(
+                    audio,
+                    "audio/mpeg",
+                    "mp3",
+                    prefix="voice-previews",
+                )
+            except RuntimeError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_502_BAD_GATEWAY,
+                    detail=str(exc)[:500],
+                ) from exc
             previews.append({
                 "provider": "aivis",
                 "style": selected_style or "default",
