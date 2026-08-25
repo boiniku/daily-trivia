@@ -12,7 +12,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from models import Base, SocialPublishJob, SocialVideoJob, Trivia
-from services.line_bot import social_review_messages
+from services.line_bot import make_line_video_preview, social_review_messages
 from services.kling import KlingClient, KlingTask
 from services.seedance import SeedanceClient, SeedanceTask
 from services.social_content import (
@@ -758,6 +758,16 @@ class SocialPipelineTests(unittest.TestCase):
         approval = messages[2]["contents"]["footer"]["contents"][0]["action"]
         self.assertEqual(approval["type"], "postback")
         self.assertIn(f"content_job_id={content_job.id}", approval["data"])
+
+    def test_line_video_preview_is_exactly_nine_by_sixteen(self):
+        source = BytesIO()
+        Image.new("RGB", (1024, 1536), "navy").save(source, format="PNG")
+
+        preview = make_line_video_preview(source.getvalue())
+
+        with Image.open(BytesIO(preview)) as image:
+            self.assertEqual(image.size, (720, 1280))
+            self.assertEqual(image.format, "JPEG")
 
     def test_approved_video_jobs_submit_then_finish_without_duplicates(self):
         content_job = create_content_job(self.db, self.trivia.id, generator=lambda trivia: sample_content())

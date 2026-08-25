@@ -9,7 +9,7 @@ from io import BytesIO
 from urllib.parse import urlencode
 
 import requests
-from PIL import Image
+from PIL import Image, ImageOps
 
 from models import SocialContentJob, SocialVideoJob, TriviaCandidate
 from services.social_storage import upload_social_asset
@@ -319,13 +319,9 @@ def push_social_review(content_job: SocialContentJob, video_job: SocialVideoJob)
         raise RuntimeError("LINE_ADMIN_USER_IDS is not configured")
     response = requests.get(video_job.thumbnail_url, timeout=(10, 30))
     response.raise_for_status()
-    with Image.open(BytesIO(response.content)) as preview:
-        preview = preview.convert("RGB")
-        preview.thumbnail((720, 1280), Image.Resampling.LANCZOS)
-        output = BytesIO()
-        preview.save(output, format="JPEG", quality=78, optimize=True)
+    preview_data = make_line_video_preview(response.content)
     messages[0]["previewImageUrl"] = upload_social_asset(
-        output.getvalue(),
+        preview_data,
         "image/jpeg",
         "jpg",
         prefix="line-previews",
@@ -333,3 +329,16 @@ def push_social_review(content_job: SocialContentJob, video_job: SocialVideoJob)
     for user_id in admin_ids:
         push_message(user_id, messages)
     return len(admin_ids)
+
+
+def make_line_video_preview(image_data: bytes) -> bytes:
+    """Create the exact 9:16 preview ratio required by LINE video messages."""
+    with Image.open(BytesIO(image_data)) as source:
+        preview = ImageOps.fit(
+            source.convert("RGB"),
+            (720, 1280),
+            method=Image.Resampling.LANCZOS,
+        )
+        output = BytesIO()
+        preview.save(output, format="JPEG", quality=78, optimize=True)
+        return output.getvalue()

@@ -29,6 +29,7 @@ from services.static_video import (
 
 TEXT_PLATFORMS = ("x", "threads")
 VIDEO_PLATFORMS = ("instagram", "tiktok")
+STATIC_RENDER_VERSION = 3
 
 
 def _video_prompt_json(video_content: dict) -> dict:
@@ -495,6 +496,7 @@ def render_static_video_job(
         video_job.prompt_json = {
             **(video_job.prompt_json or {}),
             "render_meta": {
+                "pipeline_version": STATIC_RENDER_VERSION,
                 "tts_provider": os.getenv("SOCIAL_TTS_PROVIDER", "openai"),
                 "tts_style": os.getenv("AIVIS_SELECTED_STYLE", "Surprise"),
                 "bgm": "DOVA-SYNDROME Escort" if background_music_data else None,

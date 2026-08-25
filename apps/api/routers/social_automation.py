@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 from database import SessionLocal
 from models import SocialContentJob, SocialPublishJob, SocialVideoJob
 from services.social_pipeline import (
+    STATIC_RENDER_VERSION,
     approve_content_job,
     create_content_job,
     poll_video_job,
@@ -106,6 +107,16 @@ def run_due_social_content(
         if pending_review:
             video_job = next((item for item in pending_review.video_jobs if item.provider == "static"), None)
             if video_job and video_job.status == "ready":
+                render_meta = (video_job.prompt_json or {}).get("render_meta") or {}
+                if render_meta.get("pipeline_version") != STATIC_RENDER_VERSION:
+                    video_job = render_static_video_job(db, video_job.id, force=True)
+                    _send_line_review_if_needed(db, video_job)
+                    return {
+                        "status": "review",
+                        "reason": "outdated_video_rerendered",
+                        "content_job_id": pending_review.id,
+                        "video_job": _video_job_response(video_job),
+                    }
                 _send_line_review_if_needed(db, video_job)
                 return {
                     "status": "skipped",
