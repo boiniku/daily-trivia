@@ -15,6 +15,7 @@
 **/.pytest_cache/
 **/.mypy_cache/
 *.log
+apps/api/artifacts/
 
 # Node / Expo
 **/node_modules/

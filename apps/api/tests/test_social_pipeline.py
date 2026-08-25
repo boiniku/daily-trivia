@@ -12,6 +12,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from models import Base, SocialPublishJob, SocialVideoJob, Trivia
+from services.kling import KlingClient, KlingTask
 from services.seedance import SeedanceClient, SeedanceTask
 from services.social_content import (
     generate_social_content,
@@ -21,14 +22,18 @@ from services.social_content import (
     x_weighted_length,
 )
 from services.static_video import compose_static_video
+from services.aivis_tts import AivisTTSClient, build_narration_ssml
+from services.story_patterns import select_story_pattern
 from services.social_pipeline import (
     approve_content_job,
     create_content_job,
     poll_seedance_job,
+    poll_kling_job,
     publish_due_text_jobs,
     regenerate_content_job,
     render_static_video_job,
     submit_seedance_job,
+    submit_kling_job,
 )
 
 
@@ -100,6 +105,10 @@ class FakeResponse:
     def json(self):
         return self.data
 
+    @property
+    def content(self):
+        return b"fake-audio"
+
 
 class FakeHttpSession:
     def __init__(self):
@@ -129,6 +138,50 @@ class FakeSeedance:
 
     def get_task(self, task_id):
         return SeedanceTask(task_id, "succeeded", f"https://example.com/{task_id}.mp4")
+
+
+class FakeKlingHttpSession:
+    def __init__(self):
+        self.requests = []
+
+    def post(self, url, **kwargs):
+        self.requests.append(("POST", url, kwargs))
+        return FakeResponse({
+            "code": 0,
+            "data": {"id": "kling-task-1", "status": "submitted"},
+        })
+
+    def get(self, url, **kwargs):
+        self.requests.append(("GET", url, kwargs))
+        return FakeResponse({
+            "code": 0,
+            "data": [{
+                "id": "kling-task-1",
+                "status": "succeeded",
+                "outputs": [{
+                    "type": "video",
+                    "url": "https://kling.example/result.mp4",
+                    "duration": "5",
+                }],
+            }],
+        })
+
+
+class FakeKling:
+    def __init__(self):
+        self.created = []
+
+    def create_image_video(self, prompt, first_frame_url, **kwargs):
+        self.created.append((prompt, first_frame_url, kwargs))
+        return KlingTask("kling-task-1", "submitted")
+
+    def get_task(self, task_id):
+        return KlingTask(
+            task_id,
+            "succeeded",
+            "https://kling.example/result.mp4",
+            duration=5.0,
+        )
 
 
 class FakePublisher:
@@ -209,6 +262,40 @@ class SocialPipelineTests(unittest.TestCase):
         self.assertLessEqual(x_weighted_length(text), 280)
         self.assertTrue(text.endswith("…"))
 
+    def test_story_pattern_uses_origin_before_generic_misconception(self):
+        pattern = select_story_pattern({
+            "subject": "ネギトロ",
+            "common_misconception": "ネギとトロが由来だと思われる",
+            "verified_fact": "名前の語源は動作名だといわれる",
+            "explanation": "身をねぎ取るという呼び方に由来する",
+        })
+        self.assertEqual(pattern, "origin_story")
+
+    def test_aivis_client_sends_bearer_auth_and_mp3_settings(self):
+        session = FakeHttpSession()
+        client = AivisTTSClient(
+            "secret-key",
+            base_url="https://aivis.example/v1",
+            session=session,
+        )
+        audio = client.synthesize(
+            "<speak><s>タコです。</s></speak>",
+            model_uuid="model-1",
+            style_name="Normal",
+        )
+        self.assertEqual(audio, b"fake-audio")
+        method, url, request = session.requests[0]
+        self.assertEqual(method, "POST")
+        self.assertEqual(url, "https://aivis.example/v1/tts/synthesize")
+        self.assertEqual(request["headers"]["Authorization"], "Bearer secret-key")
+        self.assertEqual(request["json"]["output_format"], "mp3")
+        self.assertEqual(request["json"]["style_name"], "Normal")
+
+    def test_aivis_ssml_escapes_script_text(self):
+        ssml = build_narration_ssml(["魚 & 肉", "答えです"])
+        self.assertIn("魚 &amp; 肉", ssml)
+        self.assertIn('<break time="180ms"/>', ssml)
+
     def test_normalization_clamps_seedance_duration_and_adds_guard(self):
         content = sample_content()
         content["video"]["visual_prompts"][1]["duration"] = 50
@@ -232,6 +319,27 @@ class SocialPipelineTests(unittest.TestCase):
         self.assertTrue(any("これ・それ・あれ" in issue for issue in issues))
         self.assertTrue(any("対象名" in issue for issue in issues))
         self.assertTrue(any("シーン3" in issue for issue in issues))
+
+    def test_quality_check_rejects_generic_clickbait_hook(self):
+        content = sample_scene_content()
+        content["video"]["hook_candidates"] = [
+            "タコの心臓、かなり意外です",
+            "タコの心臓には秘密があります",
+            "タコの心臓、知っていますか",
+        ]
+        content["video"]["scenes"][0]["narration"] = "タコの心臓、かなり意外です。"
+
+        issues = script_quality_issues(content, "タコ")
+
+        self.assertTrue(any("抽象的な煽り" in issue for issue in issues))
+
+    def test_quality_check_rejects_duplicate_hook_candidates(self):
+        content = sample_scene_content()
+        content["video"]["hook_candidates"] = ["タコの心臓は一つじゃない"] * 3
+
+        issues = script_quality_issues(content, "タコ")
+
+        self.assertTrue(any("異なる角度" in issue for issue in issues))
 
     def test_content_generation_researches_then_writes_script(self):
         research = {
@@ -306,6 +414,28 @@ class SocialPipelineTests(unittest.TestCase):
         self.assertFalse(payload["generate_audio"])
         self.assertEqual(fetched.video_url, "https://example.com/video.mp4")
 
+    def test_kling_client_sends_720p_silent_five_second_video(self):
+        session = FakeKlingHttpSession()
+        client = KlingClient(api_key="test", base_url="https://kling.example", session=session)
+
+        created = client.create_image_video(
+            "Subtle natural movement",
+            "https://cdn.example/first-frame.png",
+            duration=5,
+        )
+        fetched = client.get_task(created.id)
+
+        payload = session.requests[0][2]["json"]
+        self.assertEqual(
+            session.requests[0][1],
+            "https://kling.example/image-to-video/kling-3.0",
+        )
+        self.assertEqual(payload["settings"]["resolution"], "720p")
+        self.assertEqual(payload["settings"]["duration"], 5)
+        self.assertEqual(payload["settings"]["audio"], "off")
+        self.assertFalse(payload["settings"]["multi_shot"])
+        self.assertEqual(fetched.video_url, "https://kling.example/result.mp4")
+
     def test_create_job_is_idempotent_and_creates_platform_jobs(self):
         first = create_content_job(self.db, self.trivia.id, generator=lambda trivia: sample_content())
         second = create_content_job(self.db, self.trivia.id, generator=lambda trivia: sample_content())
@@ -345,6 +475,9 @@ class SocialPipelineTests(unittest.TestCase):
             video_job.id,
             image_generator=lambda prompt: b"image",
             narration_generator=lambda lines: b"audio",
+            background_music_loader=lambda: None,
+            promo_video_loader=lambda: None,
+            intro_video_loader=lambda: None,
             composer=fake_composer,
             uploader=fake_uploader,
         )
@@ -370,8 +503,10 @@ class SocialPipelineTests(unittest.TestCase):
         def fake_composer(images, title, subtitles, output_path, **kwargs):
             self.assertEqual(len(images), 4)
             self.assertEqual(len(kwargs["scenes"]), 4)
+            self.assertEqual(kwargs["narration"][-1], "毎日3つの雑学を、ウィジェットで。毎日雑学。")
+            self.assertEqual(kwargs["promo_video_data"], b"promo-video")
             output_path.write_bytes(b"mp4")
-            return 19.0
+            return 24.0
 
         render_static_video_job(
             self.db,
@@ -379,6 +514,7 @@ class SocialPipelineTests(unittest.TestCase):
             image_generator=lambda prompt: prompt.encode(),
             narration_generator=lambda lines: b"audio",
             background_music_loader=lambda: b"bgm",
+            promo_video_loader=lambda: b"promo-video",
             composer=fake_composer,
             uploader=fake_uploader,
         )
@@ -417,6 +553,48 @@ class SocialPipelineTests(unittest.TestCase):
         poll_seedance_job(self.db, video_job.id, client)
         self.assertEqual(video_job.status, "clips_ready")
         self.assertEqual(len(video_job.source_video_urls), 2)
+
+    def test_kling_submit_and_poll_archives_paid_assets(self):
+        content_job = create_content_job(
+            self.db, self.trivia.id, generator=lambda trivia: sample_scene_content(), video_mode="kling"
+        )
+        video_job = self.db.query(SocialVideoJob).filter_by(content_job_id=content_job.id).one()
+        uploads = []
+
+        def fake_uploader(data, content_type, extension, **kwargs):
+            uploads.append((data, content_type, extension, kwargs["prefix"]))
+            return f"https://cdn.example/{kwargs['prefix']}-{len(uploads)}.{extension}"
+
+        client = FakeKling()
+        submit_kling_job(
+            self.db,
+            video_job.id,
+            client,
+            image_generator=lambda prompt: b"first-frame",
+            uploader=fake_uploader,
+        )
+        self.assertEqual(video_job.status, "generating")
+        self.assertEqual(video_job.provider_task_ids, ["kling-task-1"])
+        _, first_frame_url, options = client.created[0]
+        self.assertEqual(first_frame_url, video_job.thumbnail_url)
+        self.assertEqual(options["resolution"], "720p")
+        self.assertFalse(options["audio"])
+        self.assertEqual(options["duration"], 5)
+
+        poll_kling_job(
+            self.db,
+            video_job.id,
+            client,
+            downloader=lambda url: b"kling-video",
+            uploader=fake_uploader,
+        )
+        self.assertEqual(video_job.status, "clips_ready")
+        self.assertEqual(video_job.duration_seconds, 5.0)
+        self.assertEqual(len(video_job.source_video_urls), 1)
+        self.assertEqual(
+            [item[3] for item in uploads],
+            ["images/kling-first-frames", "clips/kling"],
+        )
 
     def test_approved_text_jobs_publish_once(self):
         content_job = create_content_job(self.db, self.trivia.id, generator=lambda trivia: sample_content())

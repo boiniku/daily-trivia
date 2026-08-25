@@ -11,6 +11,8 @@ import requests
 from openai import OpenAI
 from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageFont, ImageOps
 
+from services.aivis_tts import generate_aivis_narration
+
 
 # 720p is accepted by short-video platforms and keeps the complete rendering
 # pipeline within small Render instances. 1080p x264 encoding can exceed 512 MB.
@@ -39,6 +41,13 @@ def generate_social_image(prompt: str, client: OpenAI | None = None) -> bytes:
 
 
 def generate_narration_audio(lines: Iterable[str], client: OpenAI | None = None) -> bytes:
+    provider = os.getenv("SOCIAL_TTS_PROVIDER", "openai").strip().lower()
+    if provider == "aivis":
+        if client is not None:
+            raise ValueError("OpenAI client cannot be passed when SOCIAL_TTS_PROVIDER=aivis")
+        return generate_aivis_narration(lines)
+    if provider != "openai":
+        raise ValueError(f"Unsupported SOCIAL_TTS_PROVIDER: {provider}")
     text = "\n".join(str(line).strip() for line in lines if str(line).strip())
     if not text:
         raise ValueError("Narration is empty")
@@ -89,6 +98,56 @@ def load_background_music(location: str | None = None, session=requests) -> byte
     return data
 
 
+def load_promo_video(location: str | None = None, session=requests) -> bytes | None:
+    """Load the one reusable Daily Trivia promo clip."""
+    location = (location or os.getenv("SOCIAL_PROMO_VIDEO_URL", "")).strip()
+    if not location:
+        return None
+    if location.startswith(("http://", "https://")):
+        response = session.get(location, timeout=(10, 120))
+        response.raise_for_status()
+        content_type = response.headers.get("content-type", "")
+        if content_type and not (content_type.startswith("video/") or "octet-stream" in content_type):
+            raise ValueError(f"Expected video but received {content_type}")
+        data = response.content
+    else:
+        data = Path(location).read_bytes()
+    if not data:
+        raise ValueError("Promo video is empty")
+    if len(data) > 30 * 1024 * 1024:
+        raise ValueError("Promo video exceeds 30 MB")
+    return data
+
+
+def load_intro_video(location: str | None = None, session=requests) -> bytes | None:
+    """Load the reusable one-second pattern-interrupt intro."""
+    return _load_video_asset(
+        location or os.getenv("SOCIAL_INTRO_VIDEO_URL", ""),
+        session=session,
+        label="Intro",
+    )
+
+
+def _load_video_asset(location: str, *, session, label: str) -> bytes | None:
+    location = str(location or "").strip()
+    if not location:
+        return None
+    if location.startswith(("http://", "https://")):
+        response = session.get(location, timeout=(10, 120))
+        response.raise_for_status()
+        content_type = response.headers.get("content-type", "")
+        if content_type and not (content_type.startswith("video/") or "octet-stream" in content_type):
+            raise ValueError(f"Expected video but received {content_type}")
+        data = response.content
+    else:
+        data = Path(location).read_bytes()
+    if not data:
+        raise ValueError(f"{label} video is empty")
+    if len(data) > 30 * 1024 * 1024:
+        raise ValueError(f"{label} video exceeds 30 MB")
+    return data
+
+
 def compose_static_video(
     image_data: bytes | list[bytes],
     title: str,
@@ -99,6 +158,10 @@ def compose_static_video(
     narration: list[str] | None = None,
     scenes: list[dict] | None = None,
     background_music_data: bytes | None = None,
+    promo_video_data: bytes | None = None,
+    promo_duration: float = 5.0,
+    intro_video_data: bytes | None = None,
+    intro_duration: float = 1.0,
 ) -> float:
     """Create a low-memory vertical MP4 with one animated still per scene."""
     if not subtitles:
@@ -122,13 +185,26 @@ def compose_static_video(
     with tempfile.TemporaryDirectory(prefix="daily-trivia-video-") as temp_dir:
         temp = Path(temp_dir)
         clip_paths = []
+        if intro_video_data:
+            intro_path = temp / "daily-trivia-intro.mp4"
+            intro_path.write_bytes(intro_video_data)
+            clip_paths.append(intro_path)
+            duration += max(0.5, min(float(intro_duration), 3.0))
         for index, (raw_image, subtitle, scene_duration, motion) in enumerate(
             zip(images, subtitles, scene_durations, motions)
         ):
             frame_path = temp / f"frame-{index:02d}.jpg"
             with Image.open(BytesIO(raw_image)) as opened:
                 source = ImageOps.exif_transpose(opened).convert("RGB")
-                card = _render_card(source, title, subtitle, index, len(subtitles))
+                role = str(scenes[index].get("role", "")) if scenes else ""
+                card = _render_card(
+                    source,
+                    title,
+                    subtitle,
+                    index,
+                    len(subtitles),
+                    is_brand_cta=role == "cta",
+                )
                 try:
                     card.save(frame_path, "JPEG", quality=88, optimize=True)
                 finally:
@@ -145,6 +221,12 @@ def compose_static_video(
             ]
             _run_ffmpeg(clip_command)
             clip_paths.append(clip_path)
+
+        if promo_video_data:
+            promo_path = temp / "daily-trivia-promo.mp4"
+            promo_path.write_bytes(promo_video_data)
+            clip_paths.append(promo_path)
+            duration += max(1.0, min(float(promo_duration), 15.0))
 
         concat_path = temp / "clips.txt"
         lines = [
@@ -205,7 +287,15 @@ def _run_ffmpeg(command: list[str]) -> None:
         raise RuntimeError(f"FFmpeg failed: {result.stderr[-1500:]}")
 
 
-def _render_card(source: Image.Image, title: str, subtitle: str, index: int, total: int) -> Image.Image:
+def _render_card(
+    source: Image.Image,
+    title: str,
+    subtitle: str,
+    index: int,
+    total: int,
+    *,
+    is_brand_cta: bool = False,
+) -> Image.Image:
     fitted = ImageOps.fit(source, (WIDTH, HEIGHT), method=Image.Resampling.LANCZOS)
     background = fitted.filter(ImageFilter.GaussianBlur(_scale(22)))
     fitted.close()
@@ -225,6 +315,10 @@ def _render_card(source: Image.Image, title: str, subtitle: str, index: int, tot
     )
     overlay = Image.new("RGBA", (WIDTH, HEIGHT), (0, 0, 0, 0))
     draw = ImageDraw.Draw(overlay)
+    if is_brand_cta:
+        background.close()
+        foreground.close()
+        return _render_brand_cta(canvas, overlay, draw, subtitle)
     draw.rounded_rectangle(
         (_scale(55), _scale(65), WIDTH - _scale(55), _scale(230)),
         radius=_scale(32), fill=(8, 12, 20, 205),
@@ -266,6 +360,58 @@ def _render_card(source: Image.Image, title: str, subtitle: str, index: int, tot
     for image in (background, foreground, canvas, overlay, canvas_rgba, composited):
         image.close()
     return result
+
+
+def _render_brand_cta(
+    canvas: Image.Image,
+    overlay: Image.Image,
+    draw: ImageDraw.ImageDraw,
+    subtitle: str,
+) -> Image.Image:
+    draw.rectangle((0, 0, WIDTH, HEIGHT), fill=(5, 9, 18, 205))
+    icon = _brand_icon()
+    if icon:
+        size = _scale(250)
+        icon.thumbnail((size, size), Image.Resampling.LANCZOS)
+        x = (WIDTH - icon.width) // 2
+        y = _scale(390)
+        overlay.alpha_composite(icon, (x, y))
+        icon.close()
+    font_small = _font(_scale(38))
+    font_brand = _font(_scale(88))
+    font_cta = _font(_scale(48))
+    _draw_centered(draw, "もっと『へぇ』を", _scale(230), font_small, fill="#fff4a8")
+    _draw_centered(draw, "毎日雑学", _scale(720), font_brand, fill="white")
+    _draw_centered(draw, subtitle, _scale(970), font_cta, fill="#fff4a8")
+    _draw_centered(
+        draw,
+        "アプリで毎日、新しい雑学を",
+        _scale(1120),
+        font_small,
+        fill=(255, 255, 255, 210),
+    )
+    canvas_rgba = canvas.convert("RGBA")
+    composited = Image.alpha_composite(canvas_rgba, overlay)
+    result = composited.convert("RGB")
+    for image in (canvas, overlay, canvas_rgba, composited):
+        image.close()
+    return result
+
+
+def _brand_icon() -> Image.Image | None:
+    configured = os.getenv("SOCIAL_BRAND_ICON_PATH", "").strip()
+    here = Path(__file__).resolve()
+    candidates = [
+        Path(configured) if configured else None,
+        here.parents[2] / "mobile" / "assets" / "icon.png",
+    ]
+    for candidate in candidates:
+        if candidate and candidate.exists():
+            try:
+                return Image.open(BytesIO(candidate.read_bytes())).convert("RGBA")
+            except OSError:
+                continue
+    return None
 
 
 def _scale(value: int) -> int:

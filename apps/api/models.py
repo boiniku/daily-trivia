@@ -137,7 +137,7 @@ class SocialContentJob(Base):
 
 
 class SocialVideoJob(Base):
-    """Tracks either automatic static rendering or manual Seedance generation."""
+    """Tracks static, Seedance, or Kling video generation."""
 
     __tablename__ = "social_video_jobs"
 

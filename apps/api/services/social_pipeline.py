@@ -6,6 +6,7 @@ from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from models import SocialContentJob, SocialPublishJob, SocialVideoJob, Trivia
+from services.kling import KlingClient, download_kling_video
 from services.seedance import SeedanceClient
 from services.social_content import generate_social_content
 from services.social_publishers import ThreadsTextPublisher, XTextPublisher
@@ -16,6 +17,8 @@ from services.static_video import (
     generate_narration_audio,
     generate_social_image,
     load_background_music,
+    load_intro_video,
+    load_promo_video,
 )
 
 
@@ -24,6 +27,11 @@ VIDEO_PLATFORMS = ("instagram", "tiktok")
 
 
 def _video_prompt_json(video_content: dict) -> dict:
+    scenes = video_content.get("scenes", [])
+    hero_index = next(
+        (index for index, scene in enumerate(scenes) if scene.get("role") == "reveal"),
+        min(2, max(0, len(scenes) - 1)),
+    )
     return {
         "image_prompt": video_content.get("image_prompt", ""),
         "image_prompts": [
@@ -31,6 +39,8 @@ def _video_prompt_json(video_content: dict) -> dict:
         ],
         "image_urls": [],
         "visual_prompts": video_content.get("visual_prompts", []),
+        "kling_scene_index": hero_index,
+        "kling_duration": 5,
     }
 
 
@@ -52,8 +62,8 @@ def create_content_job(
     generator: Callable = generate_social_content,
     video_mode: str = "static",
 ) -> SocialContentJob:
-    if video_mode not in {"static", "seedance"}:
-        raise ValueError("video_mode must be 'static' or 'seedance'")
+    if video_mode not in {"static", "seedance", "kling"}:
+        raise ValueError("video_mode must be 'static', 'seedance', or 'kling'")
     trivia = db.query(Trivia).filter(Trivia.id == trivia_id).first() if trivia_id else select_unused_trivia(db)
     if trivia is None:
         raise ValueError("No unused trivia is available")
@@ -77,7 +87,11 @@ def create_content_job(
         model=(
             os.getenv("SEEDANCE_MODEL", "").strip()
             if video_mode == "seedance"
-            else os.getenv("SOCIAL_IMAGE_MODEL", "gpt-image-1-mini").strip()
+            else (
+                os.getenv("KLING_MODEL", "kling-3.0").strip()
+                if video_mode == "kling"
+                else os.getenv("SOCIAL_IMAGE_MODEL", "gpt-image-1-mini").strip()
+            )
         ),
         status="pending",
         prompt_json=_video_prompt_json(video_content),
@@ -222,6 +236,155 @@ def poll_seedance_job(
     return video_job
 
 
+def submit_kling_job(
+    db: Session,
+    video_job_id: int,
+    client: KlingClient | None = None,
+    *,
+    image_generator: Callable = generate_social_image,
+    uploader: Callable = upload_social_asset,
+) -> SocialVideoJob:
+    """Create one silent 720p Kling clip, capped to five submitted videos/month."""
+    video_job = db.query(SocialVideoJob).filter_by(id=video_job_id).one()
+    if video_job.provider != "kling":
+        raise ValueError("This video job is not a Kling job")
+    if video_job.provider_task_ids:
+        return video_job
+    _enforce_kling_monthly_limit(db, video_job)
+
+    prompt_data = dict(video_job.prompt_json or {})
+    prompts = prompt_data.get("image_prompts") or []
+    if not prompts:
+        raise ValueError("Kling video job has no first-frame prompt")
+    scene_index = max(0, min(int(prompt_data.get("kling_scene_index", 2)), len(prompts) - 1))
+    first_frame_url = str(prompt_data.get("kling_first_frame_url") or "").strip()
+    try:
+        if not first_frame_url:
+            generated = image_generator(prompts[scene_index])
+            first_frame_url = uploader(
+                generated, "image/png", "png", prefix="images/kling-first-frames"
+            )
+            prompt_data["kling_first_frame_url"] = first_frame_url
+            video_job.prompt_json = prompt_data
+            video_job.thumbnail_url = first_frame_url
+            # Save the paid image before making the separately billed video request.
+            db.commit()
+
+        client = client or KlingClient()
+        task = client.create_image_video(
+            _kling_motion_prompt(video_job),
+            first_frame_url,
+            duration=int(os.getenv("KLING_DURATION_SECONDS", str(prompt_data.get("kling_duration", 5)))),
+            resolution="720p",
+            audio=False,
+            multi_shot=False,
+            model=video_job.model or "kling-3.0",
+            external_task_id=f"daily-trivia-{video_job.id}",
+        )
+        video_job.provider_task_ids = [task.id]
+        video_job.status = "generating"
+        video_job.error = None
+    except Exception as exc:
+        video_job.status = "submission_failed"
+        video_job.error = str(exc)[:2000]
+        db.commit()
+        raise
+    db.commit()
+    db.refresh(video_job)
+    return video_job
+
+
+def poll_kling_job(
+    db: Session,
+    video_job_id: int,
+    client: KlingClient | None = None,
+    *,
+    downloader: Callable = download_kling_video,
+    uploader: Callable = upload_social_asset,
+) -> SocialVideoJob:
+    """Poll Kling and immediately archive its temporary result in R2."""
+    video_job = db.query(SocialVideoJob).filter_by(id=video_job_id).one()
+    if video_job.provider != "kling":
+        raise ValueError("This video job is not a Kling job")
+    if video_job.status == "clips_ready" and video_job.source_video_urls:
+        return video_job
+    if not video_job.provider_task_ids:
+        raise ValueError("Kling video job has not been submitted")
+    client = client or KlingClient()
+    task = client.get_task(str(video_job.provider_task_ids[0]))
+    if task.status == "failed":
+        video_job.status = "failed"
+        video_job.error = (task.error or "Kling task failed")[:2000]
+    elif task.status == "succeeded" and task.video_url:
+        video_bytes = downloader(task.video_url)
+        archived_url = uploader(video_bytes, "video/mp4", "mp4", prefix="clips/kling")
+        video_job.source_video_urls = [archived_url]
+        video_job.duration_seconds = task.duration or float(
+            video_job.prompt_json.get("kling_duration", 5)
+        )
+        video_job.status = "clips_ready"
+        video_job.error = None
+    else:
+        video_job.status = "generating"
+    db.commit()
+    db.refresh(video_job)
+    return video_job
+
+
+def submit_video_job(db: Session, video_job_id: int) -> SocialVideoJob:
+    video_job = db.query(SocialVideoJob).filter_by(id=video_job_id).one()
+    if video_job.provider == "kling":
+        return submit_kling_job(db, video_job_id)
+    return submit_seedance_job(db, video_job_id)
+
+
+def poll_video_job(db: Session, video_job_id: int) -> SocialVideoJob:
+    video_job = db.query(SocialVideoJob).filter_by(id=video_job_id).one()
+    if video_job.provider == "kling":
+        return poll_kling_job(db, video_job_id)
+    return poll_seedance_job(db, video_job_id)
+
+
+def _kling_motion_prompt(video_job: SocialVideoJob) -> str:
+    prompt_data = video_job.prompt_json or {}
+    visual_prompts = prompt_data.get("visual_prompts") or []
+    source = ""
+    if visual_prompts and isinstance(visual_prompts[0], dict):
+        source = str(visual_prompts[0].get("prompt") or "").strip()
+    return (
+        "One continuous vertical documentary shot based strictly on the provided first frame. "
+        "Preserve the subject, anatomy, materials, colors, lighting, and composition. "
+        "Use a slow cinematic camera push-in, subtle parallax, and only physically natural motion. "
+        "Do not introduce, remove, transform, duplicate, or distort any object. "
+        f"Creative direction: {source} "
+        "No cuts, no text, no captions, no labels, no logos, no watermark."
+    )[:3072]
+
+
+def _enforce_kling_monthly_limit(db: Session, current_job: SocialVideoJob) -> None:
+    try:
+        limit = int(os.getenv("KLING_MONTHLY_VIDEO_LIMIT", "5"))
+    except ValueError:
+        limit = 5
+    limit = max(1, min(limit, 31))
+    now = datetime.utcnow()
+    month_start = datetime(now.year, now.month, 1)
+    next_month = datetime(now.year + (now.month == 12), 1 if now.month == 12 else now.month + 1, 1)
+    submitted = (
+        db.query(SocialVideoJob)
+        .filter(
+            SocialVideoJob.provider == "kling",
+            SocialVideoJob.id != current_job.id,
+            SocialVideoJob.created_at >= month_start,
+            SocialVideoJob.created_at < next_month,
+        )
+        .all()
+    )
+    used = sum(1 for item in submitted if item.provider_task_ids)
+    if used >= limit:
+        raise ValueError(f"Kling monthly video limit reached ({used}/{limit})")
+
+
 def render_static_video_job(
     db: Session,
     video_job_id: int,
@@ -230,6 +393,8 @@ def render_static_video_job(
     image_downloader: Callable = download_image,
     narration_generator: Callable = generate_narration_audio,
     background_music_loader: Callable = load_background_music,
+    promo_video_loader: Callable = load_promo_video,
+    intro_video_loader: Callable = load_intro_video,
     composer: Callable = compose_static_video,
     uploader: Callable = upload_social_asset,
 ) -> SocialVideoJob:
@@ -249,7 +414,30 @@ def render_static_video_job(
     try:
         content_job = video_job.content_job
         video_content = content_job.content_json["video"]
-        scenes = video_content.get("scenes") or []
+        scenes = list(video_content.get("scenes") or [])
+        narration = list(video_content["narration"])
+        subtitles = list(video_content["subtitles"])
+        promo_video_data = promo_video_loader()
+        intro_video_data = intro_video_loader()
+        cta_narration = os.getenv(
+            "SOCIAL_BRAND_CTA_NARRATION",
+            "毎日3つの雑学を、ウィジェットで。毎日雑学。",
+        ).strip()
+        cta_subtitle = os.getenv(
+            "SOCIAL_BRAND_CTA_SUBTITLE", "続きは「毎日雑学」で"
+        ).strip()
+        if promo_video_data and cta_narration:
+            narration.append(cta_narration)
+        elif cta_narration and cta_subtitle:
+            narration.append(cta_narration)
+            subtitles.append(cta_subtitle)
+            scenes.append({
+                "duration": 2.5,
+                "role": "cta",
+                "narration": cta_narration,
+                "subtitle": cta_subtitle,
+                "motion": "zoom_in",
+            })
         prompts = video_job.prompt_json.get("image_prompts") or []
         if not prompts:
             prompts = [video_job.prompt_json["image_prompt"]]
@@ -281,7 +469,7 @@ def render_static_video_job(
 
         audio_data = None
         if os.getenv("SOCIAL_TTS_ENABLED", "true").lower() == "true":
-            audio_data = narration_generator(video_content["narration"])
+            audio_data = narration_generator(narration)
         background_music_data = background_music_loader()
 
         with tempfile.TemporaryDirectory(prefix="daily-trivia-output-") as temp_dir:
@@ -289,12 +477,16 @@ def render_static_video_job(
             duration = composer(
                 image_data,
                 content_job.trivia.title,
-                video_content["subtitles"],
+                subtitles,
                 output_path,
                 audio_data=audio_data,
-                narration=video_content["narration"],
+                narration=narration,
                 scenes=scenes,
                 background_music_data=background_music_data,
+                promo_video_data=promo_video_data,
+                promo_duration=5.0,
+                intro_video_data=intro_video_data,
+                intro_duration=1.0,
             )
             video_job.final_video_url = uploader(
                 output_path.read_bytes(), "video/mp4", "mp4", prefix="videos"

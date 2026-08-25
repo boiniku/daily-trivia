@@ -3,19 +3,21 @@ import secrets
 from datetime import datetime
 
 from fastapi import APIRouter, Header, HTTPException, status
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from database import SessionLocal
 from models import SocialContentJob, SocialPublishJob, SocialVideoJob
 from services.social_pipeline import (
     approve_content_job,
     create_content_job,
-    poll_seedance_job,
+    poll_video_job,
     publish_due_text_jobs,
     regenerate_content_job,
     render_static_video_job,
-    submit_seedance_job,
+    submit_video_job,
 )
+from services.aivis_tts import generate_aivis_narration
+from services.social_storage import upload_social_asset
 
 
 router = APIRouter(prefix="/internal/social", tags=["social-automation"])
@@ -25,6 +27,10 @@ class PrepareRequest(BaseModel):
     trivia_id: int | None = None
     scheduled_at: datetime | None = None
     video_mode: str = "static"
+
+
+class VoicePreviewRequest(BaseModel):
+    styles: list[str] = Field(default_factory=list, max_length=3)
 
 
 def _authorize(authorization: str | None) -> None:
@@ -88,6 +94,54 @@ def regenerate_social_content(
         db.close()
 
 
+@router.post("/content/{content_job_id}/voice-previews", status_code=status.HTTP_201_CREATED)
+def create_voice_previews(
+    content_job_id: int,
+    request: VoicePreviewRequest,
+    authorization: str | None = Header(default=None),
+):
+    """Generate only narration samples, so a voice can be chosen before paid images."""
+    _authorize(authorization)
+    db = SessionLocal()
+    try:
+        job = db.query(SocialContentJob).filter_by(id=content_job_id).one_or_none()
+        if job is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Content job not found")
+        video = (job.content_json or {}).get("video") or {}
+        narration = [str(item).strip() for item in video.get("narration", []) if str(item).strip()]
+        if not narration:
+            raise HTTPException(status_code=422, detail="Content job has no narration")
+        # A preview must remain cheap even if malformed content reaches the database.
+        preview_lines = narration[:2]
+        preview_text = "".join(preview_lines)[:180]
+        preview_lines = [preview_text]
+        styles = [str(item).strip() for item in request.styles if str(item).strip()]
+        if not styles:
+            styles = [os.getenv("AIVIS_STYLE_NAME", "").strip()]
+
+        previews = []
+        for selected_style in styles[:3]:
+            audio = generate_aivis_narration(
+                preview_lines,
+                style_name=selected_style or None,
+            )
+            url = upload_social_asset(
+                audio,
+                "audio/mpeg",
+                "mp3",
+                prefix="voice-previews",
+            )
+            previews.append({
+                "provider": "aivis",
+                "style": selected_style or "default",
+                "audio_url": url,
+                "character_count": len(preview_text),
+            })
+        return {"content_job_id": job.id, "previews": previews}
+    finally:
+        db.close()
+
+
 @router.post("/video/{video_job_id}/submit", status_code=status.HTTP_202_ACCEPTED)
 def submit_social_video(
     video_job_id: int,
@@ -96,7 +150,7 @@ def submit_social_video(
     _authorize(authorization)
     db = SessionLocal()
     try:
-        job = submit_seedance_job(db, video_job_id)
+        job = submit_video_job(db, video_job_id)
         return _video_job_response(job)
     finally:
         db.close()
@@ -124,7 +178,7 @@ def poll_social_video(
     _authorize(authorization)
     db = SessionLocal()
     try:
-        job = poll_seedance_job(db, video_job_id)
+        job = poll_video_job(db, video_job_id)
         return _video_job_response(job)
     finally:
         db.close()

@@ -1,6 +1,6 @@
 # SNS投稿自動化
 
-承認済みの`trivia`から、TikTok / Instagram向け静止画動画と、X / Threads向けテキストを作成します。通常運用は低価格な静止画動画、バズを狙う投稿だけ手動でSeedanceを選ぶ2レーン構成です。
+承認済みの`trivia`から、TikTok / Instagram向け動画と、X / Threads向けテキストを作成します。通常運用はKling 3.0の短い動画と静止画を組み合わせ、特別な投稿だけ別の動画モデルを選べる構成です。
 
 ## 安全な初期状態
 
@@ -11,7 +11,7 @@ SOCIAL_X_PUBLISH_ENABLED=true
 SOCIAL_THREADS_PUBLISH_ENABLED=true
 ```
 
-通常の`prepare`は`static`動画ジョブを作ります。脚本は「冒頭の意外性→疑問→答え→記憶に残る締め」の4シーン、18〜22秒で生成します。各シーン用の縦画像を最大4枚作り、ズームや左右パン、字幕、ナレーションを付けたH.264 MP4をFFmpegで作成します。生成画像は1枚ごとにR2へ保存するため、途中で処理が失敗しても再利用できます。
+通常の`prepare`は`static`動画ジョブを作ります。調査結果から、勘違いの反転、クイズ、名前の由来、仕組み、基本の答え明かしのいずれかを選び、4〜5シーン、18〜22秒で生成します。人気動画の固有の文章はコピーせず、冒頭で期待を作って情報を小分けにし、最後に回収する構造だけを利用します。各シーン用の縦画像を最大5枚作り、ズームや左右パン、字幕、ナレーションを付けたH.264 MP4をFFmpegで作成します。生成画像は1枚ごとにR2へ保存するため、途中で処理が失敗しても再利用できます。
 
 脚本の前に`gpt-5.6-luna`とWeb検索でDBの短い雑学を調査し、主題、よくある勘違い、確認済み事実、補足、注意点、出典を事実メモにします。脚本はこのメモだけを根拠に生成し、対象不明の「これ」から始まる導入、場面時間に対して長すぎるナレーション、一般的すぎる締めを機械的に検査します。検査に失敗した場合は画像生成前に一度だけ自動修正します。
 
@@ -37,6 +37,33 @@ SOCIAL_RESEARCH_SEARCH_CONTEXT_SIZE=low
 
 毎日1本を30日作る場合は約$1.1〜1.2です。Seedance、SNS各社の有料API、Renderの有料プランは含みません。`generation_meta.estimated_cost_usd`には各ジョブの調査・脚本部分の実測トークンに基づく概算が保存されます。
 
+## Aivis Cloud APIの音声
+
+通常の音声はAivis Cloud APIを使用します。APIキー以外は`render.yaml`に標準値があります。別のモデルを使う場合はモデルUUIDと、そのモデルが持つスタイル名へ変更してください。
+
+```text
+SOCIAL_TTS_PROVIDER=aivis
+AIVIS_API_KEY=...
+AIVIS_MODEL_UUID=47e53151-a378-46f3-abee-ce13aa07feb1
+AIVIS_STYLE_NAME=Normal
+AIVIS_HOOK_STYLE_NAME=Surprise
+```
+
+無料クレジットで声を決める間は、動画をレンダリングせず試聴APIを使います。指定したコンテンツの冒頭2場面だけを合成し、MP3をR2へ保存します。1回のリクエストは最大180文字、3スタイルまでです。
+
+```powershell
+$preview = Invoke-RestMethod `
+  -Method Post `
+  -Uri "https://daily-trivia-e7ge.onrender.com/internal/social/content/1/voice-previews" `
+  -Headers $SocialHeaders `
+  -ContentType "application/json" `
+  -Body '{"styles":["Normal","Calm","Surprise"]}'
+
+$preview.previews | Format-Table style, audio_url, character_count
+```
+
+スタイル名は選択したモデルが実際に持つものだけを指定します。採用する声が決まったら`AIVIS_STYLE_NAME`を固定し、本番の`render-static`を実行します。
+
 ## 共通BGM
 
 複数SNSでの利用が許可された歌詞なしのMP3を1曲だけ用意し、R2などの公開URLをRenderの環境変数へ設定します。
@@ -47,7 +74,38 @@ SOCIAL_BGM_URL=https://your-public-r2.example/social/assets/bgm/main-loop.mp3
 
 設定すると全動画で同じ曲をループし、ナレーションの10%の音量で自動ミックスします。未設定でも動画生成は成功します。TikTokなど各媒体のアプリ内楽曲をダウンロードして他媒体へ転用しないでください。
 
+## 毎日雑学への誘導
+
+動画本編の後に、R2へ保存した同一の5秒プロモーション動画を連結します。「毎日3つ」「ウィジェットで見られる」「アプリアイコンと毎日雑学」を順に表示し、ナレーションにも固定の案内を追加します。脚本AIに宣伝文を作らせないため、雑学に関係なくブランド表現が安定し、プロモーション映像の生成費も毎回発生しません。
+
+```text
+SOCIAL_PROMO_VIDEO_URL=https://your-public-r2.example/social/assets/video/daily-trivia-promo.mp4
+SOCIAL_BRAND_CTA_NARRATION=毎日3つの雑学を、ウィジェットで。毎日雑学。
+SOCIAL_BRAND_CTA_SUBTITLE=続きは「毎日雑学」で
+```
+
+## 固定イントロ
+
+動画の先頭には約1秒の固定イントロを連結します。「これ知ってたら／ちょっとすごい／今日の雑学」という高コントラストの動く文字を表示しながら、その回固有のhookナレーションを0秒から流します。同じ導入を長く見せないため、イントロは1秒で切って本編映像へ移ります。
+
+```text
+SOCIAL_INTRO_VIDEO_URL=https://your-public-r2.example/social/assets/video/daily-trivia-intro.mp4
+```
+
 SeedanceのモデルIDは契約・リージョンで利用可能な値を確認し、`SEEDANCE_MODEL`へ明示してください。Seedanceは`prepare --video-mode seedance`を明示した場合だけ利用します。
+
+## Kling（通常の動画生成）
+
+Kling Open PlatformでAPIキーとAPI残高を用意し、Renderへ次を設定します。通常サイトの会員クレジットとは別管理です。
+
+```text
+KLING_API_KEY=...
+KLING_MODEL=kling-3.0
+KLING_DURATION_SECONDS=5
+KLING_MONTHLY_VIDEO_LIMIT=5
+```
+
+`kling`モードでは、revealシーン用の初回フレームを生成してR2へ保存し、Kling 3.0へ720p・5秒・音声なし・single-shotで投入します。月内に外部タスクを投入済みのKling動画ジョブが5件に達すると、それ以上の送信を拒否します。Klingの出力URLは一時的なため、`poll-video`で成功を確認した時点でR2へ退避します。
 
 ## CLI
 
@@ -71,6 +129,14 @@ Seedance用コンテンツを準備する場合だけ、次のように明示し
 python -m scripts.social.run_social_pipeline prepare --trivia-id 123 --video-mode seedance
 ```
 
+Kling用コンテンツを準備して動画を生成する場合は次の順序です。
+
+```powershell
+python -m scripts.social.run_social_pipeline prepare --trivia-id 123 --video-mode kling
+python -m scripts.social.run_social_pipeline submit-video VIDEO_JOB_ID
+python -m scripts.social.run_social_pipeline poll-video VIDEO_JOB_ID
+```
+
 ## 内部API
 
 すべて`Authorization: Bearer $SOCIAL_AUTOMATION_SECRET`が必要です。
@@ -79,6 +145,7 @@ python -m scripts.social.run_social_pipeline prepare --trivia-id 123 --video-mod
 POST /internal/social/prepare
 GET  /internal/social/jobs
 POST /internal/social/content/{id}/regenerate
+POST /internal/social/content/{id}/voice-previews
 POST /internal/social/content/{id}/approve
 POST /internal/social/video/{id}/submit
 POST /internal/social/video/{id}/poll
@@ -92,11 +159,13 @@ POST /internal/social/publish-text
 
 - 投稿セット生成
 - Xの加重文字数ガード
-- 維持率を意識した4シーン脚本と、冒頭候補3案の生成
+- 雑学タイプ別の4〜5シーン脚本と、冒頭候補3案の生成
+- Aivis音声と、動画生成前の低コストな声の試聴
 - 最大4枚の低品質画像を生成し、失敗時も画像単位で再利用
 - パン・ズーム、日本語字幕、ナレーション、共通BGM付き静止画MP4生成
 - 生成画像と完成MP4のR2保存
 - Seedance非同期タスクの投入・状態確認
+- Kling 3.0の720p・5秒・無音タスク投入、月5本制限、R2退避
 - Xテキスト投稿
 - Threadsテキスト投稿
 - 投稿の承認、冪等性、再試行、外部投稿の明示的な有効化

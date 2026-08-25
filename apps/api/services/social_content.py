@@ -6,6 +6,8 @@ from typing import Any
 from openai import OpenAI
 from pydantic import BaseModel, ConfigDict
 
+from services.story_patterns import expected_roles, select_story_pattern, story_pattern_instruction
+
 
 URL_PATTERN = re.compile(r"https?://\S+")
 
@@ -53,6 +55,7 @@ class VisualPrompt(StrictModel):
 
 
 class VideoDraft(StrictModel):
+    story_pattern: str
     hook_candidates: list[str]
     scenes: list[VideoScene]
     visual_prompts: list[VisualPrompt]
@@ -118,30 +121,46 @@ DBに登録された出典: {trivia.source or 'なし'}
 """.strip()
 
 
-def build_social_prompt(trivia: Any, research: dict, quality_feedback: list[str] | None = None) -> str:
+def build_social_prompt(
+    trivia: Any,
+    research: dict,
+    quality_feedback: list[str] | None = None,
+    *,
+    story_pattern: str | None = None,
+) -> str:
+    story_pattern = story_pattern or select_story_pattern(research)
     feedback = ""
     if quality_feedback:
         feedback = "\n前回案の問題点。すべて修正してください:\n- " + "\n- ".join(quality_feedback)
     return f"""
-次の調査済み事実メモだけを根拠に、SNS投稿セットを日本語で作成してください。
-DBや事実メモにない数値、固有名詞、因果関係を追加してはいけません。
+あなたは短尺動画専門の構成作家です。次の調査済み事実メモを「事実の素材」として使い、
+SNS投稿セットを日本語で新しく書いてください。
+DBの元タイトル・本文・言い回しは参照せず、模倣もしないでください。
+事実メモの文章を要約するのではなく、視聴者が続きを見たくなる順番へ再構成してください。
+ただし、事実メモにない数値、固有名詞、因果関係を追加してはいけません。
 
-元タイトル: {trivia.title}
-元カテゴリ: {trivia.category or 'その他'}
 調査済み事実メモ:
 {json.dumps(research, ensure_ascii=False, indent=2)}
 
 動画脚本の条件:
-- 4シーンの時間は順に2.5秒、3.5秒、7秒、6秒とし、roleはhook、question、reveal、payoffにする
+- {story_pattern_instruction(story_pattern)}
+- 人気動画の固有表現はコピーせず、「冒頭で期待を作る→情報を小分けにする→回収する」という構造だけを使う
 - 動画の主役はresearch.subject一つに絞る
-- hookは映像なしでも意味が通る文章にし、research.subjectを必ず明記する
+- 書き始める前に、common_misconceptionとverified_factの差から「最も意外な一点」を内部で選ぶ
+- hookはその意外な一点を具体的に匂わせ、映像なしでも意味が通る文章にする
+- hookにはresearch.subjectを必ず明記し、ニュースの見出しではなく友人へ話す自然な口調にする
+- hookでは勘違いとの対比までは見せてよいが、正体の専門用語・仕組み・理由はrevealまで伏せる
+- 例: 「カニみそ、脳みそだと思っていませんか？」はよいが、冒頭で正体を肝膵臓と言い切らない
+- 「意外です」「秘密です」「名前がかなり直球です」のように、中身を伏せただけの抽象表現は禁止
+- 安全かつ事実に沿う場合は、「犬のアレ」「脳ではない」のような短く具体的な対比を使ってよい
 - 冒頭を「これ」「それ」「あれ」など、映像を見ないと対象が分からない言葉から始めない
 - hookでは答えを説明し切らず、questionで知識の空白を作り、revealで答えを明かす
 - ナレーションは順に25、32、57、50文字以内を目安にし、7秒の場面へ説明を詰め込まない
 - 字幕は1シーン22文字以内。ナレーション全文を字幕にしない
 - 断定できない内容は「一説では」「といわれます」を維持する
 - payoffは新しい理解を短く言い直して締める。「誰かに出題」「フォローして」「知っていましたか」だけで終えない
-- hook_candidatesは3案すべてにresearch.subjectを明記し、そのうち最も自然な案をhookのnarrationに使う
+- hook_candidatesは角度の異なる3案にし、すべてにresearch.subjectと具体的な意外性を入れる
+- 3案から「具体性・意外性・続きが気になる」の3条件が最も強い案をhookのnarrationに使う
 - 4枚の画像は、対象・勘違い・正体や仕組み・印象的な結果のように役割を変える
 - image_promptは英語で、9:16、同じ画風、文字・字幕・ラベル・ロゴ・透かしなしを明記する
 - visual_promptsはSeedance用に2本、各8秒で作る
@@ -169,6 +188,10 @@ def normalize_social_content(data: dict) -> dict:
         raise ValueError("Threads text is empty")
 
     video = data["video"]
+    pattern = str(video.get("story_pattern", "classic_reveal")).strip()
+    video["story_pattern"] = pattern if pattern in {
+        "classic_reveal", "misconception_reversal", "quiz_reveal", "origin_story", "mechanism"
+    } else "classic_reveal"
     scenes = _normalize_scenes(video.get("scenes"))
     if scenes:
         video["scenes"] = scenes
@@ -221,7 +244,7 @@ def _normalize_scenes(raw_scenes: Any) -> list[dict]:
         return []
     allowed_motions = {"zoom_in", "zoom_out", "pan_left", "pan_right"}
     scenes = []
-    for index, item in enumerate(raw_scenes[:4]):
+    for index, item in enumerate(raw_scenes[:6]):
         if not isinstance(item, dict):
             continue
         narration = str(item.get("narration", "")).strip()
@@ -257,12 +280,15 @@ def _normalize_scenes(raw_scenes: Any) -> list[dict]:
 def script_quality_issues(data: dict, subject: str) -> list[str]:
     video = data.get("video") if isinstance(data, dict) else None
     scenes = video.get("scenes") if isinstance(video, dict) else None
-    if not isinstance(scenes, list) or len(scenes) != 4:
-        return ["動画は4シーンにしてください"]
+    if not isinstance(scenes, list) or not 4 <= len(scenes) <= 6:
+        return ["動画は4〜6シーンにしてください"]
 
     issues = []
-    expected_roles = ("hook", "question", "reveal", "payoff")
-    for index, (scene, role) in enumerate(zip(scenes, expected_roles)):
+    pattern_name = str(video.get("story_pattern", "classic_reveal"))
+    roles = expected_roles(pattern_name)
+    if len(scenes) != len(roles):
+        issues.append(f"story_pattern={pattern_name}は{len(roles)}シーンにしてください")
+    for index, (scene, role) in enumerate(zip(scenes, roles)):
         if scene.get("role") != role:
             issues.append(f"シーン{index + 1}のroleは{role}にしてください")
         narration = str(scene.get("narration", "")).strip()
@@ -281,10 +307,23 @@ def script_quality_issues(data: dict, subject: str) -> list[str]:
         issues.append(f"冒頭のナレーションに対象名「{subject}」を明記してください")
     if re.match(r"^(これ|それ|あれ)(?:[、。！？!?はをがって]|$)", hook):
         issues.append("冒頭を「これ・それ・あれ」から始めず、対象名を明記してください")
+    weak_hook_phrases = (
+        "意外です",
+        "秘密です",
+        "かなり直球です",
+        "驚きです",
+        "知っていますか",
+    )
+    if any(phrase in hook for phrase in weak_hook_phrases):
+        issues.append(
+            "冒頭は抽象的な煽りを避け、勘違いと事実の差が伝わる具体的な言葉にしてください"
+        )
 
     hooks = [str(item).strip() for item in video.get("hook_candidates", [])]
     if len(hooks) != 3 or any(subject and subject not in hook_item for hook_item in hooks):
         issues.append(f"冒頭候補を3案作り、すべてに対象名「{subject}」を明記してください")
+    elif len(set(hooks)) != 3:
+        issues.append("冒頭候補3案は、言い換えではなく異なる角度で作ってください")
 
     payoff = str(scenes[-1].get("narration", ""))
     if any(phrase in payoff for phrase in ("誰かに出題", "フォローして", "知っていましたか？")):
@@ -396,12 +435,13 @@ def generate_social_content(trivia: Any, client: OpenAI | None = None) -> dict:
     if not research["sources"]:
         raise RuntimeError("Social research returned no source URLs")
 
+    story_pattern = select_story_pattern(research)
     script_response = client.responses.parse(
         model=model,
         reasoning={"effort": "low"},
         max_output_tokens=5000,
         text_format=SocialDraft,
-        input=build_social_prompt(trivia, research),
+        input=build_social_prompt(trivia, research, story_pattern=story_pattern),
     )
     draft = _parsed_response(script_response, "Social script").model_dump()
     draft = normalize_social_content(draft)
@@ -414,7 +454,9 @@ def generate_social_content(trivia: Any, client: OpenAI | None = None) -> dict:
             reasoning={"effort": "low"},
             max_output_tokens=5000,
             text_format=SocialDraft,
-            input=build_social_prompt(trivia, research, issues),
+            input=build_social_prompt(
+                trivia, research, issues, story_pattern=story_pattern
+            ),
         )
         draft = normalize_social_content(
             _parsed_response(repair_response, "Social script repair").model_dump()
