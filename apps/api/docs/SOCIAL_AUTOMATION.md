@@ -26,13 +26,13 @@ GitHub Actionsの`social-video-review.yml`は毎日1回`run-due`を呼びます�
 
 X・ThreadsはBufferの公式API連携を使います。Meta Developer / X Developerアプリを自分で作る必要はありません。Buffer無料プランのAPI枠（3,000リクエスト/月）に対し、この運用は通常60リクエスト/月程度です。
 
-BufferでXとThreadsを接続し、Settings → APIでPersonal API Keyを作成します。キーと各チャンネルIDはRenderだけに登録し、Gitやチャットには貼りません。
+BufferでXとThreadsを接続し、Settings → APIでPersonal API Keyを作成します。キーはRenderだけに登録し、Gitやチャットには貼りません。接続済みチャンネルはAPIから自動判別します。同じ媒体を複数接続している場合だけ、対象のチャンネルIDを明示します。
 
 ```text
 SOCIAL_TEXT_PUBLISH_PROVIDER=buffer
 BUFFER_API_KEY=...
-BUFFER_X_CHANNEL_ID=...
-BUFFER_THREADS_CHANNEL_ID=...
+BUFFER_X_CHANNEL_ID=...        # 同じ媒体が複数ある場合のみ
+BUFFER_THREADS_CHANNEL_ID=...  # 同じ媒体が複数ある場合のみ
 ```
 
 ## 安全な初期状態

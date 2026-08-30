@@ -21,15 +21,76 @@ class BufferTextPublisher:
 
     def __init__(
         self,
-        channel_id: str,
+        channel_id: str = "",
         api_key: str | None = None,
+        platform: str | None = None,
         session=None,
     ):
         self.api_key = (api_key or os.getenv("BUFFER_API_KEY", "")).strip()
         self.channel_id = channel_id.strip()
+        self.platform = (platform or "").strip().lower()
         self.session = session or requests.Session()
-        if not self.api_key or not self.channel_id:
-            raise RuntimeError("BUFFER_API_KEY and a Buffer channel ID are required")
+        if not self.api_key:
+            raise RuntimeError("BUFFER_API_KEY is required")
+        if not self.channel_id and self.platform not in {"x", "threads"}:
+            raise RuntimeError("A Buffer channel ID or supported platform is required")
+
+    def _request(self, query: str, variables: dict | None = None) -> dict:
+        response = self.session.post(
+            self.API_URL,
+            headers={
+                "Authorization": f"Bearer {self.api_key}",
+                "Content-Type": "application/json",
+            },
+            json={"query": query, "variables": variables or {}},
+            timeout=(10, 60),
+        )
+        response.raise_for_status()
+        raw = response.json()
+        if raw.get("errors"):
+            message = str((raw["errors"][0] or {}).get("message") or "unknown GraphQL error")
+            raise RuntimeError(f"Buffer rejected the request: {message}")
+        return raw
+
+    def _resolve_channel_id(self) -> str:
+        if self.channel_id:
+            return self.channel_id
+        organizations_raw = self._request(
+            "query GetOrganizations { account { organizations { id name } } }"
+        )
+        organizations = (
+            ((organizations_raw.get("data") or {}).get("account") or {}).get("organizations")
+            or []
+        )
+        aliases = {"x": {"x", "twitter"}, "threads": {"threads"}}[self.platform]
+        matches = []
+        channels_query = """
+        query GetChannels($organizationId: OrganizationId!) {
+          channels(input: { organizationId: $organizationId }) {
+            id name displayName service
+          }
+        }
+        """
+        for organization in organizations:
+            organization_id = str(organization.get("id") or "")
+            if not organization_id:
+                continue
+            channels_raw = self._request(
+                channels_query, {"organizationId": organization_id}
+            )
+            channels = (channels_raw.get("data") or {}).get("channels") or []
+            matches.extend(
+                channel
+                for channel in channels
+                if str(channel.get("service") or "").strip().lower() in aliases
+            )
+        if len(matches) != 1:
+            raise RuntimeError(
+                f"Expected exactly one Buffer {self.platform} channel, found {len(matches)}; "
+                f"set BUFFER_{self.platform.upper()}_CHANNEL_ID explicitly"
+            )
+        self.channel_id = str(matches[0]["id"])
+        return self.channel_id
 
     def publish(
         self,
@@ -53,7 +114,7 @@ class BufferTextPublisher:
         """
         post_input = {
             "text": text,
-            "channelId": self.channel_id,
+            "channelId": self._resolve_channel_id(),
             "schedulingType": "automatic",
             "mode": "shareNow",
             "aiAssisted": True,
@@ -61,20 +122,7 @@ class BufferTextPublisher:
         }
         if image_url:
             post_input["assets"] = [{"image": {"url": image_url}}]
-        response = self.session.post(
-            self.API_URL,
-            headers={
-                "Authorization": f"Bearer {self.api_key}",
-                "Content-Type": "application/json",
-            },
-            json={"query": mutation, "variables": {"input": post_input}},
-            timeout=(10, 60),
-        )
-        response.raise_for_status()
-        raw = response.json()
-        if raw.get("errors"):
-            message = str((raw["errors"][0] or {}).get("message") or "unknown GraphQL error")
-            raise RuntimeError(f"Buffer rejected the request: {message}")
+        raw = self._request(mutation, {"input": post_input})
         result = (raw.get("data") or {}).get("createPost") or {}
         post = result.get("post") or {}
         post_id = str(post.get("id") or "")

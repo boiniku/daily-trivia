@@ -602,8 +602,8 @@ def configured_text_publisher(platform: str):
     if provider == "buffer":
         channel_id = os.getenv(f"BUFFER_{platform.upper()}_CHANNEL_ID", "").strip()
         if platform == "threads":
-            return BufferThreadsTextPublisher(channel_id)
-        return BufferTextPublisher(channel_id)
+            return BufferThreadsTextPublisher(channel_id, platform="threads")
+        return BufferTextPublisher(channel_id, platform="x")
     if provider == "direct":
         return XTextPublisher() if platform == "x" else ThreadsTextPublisher()
     raise RuntimeError(f"Unsupported SOCIAL_TEXT_PUBLISH_PROVIDER: {provider}")

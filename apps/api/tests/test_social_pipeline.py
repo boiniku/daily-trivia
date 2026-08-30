@@ -315,6 +315,40 @@ class FakeBufferPublishSession:
         return FakePublishResponse(self.result)
 
 
+class FakeBufferDiscoverySession:
+    def __init__(self):
+        self.requests = []
+
+    def post(self, url, **kwargs):
+        self.requests.append(("POST", url, kwargs))
+        query = kwargs["json"]["query"]
+        if "GetOrganizations" in query:
+            return FakePublishResponse(
+                {"data": {"account": {"organizations": [{"id": "org-1", "name": "Main"}]}}}
+            )
+        if "GetChannels" in query:
+            return FakePublishResponse(
+                {
+                    "data": {
+                        "channels": [
+                            {"id": "channel-x", "name": "daily", "service": "twitter"},
+                            {"id": "channel-threads", "name": "daily", "service": "threads"},
+                        ]
+                    }
+                }
+            )
+        return FakePublishResponse(
+            {
+                "data": {
+                    "createPost": {
+                        "__typename": "PostActionSuccess",
+                        "post": {"id": "buffer-post-1", "status": "sending"},
+                    }
+                }
+            }
+        )
+
+
 class FakeInstagramPublisher:
     def __init__(self):
         self.submissions = []
@@ -535,6 +569,16 @@ class SocialPipelineTests(unittest.TestCase):
 
         with self.assertRaisesRegex(RuntimeError, "bad post"):
             publisher.publish("本文")
+
+    def test_buffer_publisher_discovers_single_platform_channel(self):
+        session = FakeBufferDiscoverySession()
+        publisher = BufferTextPublisher(api_key="buffer-key", platform="x", session=session)
+
+        result = publisher.publish("本文")
+
+        self.assertEqual(result.remote_post_id, "buffer-post-1")
+        create_request = session.requests[-1][2]["json"]
+        self.assertEqual(create_request["variables"]["input"]["channelId"], "channel-x")
 
     def test_normalization_clamps_seedance_duration_and_adds_guard(self):
         content = sample_content()
