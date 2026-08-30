@@ -5,6 +5,12 @@ on:
     # GitHub Actions uses UTC. 01:17 UTC is 10:17 JST.
     - cron: "17 1 * * *"
   workflow_dispatch:
+    inputs:
+      text_only:
+        description: "Publish only the daily X and Threads post"
+        required: false
+        type: boolean
+        default: false
 
 concurrency:
   group: social-video-review
@@ -28,6 +34,7 @@ jobs:
             "${SOCIAL_AUTOMATION_URL%/}/internal/social/run-due-text"
 
       - name: Create a due video and send it to LINE
+        if: ${{ github.event_name == 'schedule' || !inputs.text_only }}
         env:
           SOCIAL_AUTOMATION_URL: ${{ vars.SOCIAL_AUTOMATION_URL }}
           SOCIAL_AUTOMATION_SECRET: ${{ secrets.DAILY_COLLECTION_SECRET }}
