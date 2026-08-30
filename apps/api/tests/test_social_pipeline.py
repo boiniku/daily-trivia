@@ -14,7 +14,11 @@ from sqlalchemy.pool import StaticPool
 
 from models import Base, SocialPublishJob, SocialVideoJob, Trivia
 from routers.social_automation import _authorize as authorize_social_automation
-from services.line_bot import make_line_video_preview, social_review_messages
+from services.line_bot import (
+    make_line_video_preview,
+    social_review_messages,
+    social_text_review_messages,
+)
 from services.kling import KlingClient, KlingTask
 from services.seedance import SeedanceClient, SeedanceTask
 from services.social_content import (
@@ -1009,6 +1013,9 @@ class SocialPipelineTests(unittest.TestCase):
                 "shared_image": {"url": trivia.image_url, "alt_text": "海中にいるタコの画像"},
             },
         )
+        self.assertEqual(content_job.status, "review")
+        self.assertTrue(all(item.status == "waiting_approval" for item in content_job.publish_jobs))
+        approve_content_job(self.db, content_job.id)
         x = FakePublisher()
         threads = FakePublisher()
         completed = publish_due_text_jobs(
@@ -1053,6 +1060,10 @@ class SocialPipelineTests(unittest.TestCase):
         x = FakePublisher()
         threads = FakePublisher()
 
+        self.assertEqual(job.status, "review")
+        self.assertTrue(all(item.status == "waiting_approval" for item in job.publish_jobs))
+        approve_content_job(self.db, job.id)
+
         completed = publish_due_text_jobs(
             self.db,
             enabled_platforms={"x", "threads"},
@@ -1065,6 +1076,31 @@ class SocialPipelineTests(unittest.TestCase):
         self.assertEqual(len(completed), 2)
         self.assertEqual(x.calls[0][1], self.trivia.image_url)
         self.assertEqual(threads.calls[0][2], self.trivia.image_url)
+
+    def test_line_text_review_contains_image_text_and_approval(self):
+        self.trivia.image_url = "https://cdn.example/octopus.png"
+        self.db.commit()
+        text = "タコの心臓は三つあります。二つがえらへ、残る一つが全身へ血液を送ります。"
+        job = create_daily_text_job(
+            self.db,
+            generator=lambda trivia: {
+                "x": {"text": text},
+                "threads": {"text": text, "topic_tag": "雑学"},
+                "shared_image": {"url": trivia.image_url, "alt_text": "海中のタコ"},
+            },
+        )
+
+        messages = social_text_review_messages(job, "https://cdn.example/line-preview.jpg")
+
+        self.assertEqual(messages[0]["type"], "image")
+        self.assertEqual(
+            messages[0]["originalContentUrl"], "https://cdn.example/line-preview.jpg"
+        )
+        self.assertIn(text, messages[1]["text"])
+        footer = messages[2]["contents"]["footer"]["contents"]
+        self.assertEqual(footer[0]["action"]["label"], "X・Threadsへ投稿")
+        self.assertIn(f"content_job_id={job.id}", footer[0]["action"]["data"])
+        self.assertEqual(footer[1]["action"]["label"], "今回は使わない")
 
     def test_line_review_contains_video_and_explicit_approval(self):
         content_job = create_content_job(self.db, self.trivia.id, generator=lambda trivia: sample_content())

@@ -95,10 +95,9 @@ def create_daily_text_job(
         raise ValueError("Daily text content requires one public image URL")
     job = SocialContentJob(
         trivia_id=trivia.id,
-        status="approved",
+        status="review",
         content_json=content,
         scheduled_at=scheduled_at,
-        approved_at=datetime.utcnow(),
     )
     db.add(job)
     db.flush()
@@ -107,7 +106,7 @@ def create_daily_text_job(
             content_job_id=job.id,
             platform=platform,
             content_type="text",
-            status="queued",
+            status="waiting_approval",
             scheduled_at=scheduled_at,
         ))
     db.commit()

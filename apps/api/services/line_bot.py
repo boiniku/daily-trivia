@@ -289,6 +289,8 @@ def social_review_messages(content_job: SocialContentJob, video_job: SocialVideo
             "color": "#888888",
         },
     ]
+
+
     card = {
         "type": "flex",
         "altText": f"動画の投稿確認: {title}",
@@ -354,6 +356,99 @@ def social_review_messages(content_job: SocialContentJob, video_job: SocialVideo
         {"type": "text", "text": detail_text},
         card,
     ]
+
+
+def social_text_review_messages(content_job: SocialContentJob, image_url: str) -> list[dict]:
+    content = content_job.content_json or {}
+    text = str((content.get("x") or {}).get("text") or "").strip()
+    alt_text = str((content.get("shared_image") or {}).get("alt_text") or "").strip()
+    if not text or not image_url:
+        raise ValueError("Text and image are required for LINE review")
+    title = (content_job.trivia.title or f"投稿案 #{content_job.id}")[:80]
+    detail = f"【X・Threads投稿案】\n{text}"
+    if alt_text:
+        detail += f"\n\n【画像説明】\n{alt_text}"
+    card = {
+        "type": "flex",
+        "altText": f"X・Threads投稿の確認: {title}",
+        "contents": {
+            "type": "bubble",
+            "size": "kilo",
+            "body": {
+                "type": "box",
+                "layout": "vertical",
+                "spacing": "md",
+                "contents": [
+                    {"type": "text", "text": title, "weight": "bold", "size": "lg", "wrap": True},
+                    {
+                        "type": "text",
+                        "text": "文章と画像を確認してください。承認するとXとThreadsの両方へ投稿します。",
+                        "size": "sm",
+                        "wrap": True,
+                        "color": "#555555",
+                    },
+                ],
+            },
+            "footer": {
+                "type": "box",
+                "layout": "vertical",
+                "spacing": "sm",
+                "contents": [
+                    {
+                        "type": "button",
+                        "style": "primary",
+                        "color": "#1DB446",
+                        "action": {
+                            "type": "postback",
+                            "label": "X・Threadsへ投稿",
+                            "data": f"action=social_approve&content_job_id={content_job.id}",
+                            "displayText": f"「{title}」をX・Threadsへ投稿します",
+                        },
+                    },
+                    {
+                        "type": "button",
+                        "style": "secondary",
+                        "action": {
+                            "type": "postback",
+                            "label": "今回は使わない",
+                            "data": f"action=social_reject&content_job_id={content_job.id}",
+                            "displayText": f"「{title}」を今回は使わない",
+                        },
+                    },
+                ],
+            },
+        },
+    }
+    return [
+        {"type": "image", "originalContentUrl": image_url, "previewImageUrl": image_url},
+        {"type": "text", "text": detail[:5000]},
+        card,
+    ]
+
+
+def push_social_text_review(content_job: SocialContentJob) -> int:
+    source_url = str(
+        ((content_job.content_json or {}).get("shared_image") or {}).get("url") or ""
+    ).strip()
+    if not source_url:
+        raise ValueError("A public image is required for LINE review")
+    response = requests.get(source_url, timeout=(10, 30))
+    response.raise_for_status()
+    with Image.open(BytesIO(response.content)) as source:
+        image = ImageOps.exif_transpose(source).convert("RGB")
+        image.thumbnail((1200, 1200), Image.Resampling.LANCZOS)
+        output = BytesIO()
+        image.save(output, format="JPEG", quality=88, optimize=True)
+    line_image_url = upload_social_asset(
+        output.getvalue(), "image/jpeg", "jpg", prefix="line-text-previews"
+    )
+    messages = social_text_review_messages(content_job, line_image_url)
+    admin_ids = get_admin_user_ids()
+    if not admin_ids:
+        raise RuntimeError("LINE_ADMIN_USER_IDS is not configured")
+    for user_id in admin_ids:
+        push_message(user_id, messages)
+    return len(admin_ids)
 
 
 def push_social_review(content_job: SocialContentJob, video_job: SocialVideoJob) -> int:

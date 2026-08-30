@@ -34,9 +34,12 @@ jobs:
             "${SOCIAL_AUTOMATION_URL%/}/internal/social/run-due-text")
           echo "$response"
           echo "$response" | jq --exit-status '
-            [.publish_jobs[]? | select(.platform == "x" or .platform == "threads")] as $jobs
-            | ($jobs | length) == 2
-              and ($jobs | all(.status == "published"))
+            if .status == "review" then
+              (.line_review.sent_at != null)
+            else
+              [.publish_jobs[]? | select(.platform == "x" or .platform == "threads")] as $jobs
+              | ($jobs | length) == 2 and ($jobs | all(.status == "published"))
+            end
           '
 
       - name: Create a due video and send it to LINE

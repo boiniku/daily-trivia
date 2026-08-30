@@ -407,10 +407,11 @@ async def line_webhook(request: Request, background_tasks: BackgroundTasks):
                     if action == "social_approve":
                         existing = db.query(SocialContentJob).filter_by(id=content_job_id).one()
                         if existing.status == "approved":
-                            reply_message(reply_token, [_text_message("この動画はすでに承認済みです。")])
+                            kind = "動画" if existing.video_jobs else "投稿案"
+                            reply_message(reply_token, [_text_message(f"この{kind}はすでに承認済みです。")])
                             continue
                         job = approve_content_job(db, content_job_id)
-                        if video_publishing_is_manual():
+                        if job.video_jobs and video_publishing_is_manual():
                             reply_message(
                                 reply_token,
                                 [_text_message(

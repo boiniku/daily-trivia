@@ -1,6 +1,6 @@
 # SNS投稿自動化
 
-承認済みの`trivia`から、Instagram / TikTok / YouTube Shortsへ手動投稿する動画と、X / Threadsへ自動投稿するテキストを作成します。通常運用は複数の生成画像、パン・ズーム、字幕、Aivis音声、共通BGMを組み合わせた静止画動画です。外部の動画生成モデルは明示的に選んだ場合だけ使います。
+承認済みの`trivia`から、Instagram / TikTok / YouTube Shortsへ手動投稿する動画と、X / Threadsへ投稿するテキストを作成します。どちらもLINEで内容を確認し、承認してから投稿します。通常運用は複数の生成画像、パン・ズーム、字幕、Aivis音声、共通BGMを組み合わせた静止画動画です。外部の動画生成モデルは明示的に選んだ場合だけ使います。
 
 ## LINE確認から投稿まで
 
@@ -11,16 +11,16 @@
 - `確認済みにする`: 動画を確認済みとして記録
 - `今回は使わない`: 投稿候補を取り消し
 
-動画は`SOCIAL_VIDEO_MANUAL_ONLY=true`を既定とし、LINEで確認して各公式アプリから手動投稿します。X・Threadsの日次投稿は動画とは別のジョブで自動処理します。LINEのWebhookは既存の`POST /line/webhook`を使います。
+動画は`SOCIAL_VIDEO_MANUAL_ONLY=true`を既定とし、LINEで確認して各公式アプリから手動投稿します。X・Threadsの日次投稿は動画とは別のジョブで文章と画像をLINEへ送り、「X・Threadsへ投稿」を押した場合だけBufferから両方へ投稿します。未承認案がある間は新しい案を作りません。LINEのWebhookは既存の`POST /line/webhook`を使います。
 
 GitHub Actionsの`social-video-review.yml`は毎日1回`run-due`を呼びます。API側で前回から4日経ったかを判定するため、実際の生成は4日に最大1本です。完成済みのLINE確認が残っている間も新しい動画を作らず、不要な生成費を防ぎます。GitHubへ次を登録してください。
 
 - Actions variable `SOCIAL_AUTOMATION_URL`: `https://daily-trivia-e7ge.onrender.com`
 - Actions secret `DAILY_COLLECTION_SECRET`: Renderの同名環境変数と同じ値
 
-## X・Threadsの毎日投稿
+## X・Threadsの毎日投稿案
 
-動画とは別に、`run-due-text`が24時間に最大1件の共通本文を作ります。文章は「具体的な引き→答え→理由または意味」までを280ウェイト内で完結させ、XとThreadsに完全に同じ文章を使います。問いかけだけで答えがない文章は品質検査で作り直します。
+動画とは別に、`run-due-text`が24時間に最大1件の共通本文を作ってLINEへ送ります。文章は「具体的な引き→答え→理由または意味」までを280ウェイト内で完結させ、XとThreadsに完全に同じ文章を使います。問いかけだけで答えがない文章は品質検査で作り直します。LINEで承認するまで外部投稿は行いません。
 
 画像生成は行わず、雑学DBの既存画像を1枚共通で添付します。公開画像URLのある未使用雑学だけを選ぶため、新たな画像料金はかかりません。Web事実確認と本文生成のAI料金は1日1回分かかります。
 

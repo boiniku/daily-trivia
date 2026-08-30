@@ -19,7 +19,7 @@ from services.social_pipeline import (
     render_static_video_job,
     submit_video_job,
 )
-from services.line_bot import push_social_review
+from services.line_bot import push_social_review, push_social_text_review
 from services.aivis_tts import generate_aivis_narration
 from services.social_storage import upload_social_asset
 
@@ -76,6 +76,30 @@ def _send_line_review_if_needed(db, job: SocialVideoJob) -> None:
     job.prompt_json = {**(job.prompt_json or {}), "line_review": review_meta}
     db.commit()
     db.refresh(job)
+
+
+def _send_line_text_review_if_needed(db, job: SocialContentJob) -> dict:
+    content = dict(job.content_json or {})
+    automation = dict(content.get("automation") or {})
+    review_meta = dict(automation.get("line_review") or {})
+    image_url = str((content.get("shared_image") or {}).get("url") or "")
+    if review_meta.get("image_url") == image_url and review_meta.get("sent_at"):
+        return review_meta
+    try:
+        recipients = push_social_text_review(job)
+        review_meta = {
+            "image_url": image_url,
+            "sent_at": datetime.utcnow().isoformat(),
+            "recipient_count": recipients,
+        }
+    except Exception as exc:
+        review_meta = {"image_url": image_url, "error": str(exc)[:500]}
+    automation["line_review"] = review_meta
+    content["automation"] = automation
+    job.content_json = content
+    db.commit()
+    db.refresh(job)
+    return review_meta
 
 
 @router.post("/prepare", status_code=status.HTTP_201_CREATED)
@@ -176,6 +200,27 @@ def run_due_social_text(
     try:
         # Resume a previously queued post first, without creating a duplicate.
         resumed = publish_due_text_jobs(db)
+        pending_review = (
+            db.query(SocialContentJob)
+            .filter(
+                SocialContentJob.status == "review",
+                ~SocialContentJob.video_jobs.any(),
+            )
+            .order_by(SocialContentJob.created_at.asc())
+            .first()
+        )
+        if pending_review:
+            line_review = _send_line_text_review_if_needed(db, pending_review)
+            return {
+                "status": "review",
+                "reason": "awaiting_line_review",
+                "content_job_id": pending_review.id,
+                "line_review": line_review,
+                "published_job_ids": [item.id for item in resumed],
+                "publish_jobs": [
+                    _publish_job_response(item) for item in pending_review.publish_jobs
+                ],
+            }
         latest = (
             db.query(SocialContentJob)
             .filter(~SocialContentJob.video_jobs.any())
@@ -194,12 +239,13 @@ def run_due_social_text(
                 "publish_jobs": [_publish_job_response(item) for item in latest.publish_jobs],
             }
         job = create_daily_text_job(db)
-        published = publish_due_text_jobs(db, content_job_id=job.id)
+        line_review = _send_line_text_review_if_needed(db, job)
         db.refresh(job)
         return {
-            "status": "published" if published else "queued",
+            "status": "review",
             "content_job": _content_job_response(job),
-            "published_job_ids": [item.id for item in published],
+            "line_review": line_review,
+            "published_job_ids": [],
             "publish_jobs": [_publish_job_response(item) for item in job.publish_jobs],
         }
     finally:
