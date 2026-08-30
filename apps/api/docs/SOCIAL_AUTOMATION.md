@@ -24,7 +24,16 @@ GitHub Actionsの`social-video-review.yml`は毎日1回`run-due`を呼びます�
 
 画像生成は行わず、雑学DBの既存画像を1枚共通で添付します。公開画像URLのある未使用雑学だけを選ぶため、新たな画像料金はかかりません。Web事実確認と本文生成のAI料金は1日1回分かかります。
 
-X APIは従量課金で、公式価格のContent Createは1リクエス`$0.015`です。画像アップロードと投稿作成を合わせ、毎日運用のX API料金は月`$0.45〜0.90`程度を見込みます。Developer Consoleで月間上限を設定してください。
+X・ThreadsはBufferの公式API連携を使います。Meta Developer / X Developerアプリを自分で作る必要はありません。Buffer無料プランのAPI枠（3,000リクエスト/月）に対し、この運用は通常60リクエスト/月程度です。
+
+BufferでXとThreadsを接続し、Settings → APIでPersonal API Keyを作成します。キーと各チャンネルIDはRenderだけに登録し、Gitやチャットには貼りません。
+
+```text
+SOCIAL_TEXT_PUBLISH_PROVIDER=buffer
+BUFFER_API_KEY=...
+BUFFER_X_CHANNEL_ID=...
+BUFFER_THREADS_CHANNEL_ID=...
+```
 
 ## 安全な初期状態
 

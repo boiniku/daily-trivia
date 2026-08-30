@@ -30,7 +30,11 @@ from services.social_content import (
 from services.static_video import compose_static_video, _fit_scene_durations_to_audio
 from services.aivis_tts import AivisTTSClient, build_narration_ssml, generate_aivis_narration
 from services.story_patterns import select_story_pattern
-from services.social_publishers import ThreadsTextPublisher, XTextPublisher
+from services.social_publishers import (
+    BufferTextPublisher,
+    ThreadsTextPublisher,
+    XTextPublisher,
+)
 from services.social_pipeline import (
     approve_content_job,
     configured_video_platforms,
@@ -294,6 +298,23 @@ class FakeThreadsPublishSession:
         return FakePublishResponse({"id": "container-1"})
 
 
+class FakeBufferPublishSession:
+    def __init__(self, result=None):
+        self.requests = []
+        self.result = result or {
+            "data": {
+                "createPost": {
+                    "__typename": "PostActionSuccess",
+                    "post": {"id": "buffer-post-1", "status": "sending"},
+                }
+            }
+        }
+
+    def post(self, url, **kwargs):
+        self.requests.append(("POST", url, kwargs))
+        return FakePublishResponse(self.result)
+
+
 class FakeInstagramPublisher:
     def __init__(self):
         self.submissions = []
@@ -482,6 +503,38 @@ class SocialPipelineTests(unittest.TestCase):
         self.assertEqual(session.requests[0][2]["params"]["media_type"], "IMAGE")
         self.assertEqual(session.requests[0][2]["params"]["image_url"], "https://cdn.example/image.png")
         self.assertTrue(session.requests[1][1].endswith("/threads_publish"))
+
+    def test_buffer_publisher_posts_now_with_public_image(self):
+        session = FakeBufferPublishSession()
+        publisher = BufferTextPublisher("channel-x", "buffer-key", session=session)
+
+        result = publisher.publish(
+            "完結した雑学です。",
+            "https://cdn.example/image.png",
+            "画像説明",
+        )
+
+        self.assertEqual(result.remote_post_id, "buffer-post-1")
+        request = session.requests[0]
+        self.assertEqual(request[1], "https://api.buffer.com")
+        self.assertEqual(request[2]["headers"]["Authorization"], "Bearer buffer-key")
+        post_input = request[2]["json"]["variables"]["input"]
+        self.assertEqual(post_input["channelId"], "channel-x")
+        self.assertEqual(post_input["mode"], "shareNow")
+        self.assertTrue(post_input["aiAssisted"])
+        self.assertEqual(
+            post_input["assets"],
+            [{"image": {"url": "https://cdn.example/image.png"}}],
+        )
+
+    def test_buffer_publisher_surfaces_graphql_mutation_error(self):
+        session = FakeBufferPublishSession(
+            {"data": {"createPost": {"__typename": "PostInvalidInputError", "message": "bad post"}}}
+        )
+        publisher = BufferTextPublisher("channel-x", "buffer-key", session=session)
+
+        with self.assertRaisesRegex(RuntimeError, "bad post"):
+            publisher.publish("本文")
 
     def test_normalization_clamps_seedance_duration_and_adds_guard(self):
         content = sample_content()

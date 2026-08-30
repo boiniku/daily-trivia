@@ -14,6 +14,89 @@ class PublishResult:
     raw: dict | None = None
 
 
+class BufferTextPublisher:
+    """Publish one image/text post through Buffer's official GraphQL API."""
+
+    API_URL = "https://api.buffer.com"
+
+    def __init__(
+        self,
+        channel_id: str,
+        api_key: str | None = None,
+        session=None,
+    ):
+        self.api_key = (api_key or os.getenv("BUFFER_API_KEY", "")).strip()
+        self.channel_id = channel_id.strip()
+        self.session = session or requests.Session()
+        if not self.api_key or not self.channel_id:
+            raise RuntimeError("BUFFER_API_KEY and a Buffer channel ID are required")
+
+    def publish(
+        self,
+        text: str,
+        image_url: str | None = None,
+        alt_text: str | None = None,
+    ) -> PublishResult:
+        # Buffer fetches the public R2 image itself. Its current image asset input
+        # does not expose alt text, so keep the argument for publisher compatibility.
+        del alt_text
+        mutation = """
+        mutation CreatePost($input: CreatePostInput!) {
+          createPost(input: $input) {
+            __typename
+            ... on PostActionSuccess {
+              post { id status }
+            }
+            ... on MutationError { message }
+          }
+        }
+        """
+        post_input = {
+            "text": text,
+            "channelId": self.channel_id,
+            "schedulingType": "automatic",
+            "mode": "shareNow",
+            "aiAssisted": True,
+            "assets": [],
+        }
+        if image_url:
+            post_input["assets"] = [{"image": {"url": image_url}}]
+        response = self.session.post(
+            self.API_URL,
+            headers={
+                "Authorization": f"Bearer {self.api_key}",
+                "Content-Type": "application/json",
+            },
+            json={"query": mutation, "variables": {"input": post_input}},
+            timeout=(10, 60),
+        )
+        response.raise_for_status()
+        raw = response.json()
+        if raw.get("errors"):
+            message = str((raw["errors"][0] or {}).get("message") or "unknown GraphQL error")
+            raise RuntimeError(f"Buffer rejected the request: {message}")
+        result = (raw.get("data") or {}).get("createPost") or {}
+        post = result.get("post") or {}
+        post_id = str(post.get("id") or "")
+        if not post_id:
+            message = str(result.get("message") or "Buffer did not return a post id")
+            raise RuntimeError(f"Buffer could not create the post: {message}")
+        return PublishResult(post_id, None, raw)
+
+
+class BufferThreadsTextPublisher(BufferTextPublisher):
+    def publish(
+        self,
+        text: str,
+        topic_tag: str | None = None,
+        image_url: str | None = None,
+        alt_text: str | None = None,
+    ) -> PublishResult:
+        # Buffer's API currently has no Threads topic-tag field.
+        del topic_tag
+        return super().publish(text, image_url, alt_text)
+
+
 class XTextPublisher:
     def __init__(self, access_token: str | None = None, session=None):
         self.access_token = (access_token or os.getenv("X_ACCESS_TOKEN", "")).strip()

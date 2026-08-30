@@ -76,6 +76,14 @@ services:
         value: "5"
       - key: KLING_MONTHLY_VIDEO_LIMIT
         value: "5"
+      - key: SOCIAL_TEXT_PUBLISH_PROVIDER
+        value: buffer
+      - key: BUFFER_API_KEY
+        sync: false
+      - key: BUFFER_X_CHANNEL_ID
+        sync: false
+      - key: BUFFER_THREADS_CHANNEL_ID
+        sync: false
       - key: SOCIAL_X_PUBLISH_ENABLED
         value: "false"
       - key: X_ACCESS_TOKEN
@@ -233,6 +241,14 @@ services:
         value: "5"
       - key: KLING_MONTHLY_VIDEO_LIMIT
         value: "5"
+      - key: SOCIAL_TEXT_PUBLISH_PROVIDER
+        value: buffer
+      - key: BUFFER_API_KEY
+        sync: false
+      - key: BUFFER_X_CHANNEL_ID
+        sync: false
+      - key: BUFFER_THREADS_CHANNEL_ID
+        sync: false
       - key: SOCIAL_X_PUBLISH_ENABLED
         value: "false"
       - key: X_ACCESS_TOKEN

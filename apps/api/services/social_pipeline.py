@@ -10,6 +10,8 @@ from services.kling import KlingClient, download_kling_video
 from services.seedance import SeedanceClient
 from services.social_content import generate_shared_text_content, generate_social_content
 from services.social_publishers import (
+    BufferTextPublisher,
+    BufferThreadsTextPublisher,
     InstagramReelPublisher,
     ThreadsTextPublisher,
     TikTokVideoPublisher,
@@ -595,6 +597,18 @@ def configured_text_platforms() -> set[str]:
     return enabled
 
 
+def configured_text_publisher(platform: str):
+    provider = os.getenv("SOCIAL_TEXT_PUBLISH_PROVIDER", "direct").strip().lower()
+    if provider == "buffer":
+        channel_id = os.getenv(f"BUFFER_{platform.upper()}_CHANNEL_ID", "").strip()
+        if platform == "threads":
+            return BufferThreadsTextPublisher(channel_id)
+        return BufferTextPublisher(channel_id)
+    if provider == "direct":
+        return XTextPublisher() if platform == "x" else ThreadsTextPublisher()
+    raise RuntimeError(f"Unsupported SOCIAL_TEXT_PUBLISH_PROVIDER: {provider}")
+
+
 def configured_video_platforms() -> set[str]:
     if video_publishing_is_manual():
         return set()
@@ -644,10 +658,10 @@ def publish_due_text_jobs(
             image_url = str(shared_image.get("url") or "").strip() or None
             alt_text = str(shared_image.get("alt_text") or "").strip() or None
             if job.platform == "x":
-                publisher = publishers.get("x") or XTextPublisher()
+                publisher = publishers.get("x") or configured_text_publisher("x")
                 result = publisher.publish(content["text"], image_url, alt_text)
             elif job.platform == "threads":
-                publisher = publishers.get("threads") or ThreadsTextPublisher()
+                publisher = publishers.get("threads") or configured_text_publisher("threads")
                 result = publisher.publish(
                     content["text"], content.get("topic_tag"), image_url, alt_text
                 )
