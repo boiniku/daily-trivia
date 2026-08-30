@@ -32,6 +32,10 @@ VIDEO_PLATFORMS = ("instagram", "tiktok")
 STATIC_RENDER_VERSION = 3
 
 
+def video_publishing_is_manual() -> bool:
+    return os.getenv("SOCIAL_VIDEO_MANUAL_ONLY", "true").lower() != "false"
+
+
 def _video_prompt_json(video_content: dict) -> dict:
     scenes = video_content.get("scenes", [])
     hero_index = next(
@@ -152,14 +156,15 @@ def create_content_job(
         prompt_json=_video_prompt_json(video_content),
     )
     db.add(video)
-    for platform in VIDEO_PLATFORMS:
-        db.add(SocialPublishJob(
-            content_job_id=job.id,
-            platform=platform,
-            content_type="video",
-            status="waiting_video",
-            scheduled_at=scheduled_at,
-        ))
+    if not video_publishing_is_manual():
+        for platform in VIDEO_PLATFORMS:
+            db.add(SocialPublishJob(
+                content_job_id=job.id,
+                platform=platform,
+                content_type="video",
+                status="waiting_video",
+                scheduled_at=scheduled_at,
+            ))
     db.commit()
     db.refresh(job)
     return job
@@ -591,6 +596,8 @@ def configured_text_platforms() -> set[str]:
 
 
 def configured_video_platforms() -> set[str]:
+    if video_publishing_is_manual():
+        return set()
     enabled = set()
     if os.getenv("SOCIAL_INSTAGRAM_PUBLISH_ENABLED", "false").lower() == "true":
         enabled.add("instagram")

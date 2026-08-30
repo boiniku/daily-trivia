@@ -225,6 +225,33 @@ def mark_line_sent(candidate: TriviaCandidate) -> None:
     candidate.line_sent_at = datetime.utcnow()
 
 
+def _manual_caption(section: dict) -> str:
+    caption = str(section.get("caption") or "").strip()
+    hashtags = []
+    for item in section.get("hashtags") or []:
+        value = str(item).strip().lstrip("#")
+        if value and f"#{value}" not in caption:
+            hashtags.append(f"#{value}")
+    return " ".join(part for part in (caption, " ".join(hashtags)) if part).strip()
+
+
+def _youtube_handoff(content_job: SocialContentJob, content: dict) -> tuple[str, str]:
+    youtube = content.get("youtube") or {}
+    video = content.get("video") or {}
+    fallback_narration = " ".join(
+        str(item).strip() for item in video.get("narration", []) if str(item).strip()
+    )
+    title = str(youtube.get("title") or content_job.trivia.title).strip()[:100]
+    description = str(youtube.get("description") or fallback_narration).strip()
+    hashtags = []
+    for item in [*(youtube.get("hashtags") or []), "Shorts", "雑学", "毎日雑学"]:
+        value = str(item).strip().lstrip("#")
+        if value and value not in hashtags and f"#{value}" not in description:
+            hashtags.append(value)
+    suffix = " ".join(f"#{item}" for item in hashtags[:5])
+    return title, "\n\n".join(part for part in (description, suffix) if part).strip()
+
+
 def social_review_messages(content_job: SocialContentJob, video_job: SocialVideoJob) -> list[dict]:
     if not video_job.final_video_url or not video_job.thumbnail_url:
         raise ValueError("A completed video and thumbnail are required for LINE review")
@@ -232,12 +259,15 @@ def social_review_messages(content_job: SocialContentJob, video_job: SocialVideo
     instagram = content.get("instagram") or {}
     tiktok = content.get("tiktok") or {}
     video = content.get("video") or {}
+    youtube_title, youtube_description = _youtube_handoff(content_job, content)
     title = (content_job.trivia.title or f"動画 #{content_job.id}")[:80]
     narration = " ".join(str(item).strip() for item in video.get("narration", []) if str(item).strip())
     detail_text = (
         f"【脚本】\n{narration}\n\n"
-        f"【Instagram】\n{instagram.get('caption', '')}\n\n"
-        f"【TikTok】\n{tiktok.get('caption', '')}"
+        f"【Instagram Reels】\n{_manual_caption(instagram)}\n\n"
+        f"【TikTok】\n{_manual_caption(tiktok)}\n\n"
+        f"【YouTube Shorts タイトル】\n{youtube_title}\n\n"
+        f"【YouTube Shorts 概要欄】\n{youtube_description}"
     )[:5000]
     body = [
         {"type": "text", "text": title, "weight": "bold", "size": "lg", "wrap": True},
@@ -251,8 +281,8 @@ def social_review_messages(content_job: SocialContentJob, video_job: SocialVideo
         {
             "type": "text",
             "text": (
-                "承認すると、有効化済みのInstagram・TikTokへ動画投稿を開始します。"
-                f"\nTikTok公開範囲: {os.getenv('TIKTOK_PRIVACY_LEVEL', 'SELF_ONLY')}"
+                "動画と投稿文を確認し、Instagram・TikTok・YouTube Shortsへ手動で投稿してください。"
+                "投稿文は次のLINEメッセージを長押ししてコピーできます。"
             ),
             "size": "xs",
             "wrap": True,
@@ -276,10 +306,18 @@ def social_review_messages(content_job: SocialContentJob, video_job: SocialVideo
                         "style": "primary",
                         "color": "#1DB446",
                         "action": {
-                            "type": "postback",
-                            "label": "承認して投稿",
-                            "data": f"action=social_approve&content_job_id={content_job.id}",
-                            "displayText": f"「{title}」の投稿を承認",
+                            "type": "uri",
+                            "label": "動画を開く",
+                            "uri": video_job.final_video_url,
+                        },
+                    },
+                    {
+                        "type": "button",
+                        "style": "secondary",
+                        "action": {
+                            "type": "uri",
+                            "label": "サムネイルを開く",
+                            "uri": video_job.thumbnail_url,
                         },
                     },
                     {
@@ -287,9 +325,19 @@ def social_review_messages(content_job: SocialContentJob, video_job: SocialVideo
                         "style": "secondary",
                         "action": {
                             "type": "postback",
-                            "label": "今回は投稿しない",
+                            "label": "確認済みにする",
+                            "data": f"action=social_approve&content_job_id={content_job.id}",
+                            "displayText": f"「{title}」の動画を確認済みにしました",
+                        },
+                    },
+                    {
+                        "type": "button",
+                        "style": "secondary",
+                        "action": {
+                            "type": "postback",
+                            "label": "今回は使わない",
                             "data": f"action=social_reject&content_job_id={content_job.id}",
-                            "displayText": f"「{title}」を今回は投稿しない",
+                            "displayText": f"「{title}」を今回は使わない",
                         },
                     },
                 ],

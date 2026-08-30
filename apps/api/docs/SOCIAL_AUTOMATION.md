@@ -1,20 +1,22 @@
 # SNS投稿自動化
 
-承認済みの`trivia`から、TikTok / Instagram向け動画と、X / Threads向けテキストを作成します。通常運用は複数の生成画像、パン・ズーム、字幕、Aivis音声、共通BGMを組み合わせた静止画動画です。外部の動画生成モデルは明示的に選んだ場合だけ使います。
+承認済みの`trivia`から、Instagram / TikTok / YouTube Shortsへ手動投稿する動画と、X / Threadsへ自動投稿するテキストを作成します。通常運用は複数の生成画像、パン・ズーム、字幕、Aivis音声、共通BGMを組み合わせた静止画動画です。外部の動画生成モデルは明示的に選んだ場合だけ使います。
 
 ## LINE確認から投稿まで
 
-`render-static`で動画が完成すると、`LINE_ADMIN_USER_IDS`の管理者へ動画、投稿文、次の2ボタンが届きます。
+`render-static`で動画が完成すると、`LINE_ADMIN_USER_IDS`の管理者へ動画、サムネイル、Instagram / TikTok用キャプション、YouTube Shorts用タイトル・概要欄と次のボタンが届きます。
 
-- `承認して投稿`: コンテンツを承認し、有効化済みの媒体へ投稿を開始
-- `今回は投稿しない`: 投稿ジョブを取り消し
+- `動画を開く`: R2の完成動画を開いて保存
+- `サムネイルを開く`: R2のサムネイルを開いて保存
+- `確認済みにする`: 動画を確認済みとして記録
+- `今回は使わない`: 投稿候補を取り消し
 
-承認前の投稿ジョブは`waiting_approval`または`waiting_video`のままで、外部APIへ送信されません。LINEのWebhookは既存の`POST /line/webhook`を使います。承認後はX・Threadsを即時処理し、Instagram・TikTokは非同期処理を数回確認して、最後の状態をLINEへ返します。
+動画は`SOCIAL_VIDEO_MANUAL_ONLY=true`を既定とし、LINEで確認して各公式アプリから手動投稿します。X・Threadsの日次投稿は動画とは別のジョブで自動処理します。LINEのWebhookは既存の`POST /line/webhook`を使います。
 
 GitHub Actionsの`social-video-review.yml`は毎日1回`run-due`を呼びます。API側で前回から4日経ったかを判定するため、実際の生成は4日に最大1本です。完成済みのLINE確認が残っている間も新しい動画を作らず、不要な生成費を防ぎます。GitHubへ次を登録してください。
 
 - Actions variable `SOCIAL_AUTOMATION_URL`: `https://daily-trivia-e7ge.onrender.com`
-- Actions secret `SOCIAL_AUTOMATION_SECRET`: Renderの同名環境変数と同じ値
+- Actions secret `DAILY_COLLECTION_SECRET`: Renderの同名環境変数と同じ値
 
 ## X・Threadsの毎日投稿
 
@@ -26,13 +28,12 @@ X APIは従量課金で、公式価格のContent Createは1リクエス`$0.015`�
 
 ## 安全な初期状態
 
-すべての実投稿は既定で無効です。認証情報を設定したうえで、対応するフラグを`true`にした媒体だけが投稿されます。
+実投稿は既定で無効です。X・Threadsは認証情報を設定したうえで、対応するフラグを`true`にした媒体だけが投稿されます。動画は手動投稿が既定です。
 
 ```text
+SOCIAL_VIDEO_MANUAL_ONLY=true
 SOCIAL_X_PUBLISH_ENABLED=true
 SOCIAL_THREADS_PUBLISH_ENABLED=true
-SOCIAL_INSTAGRAM_PUBLISH_ENABLED=true
-SOCIAL_TIKTOK_PUBLISH_ENABLED=true
 ```
 
 Instagramリールにはプロアカウント、`instagram_content_publish`権限、ユーザーIDとアクセストークンが必要です。
@@ -218,10 +219,10 @@ POST /internal/social/publish-video
 - Kling 3.0の720p・5秒・無音タスク投入、月5本制限、R2退避
 - Xテキスト投稿
 - Threadsテキスト投稿
-- LINEへの完成動画通知と、LINE上の承認・却下
-- InstagramリールとTikTok動画の非同期投稿
+- LINEへの完成動画、サムネイル、3媒体用投稿文の通知と確認記録
+- Instagramリール、TikTok、YouTube Shortsへの手動投稿用データ生成
 - 投稿の承認、冪等性、再試行、外部投稿の明示的な有効化
 
-Instagram / TikTokへの実投稿は、対応するAPI審査と認証情報を用意して明示的に有効化した後だけ動作します。
+Instagram / TikTokの旧自動投稿コードは将来用に残していますが、`SOCIAL_VIDEO_MANUAL_ONLY=true`では外部へ送信されません。
 
 画像生成にはOpenAIの画像生成APIを使用します。新形式では通常4枚生成するため、画像料金は旧形式の約4倍になります。雑学の既存画像があれば1シーン目へ再利用し、その分の生成を省略します。

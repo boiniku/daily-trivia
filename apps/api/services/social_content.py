@@ -40,6 +40,12 @@ class CaptionPost(StrictModel):
     hashtags: list[str]
 
 
+class YouTubePost(StrictModel):
+    title: str
+    description: str
+    hashtags: list[str]
+
+
 class VideoScene(StrictModel):
     duration: float
     role: str
@@ -66,6 +72,7 @@ class SocialDraft(StrictModel):
     threads: ThreadsPost
     instagram: CaptionPost
     tiktok: CaptionPost
+    youtube: YouTubePost
     video: VideoDraft
 
 
@@ -184,6 +191,9 @@ DBの元タイトル・本文・言い回しは参照せず、模倣もしない
 - Xはハッシュタグ込みで日本語120文字程度、280ウェイト以内。引き、結論、理由まで完結させる
 - ThreadsはXと完全に同じ本文にする。問いかけたまま答えを伏せて終わらない
 - InstagramとTikTokのhashtagsは各2〜4個にする
+- YouTube Shortsのtitleは、対象名と意外な結論が分かる自然な日本語で60文字以内。ハッシュタグは入れない
+- YouTube Shortsのdescriptionは、答えを伏せず、動画の要点を2〜4文で説明する。最後に「毎日雑学では、毎日3つの雑学をアプリとウィジェットで楽しめます。」を入れる
+- YouTube Shortsのhashtagsは「Shorts」「雑学」「毎日雑学」を含む3〜5個にする
 {feedback}
 """.strip()
 
@@ -262,6 +272,31 @@ def normalize_social_content(data: dict) -> dict:
         raise ValueError("X text is empty")
     # X and Threads intentionally share one fully self-contained explanation.
     data["threads"]["text"] = data["x"]["text"]
+
+    youtube = data.get("youtube")
+    if not isinstance(youtube, dict):
+        # Keep older jobs usable after YouTube handoff metadata is introduced.
+        youtube = {
+            "title": str(data["x"]["text"]).split("。", 1)[0],
+            "description": str(data["x"]["text"]),
+            "hashtags": ["Shorts", "雑学", "毎日雑学"],
+        }
+        data["youtube"] = youtube
+    youtube["title"] = str(youtube.get("title", "")).strip().lstrip("#")[:60]
+    if not youtube["title"]:
+        raise ValueError("YouTube title is empty")
+    youtube["description"] = str(youtube.get("description", "")).strip()[:5000]
+    if not youtube["description"]:
+        raise ValueError("YouTube description is empty")
+    raw_youtube_hashtags = youtube.get("hashtags")
+    if not isinstance(raw_youtube_hashtags, list):
+        raw_youtube_hashtags = []
+    youtube_hashtags = []
+    for item in [*raw_youtube_hashtags, "Shorts", "雑学", "毎日雑学"]:
+        value = re.sub(r"\s+", "", str(item).strip().lstrip("#"))
+        if value and value not in youtube_hashtags:
+            youtube_hashtags.append(value)
+    youtube["hashtags"] = youtube_hashtags[:5]
 
     video = data["video"]
     pattern = str(video.get("story_pattern", "classic_reveal")).strip()

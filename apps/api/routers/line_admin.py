@@ -28,6 +28,7 @@ from services.social_pipeline import (
     process_due_video_jobs,
     publish_due_text_jobs,
     reject_content_job,
+    video_publishing_is_manual,
 )
 from services.trivia_candidates import (
     CandidateError,
@@ -409,6 +410,15 @@ async def line_webhook(request: Request, background_tasks: BackgroundTasks):
                             reply_message(reply_token, [_text_message("この動画はすでに承認済みです。")])
                             continue
                         job = approve_content_job(db, content_job_id)
+                        if video_publishing_is_manual():
+                            reply_message(
+                                reply_token,
+                                [_text_message(
+                                    "確認済みにしました。LINEの動画URLと投稿文を使って、"
+                                    "Instagram・TikTok・YouTube Shortsへ手動で投稿してください。"
+                                )],
+                            )
+                            continue
                         configured = configured_text_platforms() | configured_video_platforms()
                         enabled = {
                             item.platform for item in job.publish_jobs

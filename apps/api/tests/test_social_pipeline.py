@@ -33,6 +33,7 @@ from services.story_patterns import select_story_pattern
 from services.social_publishers import ThreadsTextPublisher, XTextPublisher
 from services.social_pipeline import (
     approve_content_job,
+    configured_video_platforms,
     create_daily_text_job,
     create_content_job,
     poll_seedance_job,
@@ -52,6 +53,11 @@ def sample_content():
         "threads": {"text": "タコの心臓は3つあります。知っていましたか？", "topic_tag": "雑学"},
         "instagram": {"caption": "タコの雑学", "hashtags": ["雑学"]},
         "tiktok": {"caption": "タコの雑学", "hashtags": ["雑学"]},
+        "youtube": {
+            "title": "タコの心臓はなぜ3つある？",
+            "description": "タコには心臓が3つあります。2つはえらへ血液を送ります。",
+            "hashtags": ["Shorts", "雑学", "毎日雑学"],
+        },
         "video": {
             "narration": ["タコの心臓は3つあります。"],
             "subtitles": ["心臓は3つ"],
@@ -491,6 +497,8 @@ class SocialPipelineTests(unittest.TestCase):
         self.assertGreaterEqual(sum(item["duration"] for item in normalized["video"]["scenes"]), 18)
         self.assertEqual(normalized["video"]["scenes"][1]["motion"], "pan_left")
         self.assertEqual(normalized["x"]["text"], normalized["threads"]["text"])
+        self.assertEqual(normalized["youtube"]["title"], "タコの心臓はなぜ3つある？")
+        self.assertIn("Shorts", normalized["youtube"]["hashtags"])
 
     def test_quality_check_rejects_contextless_hook_and_overlong_scene(self):
         content = sample_scene_content()
@@ -683,9 +691,20 @@ class SocialPipelineTests(unittest.TestCase):
         first = create_content_job(self.db, self.trivia.id, generator=lambda trivia: sample_content())
         second = create_content_job(self.db, self.trivia.id, generator=lambda trivia: sample_content())
         self.assertEqual(first.id, second.id)
-        self.assertEqual(len(first.publish_jobs), 2)
+        self.assertEqual(len(first.publish_jobs), 0)
         self.assertEqual(len(first.video_jobs), 1)
         self.assertEqual(first.video_jobs[0].provider, "static")
+
+    def test_manual_video_mode_blocks_external_publishers_even_if_flags_are_enabled(self):
+        with patch.dict(
+            "os.environ",
+            {
+                "SOCIAL_VIDEO_MANUAL_ONLY": "true",
+                "SOCIAL_INSTAGRAM_PUBLISH_ENABLED": "true",
+                "SOCIAL_TIKTOK_PUBLISH_ENABLED": "true",
+            },
+        ):
+            self.assertEqual(configured_video_platforms(), set())
 
     def test_unapproved_content_can_be_regenerated_before_media_creation(self):
         content_job = create_content_job(self.db, self.trivia.id, generator=lambda trivia: sample_content())
@@ -729,8 +748,7 @@ class SocialPipelineTests(unittest.TestCase):
         self.assertEqual(rendered.thumbnail_url, "https://cdn.example/images.png")
         self.assertEqual([item[3] for item in uploads], ["images", "videos"])
         approve_content_job(self.db, content_job.id)
-        video_publish_jobs = [job for job in content_job.publish_jobs if job.content_type == "video"]
-        self.assertTrue(all(job.status == "queued" for job in video_publish_jobs))
+        self.assertEqual(content_job.publish_jobs, [])
 
     def test_static_video_render_generates_and_archives_each_scene_image(self):
         content_job = create_content_job(
@@ -964,8 +982,13 @@ class SocialPipelineTests(unittest.TestCase):
 
         self.assertEqual(messages[0]["type"], "video")
         self.assertIn("【脚本】", messages[1]["text"])
-        self.assertIn("【Instagram】", messages[1]["text"])
-        approval = messages[2]["contents"]["footer"]["contents"][0]["action"]
+        self.assertIn("【Instagram Reels】", messages[1]["text"])
+        self.assertIn("【YouTube Shorts タイトル】", messages[1]["text"])
+        self.assertIn("#Shorts", messages[1]["text"])
+        footer = messages[2]["contents"]["footer"]["contents"]
+        self.assertEqual(footer[0]["action"]["uri"], video_job.final_video_url)
+        self.assertEqual(footer[1]["action"]["uri"], video_job.thumbnail_url)
+        approval = footer[2]["action"]
         self.assertEqual(approval["type"], "postback")
         self.assertIn(f"content_job_id={content_job.id}", approval["data"])
 
@@ -980,7 +1003,10 @@ class SocialPipelineTests(unittest.TestCase):
             self.assertEqual(image.format, "JPEG")
 
     def test_approved_video_jobs_submit_then_finish_without_duplicates(self):
-        content_job = create_content_job(self.db, self.trivia.id, generator=lambda trivia: sample_content())
+        with patch.dict("os.environ", {"SOCIAL_VIDEO_MANUAL_ONLY": "false"}):
+            content_job = create_content_job(
+                self.db, self.trivia.id, generator=lambda trivia: sample_content()
+            )
         video_job = content_job.video_jobs[0]
         video_job.status = "ready"
         video_job.final_video_url = "https://cdn.example/video.mp4"

@@ -88,6 +88,8 @@ services:
         sync: false
       - key: THREADS_USER_ID
         sync: false
+      - key: SOCIAL_VIDEO_MANUAL_ONLY
+        value: "true"
       - key: SOCIAL_INSTAGRAM_PUBLISH_ENABLED
         value: "false"
       - key: INSTAGRAM_ACCESS_TOKEN
@@ -243,6 +245,8 @@ services:
         sync: false
       - key: THREADS_USER_ID
         sync: false
+      - key: SOCIAL_VIDEO_MANUAL_ONLY
+        value: "true"
       - key: SOCIAL_INSTAGRAM_PUBLISH_ENABLED
         value: "false"
       - key: INSTAGRAM_ACCESS_TOKEN
