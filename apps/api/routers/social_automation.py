@@ -175,7 +175,7 @@ def run_due_social_text(
     db = SessionLocal()
     try:
         # Resume a previously queued post first, without creating a duplicate.
-        publish_due_text_jobs(db)
+        resumed = publish_due_text_jobs(db)
         latest = (
             db.query(SocialContentJob)
             .filter(~SocialContentJob.video_jobs.any())
@@ -184,11 +184,14 @@ def run_due_social_text(
         )
         interval_hours = max(1, min(int(os.getenv("SOCIAL_TEXT_INTERVAL_HOURS", "24")), 168))
         if latest and latest.created_at > datetime.utcnow() - timedelta(hours=interval_hours):
+            db.refresh(latest)
             return {
-                "status": "skipped",
+                "status": "published" if resumed else "skipped",
                 "reason": "interval_not_elapsed",
                 "content_job_id": latest.id,
                 "next_at": (latest.created_at + timedelta(hours=interval_hours)).isoformat(),
+                "published_job_ids": [item.id for item in resumed],
+                "publish_jobs": [_publish_job_response(item) for item in latest.publish_jobs],
             }
         job = create_daily_text_job(db)
         published = publish_due_text_jobs(db, content_job_id=job.id)
@@ -197,6 +200,7 @@ def run_due_social_text(
             "status": "published" if published else "queued",
             "content_job": _content_job_response(job),
             "published_job_ids": [item.id for item in published],
+            "publish_jobs": [_publish_job_response(item) for item in job.publish_jobs],
         }
     finally:
         db.close()

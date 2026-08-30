@@ -28,10 +28,16 @@ jobs:
         run: |
           test -n "$SOCIAL_AUTOMATION_URL"
           test -n "$SOCIAL_AUTOMATION_SECRET"
-          curl --fail-with-body --max-time 300 \
+          response=$(curl --fail-with-body --max-time 300 \
             --request POST \
             --header "Authorization: Bearer ${SOCIAL_AUTOMATION_SECRET}" \
-            "${SOCIAL_AUTOMATION_URL%/}/internal/social/run-due-text"
+            "${SOCIAL_AUTOMATION_URL%/}/internal/social/run-due-text")
+          echo "$response"
+          echo "$response" | jq --exit-status '
+            [.publish_jobs[]? | select(.platform == "x" or .platform == "threads")] as $jobs
+            | ($jobs | length) == 2
+              and ($jobs | all(.status == "published"))
+          '
 
       - name: Create a due video and send it to LINE
         if: ${{ github.event_name == 'schedule' || !inputs.text_only }}
