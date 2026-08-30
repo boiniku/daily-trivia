@@ -6,12 +6,14 @@ from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 from unittest.mock import patch
 
+from fastapi import HTTPException
 from PIL import Image
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from models import Base, SocialPublishJob, SocialVideoJob, Trivia
+from routers.social_automation import _authorize as authorize_social_automation
 from services.line_bot import make_line_video_preview, social_review_messages
 from services.kling import KlingClient, KlingTask
 from services.seedance import SeedanceClient, SeedanceTask
@@ -115,6 +117,35 @@ class FakeResponse:
     @property
     def content(self):
         return b"fake-audio"
+
+
+class SocialAutomationAuthorizationTests(unittest.TestCase):
+    def test_manual_routes_only_accept_social_secret(self):
+        with patch.dict(
+            "os.environ",
+            {
+                "SOCIAL_AUTOMATION_SECRET": "manual-secret",
+                "DAILY_COLLECTION_SECRET": "scheduler-secret",
+            },
+            clear=False,
+        ):
+            authorize_social_automation("Bearer manual-secret")
+            with self.assertRaises(HTTPException):
+                authorize_social_automation("Bearer scheduler-secret")
+
+    def test_scheduler_routes_can_accept_daily_collection_secret(self):
+        with patch.dict(
+            "os.environ",
+            {
+                "SOCIAL_AUTOMATION_SECRET": "manual-secret",
+                "DAILY_COLLECTION_SECRET": "scheduler-secret",
+            },
+            clear=False,
+        ):
+            authorize_social_automation(
+                "Bearer scheduler-secret",
+                allow_scheduler_secret=True,
+            )
 
 
 class FakeAivisErrorResponse:

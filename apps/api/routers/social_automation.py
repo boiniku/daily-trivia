@@ -37,9 +37,16 @@ class VoicePreviewRequest(BaseModel):
     styles: list[str] = Field(default_factory=list, max_length=3)
 
 
-def _authorize(authorization: str | None) -> None:
-    expected = os.getenv("SOCIAL_AUTOMATION_SECRET", "")
-    if not expected:
+def _authorize(
+    authorization: str | None,
+    *,
+    allow_scheduler_secret: bool = False,
+) -> None:
+    expected_values = [os.getenv("SOCIAL_AUTOMATION_SECRET", "").strip()]
+    if allow_scheduler_secret:
+        expected_values.append(os.getenv("DAILY_COLLECTION_SECRET", "").strip())
+    expected_values = [value for value in expected_values if value]
+    if not expected_values:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Social automation is not configured",
@@ -47,7 +54,9 @@ def _authorize(authorization: str | None) -> None:
     supplied = ""
     if authorization and authorization.startswith("Bearer "):
         supplied = authorization.removeprefix("Bearer ").strip()
-    if not supplied or not secrets.compare_digest(supplied, expected):
+    if not supplied or not any(
+        secrets.compare_digest(supplied, expected) for expected in expected_values
+    ):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid authorization")
 
 
@@ -93,7 +102,7 @@ def run_due_social_content(
     authorization: str | None = Header(default=None),
 ):
     """Create at most one static video per interval and send it to LINE for review."""
-    _authorize(authorization)
+    _authorize(authorization, allow_scheduler_secret=True)
     db = SessionLocal()
     try:
         # Recover safely after a Render restart: only already-approved jobs are processed.
@@ -162,7 +171,7 @@ def run_due_social_text(
     authorization: str | None = Header(default=None),
 ):
     """Create and publish at most one shared X/Threads image post per day."""
-    _authorize(authorization)
+    _authorize(authorization, allow_scheduler_secret=True)
     db = SessionLocal()
     try:
         # Resume a previously queued post first, without creating a duplicate.

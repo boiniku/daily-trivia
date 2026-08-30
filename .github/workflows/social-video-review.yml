@@ -18,7 +18,7 @@ jobs:
       - name: Create and publish the daily X and Threads post
         env:
           SOCIAL_AUTOMATION_URL: ${{ vars.SOCIAL_AUTOMATION_URL }}
-          SOCIAL_AUTOMATION_SECRET: ${{ secrets.SOCIAL_AUTOMATION_SECRET }}
+          SOCIAL_AUTOMATION_SECRET: ${{ secrets.DAILY_COLLECTION_SECRET }}
         run: |
           test -n "$SOCIAL_AUTOMATION_URL"
           test -n "$SOCIAL_AUTOMATION_SECRET"
@@ -30,7 +30,7 @@ jobs:
       - name: Create a due video and send it to LINE
         env:
           SOCIAL_AUTOMATION_URL: ${{ vars.SOCIAL_AUTOMATION_URL }}
-          SOCIAL_AUTOMATION_SECRET: ${{ secrets.SOCIAL_AUTOMATION_SECRET }}
+          SOCIAL_AUTOMATION_SECRET: ${{ secrets.DAILY_COLLECTION_SECRET }}
         run: |
           test -n "$SOCIAL_AUTOMATION_URL"
           test -n "$SOCIAL_AUTOMATION_SECRET"
