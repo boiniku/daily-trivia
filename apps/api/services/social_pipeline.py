@@ -8,7 +8,11 @@ from sqlalchemy.orm import Session
 from models import SocialContentJob, SocialPublishJob, SocialVideoJob, Trivia
 from services.kling import KlingClient, download_kling_video
 from services.seedance import SeedanceClient
-from services.social_content import generate_shared_text_content, generate_social_content
+from services.social_content import (
+    TriviaClaimRejected,
+    generate_shared_text_content,
+    generate_social_content,
+)
 from services.social_publishers import (
     BufferTextPublisher,
     BufferThreadsTextPublisher,
@@ -86,10 +90,34 @@ def create_daily_text_job(
     generator: Callable = generate_shared_text_content,
     scheduled_at: datetime | None = None,
 ) -> SocialContentJob:
-    trivia = select_unused_trivia_with_image(db)
-    if trivia is None:
-        raise ValueError("No unused trivia with a public image is available")
-    content = generator(trivia)
+    try:
+        max_attempts = max(1, min(int(os.getenv("SOCIAL_TEXT_CANDIDATE_ATTEMPTS", "3")), 10))
+    except ValueError:
+        max_attempts = 3
+    content = None
+    trivia = None
+    for _ in range(max_attempts):
+        trivia = select_unused_trivia_with_image(db)
+        if trivia is None:
+            break
+        try:
+            content = generator(trivia)
+            break
+        except TriviaClaimRejected as exc:
+            db.add(SocialContentJob(
+                trivia_id=trivia.id,
+                status="rejected",
+                content_json={
+                    "automation": {
+                        "mode": "daily_text",
+                        "rejection_reason": "original_claim_not_supported",
+                    },
+                    "research": exc.research,
+                },
+            ))
+            db.commit()
+    if trivia is None or content is None:
+        raise ValueError("No verified unused trivia with a public image is available")
     image_url = str((content.get("shared_image") or {}).get("url") or "").strip()
     if not image_url.startswith(("http://", "https://")):
         raise ValueError("Daily text content requires one public image URL")
@@ -188,7 +216,14 @@ def regenerate_content_job(
 
     if generator is None:
         generator = generate_social_content if job.video_jobs else generate_shared_text_content
-    content = generator(job.trivia)
+    try:
+        content = generator(job.trivia)
+    except TriviaClaimRejected:
+        job.status = "rejected"
+        for publish_job in job.publish_jobs:
+            publish_job.status = "cancelled"
+        db.commit()
+        raise
     job.content_json = content
     if job.video_jobs:
         video_content = content["video"]

@@ -12,7 +12,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from models import Base, SocialPublishJob, SocialVideoJob, Trivia
+from models import Base, SocialContentJob, SocialPublishJob, SocialVideoJob, Trivia
 from routers.social_automation import _authorize as authorize_social_automation
 from services.line_bot import (
     make_line_video_preview,
@@ -22,9 +22,13 @@ from services.line_bot import (
 from services.kling import KlingClient, KlingTask
 from services.seedance import SeedanceClient, SeedanceTask
 from services.social_content import (
+    TriviaClaimRejected,
+    build_research_prompt,
     build_social_prompt,
     build_shared_text_prompt,
+    build_shared_text_review_prompt,
     compose_shared_text,
+    generate_shared_text_content,
     generate_social_content,
     normalize_social_content,
     script_quality_issues,
@@ -720,6 +724,23 @@ class SocialPipelineTests(unittest.TestCase):
         self.assertIn("surprising_fact", prompt)
         self.assertIn("理由が存在しない、または根拠が弱い場合は理由を作らず", prompt)
         self.assertIn("3段階で新しい情報が一つずつ増える構成", prompt)
+        self.assertIn("紹介していない人物名を突然出さない", prompt)
+
+    def test_research_prompt_forbids_replacing_the_original_trivia(self):
+        prompt = build_research_prompt(self.trivia)
+
+        self.assertIn("別テーマへすり替えてはいけません", prompt)
+        self.assertIn("中心的な主張をそのまま確認できた場合だけsupported", prompt)
+
+    def test_editor_review_requires_context_and_original_topic_fidelity(self):
+        prompt = build_shared_text_review_prompt(
+            self.trivia,
+            {"subject": "タコ", "verified_fact": "心臓は三つある"},
+            {"text": "投稿案"},
+        )
+
+        self.assertIn("関連する別テーマへ変えていない", prompt)
+        self.assertIn("説明なしに突然現れず", prompt)
 
     def test_shared_text_is_composed_in_fixed_readable_format(self):
         composed = compose_shared_text({
@@ -735,6 +756,74 @@ class SocialPipelineTests(unittest.TestCase):
             "二つはえらへ、残る一つは全身へ血液を送ります。\n\n"
             "泳ぐと全身用の心臓は止まるため、タコは泳ぐと疲れやすいのです。",
         )
+
+    def test_shared_text_generation_rejects_an_unverified_original_claim(self):
+        research = {
+            "original_claim": "昔はパンで鉛筆跡を消していた",
+            "claim_status": "unsupported",
+            "claim_alignment": "信頼できる資料で元の主張を確認できない",
+            "subject": "パンの消しゴム",
+            "common_misconception": "",
+            "verified_fact": "元の主張は確認できない",
+            "explanation": "",
+            "supporting_details": [],
+            "caveats": ["裏付けなし"],
+            "visual_anchors": [],
+            "sources": ["https://example.com/source"],
+        }
+        client = FakeOpenAI([
+            fake_model_response(research, searches=1),
+        ])
+
+        with self.assertRaises(TriviaClaimRejected):
+            generate_shared_text_content(self.trivia, client=client)
+
+        self.assertEqual(len(client.responses.calls), 1)
+
+    def test_shared_text_generation_uses_editor_review_and_repairs_once(self):
+        research = {
+            "original_claim": "タコの心臓は三つある",
+            "claim_status": "supported",
+            "claim_alignment": "元の主張を資料で確認できた",
+            "subject": "タコ",
+            "common_misconception": "心臓は一つ",
+            "verified_fact": "タコの心臓は三つある",
+            "explanation": "二つはえらへ血液を送る",
+            "supporting_details": ["残る一つは全身へ送る"],
+            "caveats": [],
+            "visual_anchors": ["タコ"],
+            "sources": ["https://example.com/source"],
+        }
+        first_draft = {
+            "surprising_fact": "タコの心臓は3つあります",
+            "supporting_point": "二つはえらへ血液を送ります",
+            "closing_point": "この人が発見しました",
+            "alt_text": "青い海の中をゆっくり泳いでいるタコを写した写真",
+        }
+        repaired_draft = {
+            "surprising_fact": "タコの心臓は3つあります",
+            "supporting_point": "二つはえらへ、残る一つは全身へ血液を送ります",
+            "closing_point": "役割を分けることで、全身とえらの両方へ血液を循環させます",
+            "alt_text": "青い海の中をゆっくり泳いでいるタコを写した写真",
+        }
+        client = FakeOpenAI([
+            fake_model_response(research, searches=1),
+            fake_model_response(first_draft),
+            fake_model_response({
+                "approved": False,
+                "issues": ["『この人』が誰か分からず、3段目が話題から外れています"],
+            }),
+            fake_model_response(repaired_draft),
+            fake_model_response({"approved": True, "issues": []}),
+        ])
+
+        generated = generate_shared_text_content(self.trivia, client=client)
+
+        self.assertEqual(len(client.responses.calls), 5)
+        self.assertEqual(client.responses.calls[0]["model"], "gpt-5.6-terra")
+        self.assertEqual(client.responses.calls[0]["reasoning"]["effort"], "medium")
+        self.assertTrue(generated["generation_meta"]["repaired"])
+        self.assertIn("役割を分けることで", generated["x"]["text"])
 
     def test_content_generation_researches_then_writes_script(self):
         research = {
@@ -901,6 +990,52 @@ class SocialPipelineTests(unittest.TestCase):
         self.assertEqual(regenerated.status, "review")
         self.assertTrue(
             all(item.status == "waiting_approval" for item in regenerated.publish_jobs)
+        )
+
+    def test_daily_text_job_rejects_unverified_claim_and_tries_next_trivia(self):
+        self.trivia.image_url = "https://cdn.example/octopus.png"
+        self.trivia.hee_count = 10
+        fallback = Trivia(
+            title="確認済みの雑学",
+            content="確認済みの内容",
+            explanation="確認済みの解説",
+            category="動物",
+            image_url="https://cdn.example/fallback.png",
+            hee_count=1,
+        )
+        self.db.add(fallback)
+        self.db.commit()
+
+        def generator(trivia):
+            if trivia.id == self.trivia.id:
+                raise TriviaClaimRejected({
+                    "claim_status": "unsupported",
+                    "claim_alignment": "元の主張を確認できない",
+                })
+            return {
+                "automation": {"mode": "daily_text", "format_version": 4},
+                "x": {"text": "確認済み投稿", "reply_text": "固定CTA"},
+                "threads": {
+                    "text": "確認済み投稿",
+                    "reply_text": "固定CTA",
+                    "topic_tag": "雑学",
+                },
+                "shared_image": {
+                    "url": trivia.image_url,
+                    "alt_text": "確認済み画像",
+                },
+            }
+
+        job = create_daily_text_job(self.db, generator=generator)
+
+        self.assertEqual(job.trivia_id, fallback.id)
+        rejected = self.db.query(SocialContentJob).filter_by(
+            trivia_id=self.trivia.id,
+            status="rejected",
+        ).one()
+        self.assertEqual(
+            rejected.content_json["automation"]["rejection_reason"],
+            "original_claim_not_supported",
         )
 
     def test_static_video_render_archives_image_and_video(self):

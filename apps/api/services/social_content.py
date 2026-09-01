@@ -1,7 +1,7 @@
 import json
 import os
 import re
-from typing import Any
+from typing import Any, Literal
 
 from openai import OpenAI
 from pydantic import BaseModel, ConfigDict
@@ -17,6 +17,9 @@ class StrictModel(BaseModel):
 
 
 class ResearchBrief(StrictModel):
+    original_claim: str
+    claim_status: Literal["supported", "partially_supported", "unsupported"]
+    claim_alignment: str
     subject: str
     common_misconception: str
     verified_fact: str
@@ -83,6 +86,19 @@ class SharedTextDraft(StrictModel):
     alt_text: str
 
 
+class SharedTextReview(StrictModel):
+    approved: bool
+    issues: list[str]
+
+
+class TriviaClaimRejected(RuntimeError):
+    def __init__(self, research: dict):
+        self.research = research
+        status = str(research.get("claim_status") or "unsupported")
+        alignment = str(research.get("claim_alignment") or "元ネタを確認できませんでした")
+        super().__init__(f"Trivia claim rejected ({status}): {alignment}")
+
+
 def x_weighted_length(text: str) -> int:
     """Close server-side guard for X's weighted 280-character limit."""
     total = 0
@@ -134,6 +150,11 @@ def build_research_prompt(trivia: Any) -> str:
     return f"""
 次のDB雑学を出発点としてWeb検索し、短いSNS動画の脚本に使える事実メモを日本語で作成してください。
 DBの記述を無条件に正しいとみなさず、検索結果と照合してください。
+最初にDBの中心的な主張をoriginal_claimへ一文で抜き出し、その主張自体が資料で確認できるかをclaim_statusで判定してください。
+中心的な主張と同じテーマの別事実が見つかっても、元の主張の裏付けにはなりません。別テーマへすり替えてはいけません。
+claim_statusは、中心的な主張をそのまま確認できた場合だけsupported、一部しか確認できない場合はpartially_supported、確認できない・否定された場合はunsupportedにしてください。
+claim_alignmentには、元の主張と確認結果が一致する点・一致しない点を具体的に書いてください。
+verified_factはoriginal_claimを検証した結果を書き、関連するだけの別雑学を主役にしないでください。
 元の出典を優先し、可能なら公的機関、博物館、大学、学術資料、専門団体など信頼性の高い情報でも確認してください。
 動画の主役は一つに絞り、subjectは冒頭でそのまま読める2〜15文字程度の具体的な名詞にしてください。
 確認できなかった情報は追加せず、異説や断定できない点はcaveatsへ入れてください。
@@ -238,8 +259,38 @@ def build_shared_text_prompt(
 - 全体はXの280ウェイトに収まる簡潔さにする
 - ニュース見出し、教科書調、同じ事実の反復、問いかけ、ハッシュタグは禁止
 - 「意外です」「秘密があります」「結論として」「説明すると」「〜ということです」は禁止
+- 2段目と3段目は、直前の段落との関係が初見でも分かる文章にする。「この人」「この使い方」など説明不足の指示語や、紹介していない人物名を突然出さない
+- 数字や固有名詞は、それが1段目の面白さを具体的に深める場合だけ使い、単独の年表や資料メモにしない
 - alt_textは添付画像の説明として、subjectを含む20〜60文字の客観的な日本語にする
 {feedback}
+""".strip()
+
+
+def build_shared_text_review_prompt(trivia: Any, research: dict, draft: dict) -> str:
+    return f"""
+あなたはSNS雑学投稿の厳しい編集責任者です。投稿案を公開してよいか判定してください。
+
+元のDB雑学:
+- タイトル: {trivia.title}
+- 本文: {trivia.content}
+- 解説: {trivia.explanation or ''}
+
+調査結果:
+{json.dumps(research, ensure_ascii=False, indent=2)}
+
+投稿案:
+{draft.get('text', '')}
+
+次をすべて満たす場合だけapproved=trueにしてください:
+- 元のDB雑学の中心的な面白さを維持し、関連する別テーマへ変えていない
+- 1段目だけで対象と意外な結論が明確に分かる
+- 2段目が1段目を直接具体化し、3段目がさらに理解や驚きを一段進める
+- 各段落の関係が自然で、話題が飛ばない
+- 人物名、専門語、数字、指示語が説明なしに突然現れず、初見の読者が一度で意味を理解できる
+- 調査メモの箇条書きを並べた文章ではなく、人に話したくなる自然な日本語になっている
+- 調査で確認できた範囲だけを述べ、重要な留保を消していない
+
+approved=falseの場合、issuesへ修正内容を具体的に最大5件入れてください。
 """.strip()
 
 
@@ -555,9 +606,14 @@ def _max_research_calls() -> int:
     return max(1, min(value, 2))
 
 
-def _estimated_generation_cost(usage: dict[str, int]) -> float:
-    input_rate = float(os.getenv("SOCIAL_INPUT_USD_PER_MILLION", "0.20"))
-    output_rate = float(os.getenv("SOCIAL_OUTPUT_USD_PER_MILLION", "1.20"))
+def _estimated_generation_cost(
+    usage: dict[str, int],
+    *,
+    input_rate: float | None = None,
+    output_rate: float | None = None,
+) -> float:
+    input_rate = input_rate or float(os.getenv("SOCIAL_INPUT_USD_PER_MILLION", "0.20"))
+    output_rate = output_rate or float(os.getenv("SOCIAL_OUTPUT_USD_PER_MILLION", "1.20"))
     search_rate = float(os.getenv("SOCIAL_WEB_SEARCH_USD_PER_1000", "10.0"))
     return round(
         usage["input_tokens"] * input_rate / 1_000_000
@@ -655,7 +711,7 @@ def generate_shared_text_content(trivia: Any, client: OpenAI | None = None) -> d
         if not api_key:
             raise RuntimeError("OPENAI_API_KEY is not configured")
         client = OpenAI(api_key=api_key)
-    model = os.getenv("SOCIAL_CONTENT_MODEL", "gpt-5.6-luna").strip()
+    model = os.getenv("SOCIAL_TEXT_MODEL", "gpt-5.6-terra").strip()
     research_response = client.responses.parse(
         model=model,
         tools=[{
@@ -670,7 +726,7 @@ def generate_shared_text_content(trivia: Any, client: OpenAI | None = None) -> d
         tool_choice="required",
         max_tool_calls=_max_research_calls(),
         include=["web_search_call.action.sources"],
-        reasoning={"effort": "low"},
+        reasoning={"effort": "medium"},
         max_output_tokens=3000,
         text_format=ResearchBrief,
         input=build_research_prompt(trivia),
@@ -682,11 +738,13 @@ def generate_shared_text_content(trivia: Any, client: OpenAI | None = None) -> d
     research["sources"] = [item for item in sources if item.startswith(("http://", "https://"))][:8]
     if not research["sources"]:
         raise RuntimeError("Social text research returned no source URLs")
+    if research.get("claim_status") != "supported":
+        raise TriviaClaimRejected(research)
 
     responses = [research_response]
     text_response = client.responses.parse(
         model=model,
-        reasoning={"effort": "low"},
+        reasoning={"effort": "medium"},
         max_output_tokens=1200,
         text_format=SharedTextDraft,
         input=build_shared_text_prompt(trivia, research),
@@ -696,11 +754,22 @@ def generate_shared_text_content(trivia: Any, client: OpenAI | None = None) -> d
     )
     responses.append(text_response)
     issues = shared_text_quality_issues(draft, research)
+    review_response = client.responses.parse(
+        model=model,
+        reasoning={"effort": "medium"},
+        max_output_tokens=800,
+        text_format=SharedTextReview,
+        input=build_shared_text_review_prompt(trivia, research, draft),
+    )
+    review = _parsed_response(review_response, "Social shared text review").model_dump()
+    responses.append(review_response)
+    if not review.get("approved"):
+        issues.extend(str(item) for item in review.get("issues", []) if str(item).strip())
     repaired = False
     if issues:
         repair_response = client.responses.parse(
             model=model,
-            reasoning={"effort": "low"},
+            reasoning={"effort": "medium"},
             max_output_tokens=1200,
             text_format=SharedTextDraft,
             input=build_shared_text_prompt(trivia, research, issues),
@@ -711,6 +780,23 @@ def generate_shared_text_content(trivia: Any, client: OpenAI | None = None) -> d
         responses.append(repair_response)
         repaired = True
         remaining = shared_text_quality_issues(draft, research)
+        final_review_response = client.responses.parse(
+            model=model,
+            reasoning={"effort": "medium"},
+            max_output_tokens=800,
+            text_format=SharedTextReview,
+            input=build_shared_text_review_prompt(trivia, research, draft),
+        )
+        final_review = _parsed_response(
+            final_review_response, "Social shared text final review"
+        ).model_dump()
+        responses.append(final_review_response)
+        if not final_review.get("approved"):
+            remaining.extend(
+                str(item)
+                for item in final_review.get("issues", [])
+                if str(item).strip()
+            )
         if remaining:
             raise RuntimeError("Social shared text quality check failed: " + "; ".join(remaining))
 
@@ -721,7 +807,7 @@ def generate_shared_text_content(trivia: Any, client: OpenAI | None = None) -> d
         for key in usage:
             usage[key] += item_usage[key]
     return {
-        "automation": {"mode": "daily_text", "format_version": 3},
+        "automation": {"mode": "daily_text", "format_version": 4},
         "x": {"text": text, "reply_text": social_cta_reply()},
         "threads": {"text": text, "reply_text": social_cta_reply(), "topic_tag": "雑学"},
         "shared_image": {
@@ -734,6 +820,10 @@ def generate_shared_text_content(trivia: Any, client: OpenAI | None = None) -> d
             "model": model,
             **usage,
             "repaired": repaired,
-            "estimated_cost_usd": _estimated_generation_cost(usage),
+            "estimated_cost_usd": _estimated_generation_cost(
+                usage,
+                input_rate=float(os.getenv("SOCIAL_TEXT_INPUT_USD_PER_MILLION", "2.0")),
+                output_rate=float(os.getenv("SOCIAL_TEXT_OUTPUT_USD_PER_MILLION", "12.0")),
+            ),
         },
     }

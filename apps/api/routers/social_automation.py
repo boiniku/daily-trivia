@@ -21,6 +21,7 @@ from services.social_pipeline import (
 )
 from services.line_bot import push_social_review, push_social_text_review
 from services.aivis_tts import generate_aivis_narration
+from services.social_content import TriviaClaimRejected
 from services.social_storage import upload_social_asset
 
 
@@ -212,22 +213,29 @@ def run_due_social_text(
         )
         if pending_review:
             automation = (pending_review.content_json or {}).get("automation") or {}
-            if int(automation.get("format_version") or 0) < 3:
-                pending_review = regenerate_content_job(db, pending_review.id)
-            line_review = _send_line_text_review_if_needed(db, pending_review)
-            return {
-                "status": "review",
-                "reason": "awaiting_line_review",
-                "content_job_id": pending_review.id,
-                "line_review": line_review,
-                "published_job_ids": [item.id for item in resumed],
-                "publish_jobs": [
-                    _publish_job_response(item) for item in pending_review.publish_jobs
-                ],
-            }
+            if int(automation.get("format_version") or 0) < 4:
+                try:
+                    pending_review = regenerate_content_job(db, pending_review.id)
+                except TriviaClaimRejected:
+                    pending_review = None
+            if pending_review:
+                line_review = _send_line_text_review_if_needed(db, pending_review)
+                return {
+                    "status": "review",
+                    "reason": "awaiting_line_review",
+                    "content_job_id": pending_review.id,
+                    "line_review": line_review,
+                    "published_job_ids": [item.id for item in resumed],
+                    "publish_jobs": [
+                        _publish_job_response(item) for item in pending_review.publish_jobs
+                    ],
+                }
         latest = (
             db.query(SocialContentJob)
-            .filter(~SocialContentJob.video_jobs.any())
+            .filter(
+                ~SocialContentJob.video_jobs.any(),
+                SocialContentJob.status != "rejected",
+            )
             .order_by(SocialContentJob.created_at.desc())
             .first()
         )

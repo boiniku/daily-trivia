@@ -22,6 +22,14 @@ services:
         value: "24"
       - key: SOCIAL_CONTENT_MODEL
         value: gpt-5.6-luna
+      - key: SOCIAL_TEXT_MODEL
+        value: gpt-5.6-terra
+      - key: SOCIAL_TEXT_INPUT_USD_PER_MILLION
+        value: "2.0"
+      - key: SOCIAL_TEXT_OUTPUT_USD_PER_MILLION
+        value: "12.0"
+      - key: SOCIAL_TEXT_CANDIDATE_ATTEMPTS
+        value: "3"
       - key: SOCIAL_RESEARCH_MAX_SEARCH_CALLS
         value: "1"
       - key: SOCIAL_RESEARCH_SEARCH_CONTEXT_SIZE
@@ -187,6 +195,14 @@ services:
         value: "24"
       - key: SOCIAL_CONTENT_MODEL
         value: gpt-5.6-luna
+      - key: SOCIAL_TEXT_MODEL
+        value: gpt-5.6-terra
+      - key: SOCIAL_TEXT_INPUT_USD_PER_MILLION
+        value: "2.0"
+      - key: SOCIAL_TEXT_OUTPUT_USD_PER_MILLION
+        value: "12.0"
+      - key: SOCIAL_TEXT_CANDIDATE_ATTEMPTS
+        value: "3"
       - key: SOCIAL_RESEARCH_MAX_SEARCH_CALLS
         value: "1"
       - key: SOCIAL_RESEARCH_SEARCH_CONTEXT_SIZE
