@@ -728,7 +728,7 @@ def generate_shared_text_content(trivia: Any, client: OpenAI | None = None) -> d
         max_tool_calls=_max_text_research_calls(),
         include=["web_search_call.action.sources"],
         reasoning={"effort": "medium"},
-        max_output_tokens=3000,
+        max_output_tokens=6000,
         text_format=ResearchBrief,
         input=build_research_prompt(trivia),
     )
@@ -743,7 +743,7 @@ def generate_shared_text_content(trivia: Any, client: OpenAI | None = None) -> d
     text_response = client.responses.parse(
         model=model,
         reasoning={"effort": "medium"},
-        max_output_tokens=1200,
+        max_output_tokens=3000,
         text_format=SharedTextDraft,
         input=build_shared_text_prompt(trivia, research),
     )
@@ -755,7 +755,7 @@ def generate_shared_text_content(trivia: Any, client: OpenAI | None = None) -> d
     review_response = client.responses.parse(
         model=model,
         reasoning={"effort": "medium"},
-        max_output_tokens=800,
+        max_output_tokens=2000,
         text_format=SharedTextReview,
         input=build_shared_text_review_prompt(trivia, research, draft),
     )
@@ -768,7 +768,7 @@ def generate_shared_text_content(trivia: Any, client: OpenAI | None = None) -> d
         repair_response = client.responses.parse(
             model=model,
             reasoning={"effort": "medium"},
-            max_output_tokens=1200,
+            max_output_tokens=3000,
             text_format=SharedTextDraft,
             input=build_shared_text_prompt(trivia, research, issues),
         )
@@ -781,7 +781,7 @@ def generate_shared_text_content(trivia: Any, client: OpenAI | None = None) -> d
         final_review_response = client.responses.parse(
             model=model,
             reasoning={"effort": "medium"},
-            max_output_tokens=800,
+            max_output_tokens=2000,
             text_format=SharedTextReview,
             input=build_shared_text_review_prompt(trivia, research, draft),
         )

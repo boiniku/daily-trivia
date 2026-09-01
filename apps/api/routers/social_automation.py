@@ -259,6 +259,13 @@ def run_due_social_text(
             "published_job_ids": [],
             "publish_jobs": [_publish_job_response(item) for item in job.publish_jobs],
         }
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Social text generation failed: {type(exc).__name__}: {str(exc)[:1200]}",
+        ) from exc
     finally:
         db.close()
 
