@@ -97,10 +97,8 @@ class BufferTextPublisher:
         text: str,
         image_url: str | None = None,
         alt_text: str | None = None,
+        reply_text: str | None = None,
     ) -> PublishResult:
-        # Buffer fetches the public R2 image itself. Its current image asset input
-        # does not expose alt text, so keep the argument for publisher compatibility.
-        del alt_text
         mutation = """
         mutation CreatePost($input: CreatePostInput!) {
           createPost(input: $input) {
@@ -121,7 +119,22 @@ class BufferTextPublisher:
             "assets": [],
         }
         if image_url:
-            post_input["assets"] = [{"image": {"url": image_url}}]
+            image = {"url": image_url}
+            if alt_text:
+                image["metadata"] = {"altText": alt_text}
+            post_input["assets"] = [{"image": image}]
+        if reply_text:
+            service = "twitter" if self.platform == "x" else self.platform
+            if service not in {"twitter", "threads"}:
+                raise RuntimeError("A Buffer platform is required for threaded replies")
+            post_input["metadata"] = {
+                service: {
+                    "thread": [
+                        {"text": text, "assets": post_input["assets"]},
+                        {"text": reply_text, "assets": []},
+                    ]
+                }
+            }
         raw = self._request(mutation, {"input": post_input})
         result = (raw.get("data") or {}).get("createPost") or {}
         post = result.get("post") or {}
@@ -139,10 +152,11 @@ class BufferThreadsTextPublisher(BufferTextPublisher):
         topic_tag: str | None = None,
         image_url: str | None = None,
         alt_text: str | None = None,
+        reply_text: str | None = None,
     ) -> PublishResult:
         # Buffer's API currently has no Threads topic-tag field.
         del topic_tag
-        return super().publish(text, image_url, alt_text)
+        return super().publish(text, image_url, alt_text, reply_text)
 
 
 class XTextPublisher:
@@ -157,6 +171,7 @@ class XTextPublisher:
         text: str,
         image_url: str | None = None,
         alt_text: str | None = None,
+        reply_text: str | None = None,
     ) -> PublishResult:
         media_ids = []
         if image_url:
@@ -205,6 +220,22 @@ class XTextPublisher:
             raise RuntimeError("X did not return a post id")
         username = os.getenv("X_USERNAME", "").strip().lstrip("@")
         url = f"https://x.com/{username}/status/{post_id}" if username else None
+        if reply_text:
+            reply_response = self.session.post(
+                "https://api.x.com/2/tweets",
+                headers={
+                    "Authorization": f"Bearer {self.access_token}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "text": reply_text,
+                    "reply": {"in_reply_to_tweet_id": post_id},
+                    "made_with_ai": True,
+                },
+                timeout=(10, 30),
+            )
+            reply_response.raise_for_status()
+            raw["reply"] = reply_response.json()
         return PublishResult(post_id, url, raw)
 
 
@@ -229,6 +260,7 @@ class ThreadsTextPublisher:
         topic_tag: str | None = None,
         image_url: str | None = None,
         alt_text: str | None = None,
+        reply_text: str | None = None,
     ) -> PublishResult:
         params = {
             "media_type": "IMAGE" if image_url else "TEXT",
@@ -266,6 +298,29 @@ class ThreadsTextPublisher:
         published_id = str(published_raw.get("id", ""))
         if not published_id:
             raise RuntimeError("Threads did not return a published post id")
+        if reply_text:
+            reply_create = self.session.post(
+                f"https://graph.threads.net/{self.api_version}/{self.user_id}/threads",
+                headers={"Authorization": f"Bearer {self.access_token}"},
+                params={
+                    "media_type": "TEXT",
+                    "text": reply_text,
+                    "reply_to_id": published_id,
+                },
+                timeout=(10, 30),
+            )
+            reply_create.raise_for_status()
+            reply_container_id = str(reply_create.json().get("id", ""))
+            if not reply_container_id:
+                raise RuntimeError("Threads did not return a reply container id")
+            reply_publish = self.session.post(
+                f"https://graph.threads.net/{self.api_version}/{self.user_id}/threads_publish",
+                headers={"Authorization": f"Bearer {self.access_token}"},
+                params={"creation_id": reply_container_id},
+                timeout=(10, 30),
+            )
+            reply_publish.raise_for_status()
+            published_raw["reply"] = reply_publish.json()
         return PublishResult(published_id, None, published_raw)
 
 

@@ -77,8 +77,9 @@ class SocialDraft(StrictModel):
 
 
 class SharedTextDraft(StrictModel):
-    text: str
-    answer: str
+    surprising_fact: str
+    detail: str
+    reason: str
     alt_text: str
 
 
@@ -115,6 +116,18 @@ def trim_for_x(text: str, limit: int = 280) -> str:
     while value and x_weighted_length(value.rstrip() + suffix) > limit:
         value = value[:-1]
     return value.rstrip() + suffix
+
+
+def social_cta_reply() -> str:
+    app_url = os.getenv(
+        "APP_STORE_URL", "https://apps.apple.com/app/id6758872525"
+    ).strip()
+    return (
+        "もっと「へぇ〜」となる雑学を知りたい人はこちら👇\n\n"
+        "📱「毎日雑学」で、毎日ちょっと賢くなる。\n"
+        "アプリをダウンロード👇\n"
+        f"{app_url}"
+    )
 
 
 def build_research_prompt(trivia: Any) -> str:
@@ -208,27 +221,41 @@ def build_shared_text_prompt(
         feedback = "\n前回案の問題点。すべて修正してください:\n- " + "\n- ".join(quality_feedback)
     return f"""
 あなたは、短い文章だけで雑学を面白く伝えるSNS編集者です。
-次の調査済み事実だけを根拠に、XとThreadsの両方へそのまま投稿する共通本文を日本語で作ってください。
-DB本文の言い換えではなく、初見の人が一読で「何が意外で、答えは何で、なぜそうなるか」まで理解できる順番へ再構成してください。
+次の調査済み事実だけを根拠に、XとThreads投稿の材料を日本語で作ってください。
+完成文の型・括弧・改行はコード側で固定するため、各フィールドには指定された一文だけを入れてください。
 
 調査済み事実メモ:
 {json.dumps(research, ensure_ascii=False, indent=2)}
 
 条件:
-- 丁寧なです・ます調を保つが、ニュース見出しや教科書ではなく、話がうまい友人の自然な文章にする
-- 全体をおよそ70〜130文字、Xの280ウェイト以内に収める
-- 1文目はsubjectを明記し、思い込みとのズレや具体的な違和感で続きを読みたくさせる
-- 2文目までにverified_factの結論を明言する。問いかけたまま答えを伏せて終わらない
-- 最後はexplanationまたはsupporting_detailsから理由、仕組み、身近な意味のどれか一つを具体的に伝える
-- 「意外です」「秘密があります」だけの抽象的な煽り、過剰な驚き、ダジャレ、ネットスラングは禁止
-- 「結論として」「説明すると」「〜ということです」のような硬い解説口調は禁止
-- 末尾を「知っていましたか？」などの問いかけだけにせず、読み手が人へ話せる知識を残す
-- 事実を2〜3文で完結させ、同じ内容を言い換えて繰り返さない
-- ハッシュタグは末尾に「#雑学」一つだけ付ける
-- answerには、投稿内でそのまま使った結論の一文を句読点込みで完全一致させる
+- surprising_fact: subjectを明記し、verified_factの結論を25〜40文字で言い切る。「実は、」や括弧は付けない
+- detail: subjectを主語に「〇〇には、意外にも〜という特徴があります。」の流れで、単なる言い換えではない具体的な補足を30〜50文字のです・ます調で書く
+- reason: explanationまたはsupporting_detailsを根拠に、理由や仕組みを25〜45文字で書く。「その理由は、」は付けない
+- 理由が断定できない場合は「〜と考えられています」「〜といわれています」と正確に弱める
+- 全体はXの280ウェイトに収まる簡潔さにする
+- ニュース見出し、教科書調、同じ事実の反復、問いかけ、ハッシュタグは禁止
+- 「意外です」「秘密があります」「結論として」「説明すると」「〜ということです」は禁止
 - alt_textは添付画像の説明として、subjectを含む20〜60文字の客観的な日本語にする
 {feedback}
 """.strip()
+
+
+def compose_shared_text(data: dict) -> dict:
+    def sentence(value: str) -> str:
+        cleaned = str(value or "").strip().strip("【】")
+        cleaned = re.sub(r"^(?:実は、|その理由は、)", "", cleaned)
+        cleaned = cleaned.rstrip("。！？!?")
+        return cleaned + "。"
+
+    fact = sentence(data.get("surprising_fact", ""))
+    detail = sentence(data.get("detail", ""))
+    reason = sentence(data.get("reason", ""))
+    text = f"【実は、{fact}】\n\n{detail}\n\nその理由は、{reason}"
+    return {
+        **data,
+        "text": text,
+        "answer": fact,
+    }
 
 
 def shared_text_quality_issues(data: dict, research: dict) -> list[str]:
@@ -240,16 +267,26 @@ def shared_text_quality_issues(data: dict, research: dict) -> list[str]:
     if subject and subject not in text:
         issues.append(f"本文に対象名「{subject}」を明記してください")
     if not answer or answer not in text:
-        issues.append("answerの結論文を本文内に完全一致で入れ、答えを明言してください")
-    plain_text = re.sub(r"\s*#\S+\s*$", "", text).strip()
+        issues.append("surprising_factの結論を本文内に入れ、答えを明言してください")
+    plain_text = text.strip()
+    paragraphs = plain_text.split("\n\n")
+    if len(paragraphs) != 3:
+        issues.append("本文を空行で区切った3段落にしてください")
+    else:
+        if not (paragraphs[0].startswith("【実は、") and paragraphs[0].endswith("。】")):
+            issues.append("1段落目を【実は、〇〇。】の形にしてください")
+        if not paragraphs[2].startswith("その理由は、"):
+            issues.append("3段落目を「その理由は、」で始めてください")
+        if "意外にも" not in paragraphs[1]:
+            issues.append("2段落目に「意外にも」を入れて具体的な特徴を説明してください")
     if plain_text.endswith(("？", "?")):
         issues.append("問いかけで終わらず、答えや意味まで言い切ってください")
     if len(_spoken_text(plain_text)) < 45:
         issues.append("本文を短くしすぎず、答えに加えて理由または意味まで説明してください")
     if x_weighted_length(text) > 280:
         issues.append("本文をXの280ウェイト以内にしてください")
-    if sum(plain_text.count(mark) for mark in ("。", "！", "？")) < 2:
-        issues.append("2〜3文で、引き・答え・理由が読み分けられる文章にしてください")
+    if "#" in text:
+        issues.append("本文にハッシュタグを入れないでください")
     if any(phrase in text for phrase in ("意外です", "秘密があります", "結論として", "説明すると")):
         issues.append("抽象的な煽りや硬い解説口調を避け、具体的な事実を自然に説明してください")
     if subject and subject not in alt_text:
@@ -652,7 +689,9 @@ def generate_shared_text_content(trivia: Any, client: OpenAI | None = None) -> d
         text_format=SharedTextDraft,
         input=build_shared_text_prompt(trivia, research),
     )
-    draft = _parsed_response(text_response, "Social shared text").model_dump()
+    draft = compose_shared_text(
+        _parsed_response(text_response, "Social shared text").model_dump()
+    )
     responses.append(text_response)
     issues = shared_text_quality_issues(draft, research)
     repaired = False
@@ -664,23 +703,25 @@ def generate_shared_text_content(trivia: Any, client: OpenAI | None = None) -> d
             text_format=SharedTextDraft,
             input=build_shared_text_prompt(trivia, research, issues),
         )
-        draft = _parsed_response(repair_response, "Social shared text repair").model_dump()
+        draft = compose_shared_text(
+            _parsed_response(repair_response, "Social shared text repair").model_dump()
+        )
         responses.append(repair_response)
         repaired = True
         remaining = shared_text_quality_issues(draft, research)
         if remaining:
             raise RuntimeError("Social shared text quality check failed: " + "; ".join(remaining))
 
-    text = trim_for_x(draft["text"])
+    text = draft["text"]
     usage = {"input_tokens": 0, "output_tokens": 0, "web_search_calls": 0}
     for response in responses:
         item_usage = _response_usage(response)
         for key in usage:
             usage[key] += item_usage[key]
     return {
-        "automation": {"mode": "daily_text"},
-        "x": {"text": text},
-        "threads": {"text": text, "topic_tag": "雑学"},
+        "automation": {"mode": "daily_text", "format_version": 2},
+        "x": {"text": text, "reply_text": social_cta_reply()},
+        "threads": {"text": text, "reply_text": social_cta_reply(), "topic_tag": "雑学"},
         "shared_image": {
             "url": str(getattr(trivia, "image_url", "") or "").strip(),
             "alt_text": draft["alt_text"],

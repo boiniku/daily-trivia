@@ -362,12 +362,15 @@ def social_text_review_messages(content_job: SocialContentJob, image_url: str) -
     content = content_job.content_json or {}
     text = str((content.get("x") or {}).get("text") or "").strip()
     alt_text = str((content.get("shared_image") or {}).get("alt_text") or "").strip()
+    reply_text = str((content.get("x") or {}).get("reply_text") or "").strip()
     if not text or not image_url:
         raise ValueError("Text and image are required for LINE review")
     title = (content_job.trivia.title or f"投稿案 #{content_job.id}")[:80]
     detail = f"【X・Threads投稿案】\n{text}"
     if alt_text:
         detail += f"\n\n【画像説明】\n{alt_text}"
+    if reply_text:
+        detail += f"\n\n【投稿後のリプライ】\n{reply_text}"
     card = {
         "type": "flex",
         "altText": f"X・Threads投稿の確認: {title}",

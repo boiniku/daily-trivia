@@ -24,6 +24,7 @@ from services.seedance import SeedanceClient, SeedanceTask
 from services.social_content import (
     build_social_prompt,
     build_shared_text_prompt,
+    compose_shared_text,
     generate_social_content,
     normalize_social_content,
     script_quality_issues,
@@ -562,8 +563,33 @@ class SocialPipelineTests(unittest.TestCase):
         self.assertTrue(post_input["aiAssisted"])
         self.assertEqual(
             post_input["assets"],
-            [{"image": {"url": "https://cdn.example/image.png"}}],
+            [{"image": {
+                "url": "https://cdn.example/image.png",
+                "metadata": {"altText": "画像説明"},
+            }}],
         )
+
+    def test_buffer_publisher_creates_fixed_cta_as_first_reply(self):
+        session = FakeBufferPublishSession()
+        publisher = BufferTextPublisher(
+            "channel-x", "buffer-key", platform="x", session=session
+        )
+
+        publisher.publish(
+            "【実は、タコの心臓は3つあります。】\n\n"
+            "タコには、意外にも役割の違う心臓があります。\n\n"
+            "その理由は、えらと全身へ別々に血液を送るためです。",
+            "https://cdn.example/image.png",
+            "海中にいるタコ",
+            "アプリをダウンロード👇\nhttps://apps.example/app",
+        )
+
+        post_input = session.requests[0][2]["json"]["variables"]["input"]
+        thread = post_input["metadata"]["twitter"]["thread"]
+        self.assertEqual(thread[0]["text"], post_input["text"])
+        self.assertEqual(thread[0]["assets"], post_input["assets"])
+        self.assertEqual(thread[1]["text"], "アプリをダウンロード👇\nhttps://apps.example/app")
+        self.assertEqual(thread[1]["assets"], [])
 
     def test_buffer_publisher_surfaces_graphql_mutation_error(self):
         session = FakeBufferPublishSession(
@@ -673,7 +699,8 @@ class SocialPipelineTests(unittest.TestCase):
         issues = shared_text_quality_issues(vague, research)
 
         self.assertTrue(any("答えを明言" in issue for issue in issues))
-        self.assertTrue(any("問いかけで終わらず" in issue for issue in issues))
+        self.assertTrue(any("3段落" in issue for issue in issues))
+        self.assertTrue(any("ハッシュタグ" in issue for issue in issues))
 
     def test_shared_text_prompt_uses_one_complete_post_for_both_platforms(self):
         research = {
@@ -689,9 +716,24 @@ class SocialPipelineTests(unittest.TestCase):
 
         prompt = build_shared_text_prompt(self.trivia, research)
 
-        self.assertIn("XとThreadsの両方へそのまま投稿する共通本文", prompt)
-        self.assertIn("結論を明言", prompt)
-        self.assertIn("問いかけたまま答えを伏せて終わらない", prompt)
+        self.assertIn("完成文の型・括弧・改行はコード側で固定", prompt)
+        self.assertIn("surprising_fact", prompt)
+        self.assertIn("〇〇には、意外にも", prompt)
+
+    def test_shared_text_is_composed_in_fixed_readable_format(self):
+        composed = compose_shared_text({
+            "surprising_fact": "実は、タコの心臓は3つあります。",
+            "detail": "タコには、意外にも役割の違う心臓があります。",
+            "reason": "その理由は、えらと全身へ別々に血液を送るためです。",
+            "alt_text": "海中にいるタコの写真",
+        })
+
+        self.assertEqual(
+            composed["text"],
+            "【実は、タコの心臓は3つあります。】\n\n"
+            "タコには、意外にも役割の違う心臓があります。\n\n"
+            "その理由は、えらと全身へ別々に血液を送るためです。",
+        )
 
     def test_content_generation_researches_then_writes_script(self):
         research = {
@@ -817,6 +859,48 @@ class SocialPipelineTests(unittest.TestCase):
         self.assertEqual(len(regenerated.content_json["video"]["scenes"]), 4)
         self.assertEqual(len(regenerated.video_jobs[0].prompt_json["image_prompts"]), 4)
         self.assertEqual(regenerated.video_jobs[0].status, "pending")
+
+    def test_unapproved_daily_text_job_can_be_regenerated_without_video(self):
+        self.trivia.image_url = "https://cdn.example/octopus.png"
+        self.db.commit()
+        old_content = {
+            "automation": {"mode": "daily_text"},
+            "x": {"text": "古い投稿案"},
+            "threads": {"text": "古い投稿案", "topic_tag": "雑学"},
+            "shared_image": {
+                "url": self.trivia.image_url,
+                "alt_text": "古い画像説明",
+            },
+        }
+        new_content = {
+            "automation": {"mode": "daily_text", "format_version": 2},
+            "x": {"text": "新しい投稿案", "reply_text": "固定CTA"},
+            "threads": {
+                "text": "新しい投稿案",
+                "reply_text": "固定CTA",
+                "topic_tag": "雑学",
+            },
+            "shared_image": {
+                "url": self.trivia.image_url,
+                "alt_text": "新しい画像説明",
+            },
+        }
+        content_job = create_daily_text_job(
+            self.db, generator=lambda trivia: old_content
+        )
+
+        regenerated = regenerate_content_job(
+            self.db,
+            content_job.id,
+            generator=lambda trivia: new_content,
+        )
+
+        self.assertEqual(regenerated.content_json, new_content)
+        self.assertEqual(regenerated.video_jobs, [])
+        self.assertEqual(regenerated.status, "review")
+        self.assertTrue(
+            all(item.status == "waiting_approval" for item in regenerated.publish_jobs)
+        )
 
     def test_static_video_render_archives_image_and_video(self):
         content_job = create_content_job(self.db, self.trivia.id, generator=lambda trivia: sample_content())
@@ -1081,11 +1165,16 @@ class SocialPipelineTests(unittest.TestCase):
         self.trivia.image_url = "https://cdn.example/octopus.png"
         self.db.commit()
         text = "タコの心臓は三つあります。二つがえらへ、残る一つが全身へ血液を送ります。"
+        reply_text = "もっと雑学を知りたい人はこちら\nhttps://apps.example/app"
         job = create_daily_text_job(
             self.db,
             generator=lambda trivia: {
-                "x": {"text": text},
-                "threads": {"text": text, "topic_tag": "雑学"},
+                "x": {"text": text, "reply_text": reply_text},
+                "threads": {
+                    "text": text,
+                    "reply_text": reply_text,
+                    "topic_tag": "雑学",
+                },
                 "shared_image": {"url": trivia.image_url, "alt_text": "海中のタコ"},
             },
         )
@@ -1097,6 +1186,7 @@ class SocialPipelineTests(unittest.TestCase):
             messages[0]["originalContentUrl"], "https://cdn.example/line-preview.jpg"
         )
         self.assertIn(text, messages[1]["text"])
+        self.assertIn(reply_text, messages[1]["text"])
         footer = messages[2]["contents"]["footer"]["contents"]
         self.assertEqual(footer[0]["action"]["label"], "X・Threadsへ投稿")
         self.assertIn(f"content_job_id={job.id}", footer[0]["action"]["data"])

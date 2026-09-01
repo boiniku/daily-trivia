@@ -175,7 +175,7 @@ def regenerate_content_job(
     db: Session,
     content_job_id: int,
     *,
-    generator: Callable = generate_social_content,
+    generator: Callable | None = None,
 ) -> SocialContentJob:
     """Replace an unapproved draft without creating paid image assets."""
     job = db.query(SocialContentJob).filter_by(id=content_job_id).one()
@@ -186,16 +186,19 @@ def regenerate_content_job(
     if any(item.status == "published" for item in job.publish_jobs):
         raise ValueError("A published job cannot be regenerated")
 
+    if generator is None:
+        generator = generate_social_content if job.video_jobs else generate_shared_text_content
     content = generator(job.trivia)
     job.content_json = content
-    video_content = content["video"]
-    for video in job.video_jobs:
-        video.status = "pending"
-        video.error = None
-        video.prompt_json = _video_prompt_json(video_content)
-        video.provider_task_ids = []
-        video.source_video_urls = []
-        video.duration_seconds = None
+    if job.video_jobs:
+        video_content = content["video"]
+        for video in job.video_jobs:
+            video.status = "pending"
+            video.error = None
+            video.prompt_json = _video_prompt_json(video_content)
+            video.provider_task_ids = []
+            video.source_video_urls = []
+            video.duration_seconds = None
     for publish_job in job.publish_jobs:
         publish_job.status = (
             "waiting_approval" if publish_job.content_type == "text" else "waiting_video"
@@ -658,11 +661,14 @@ def publish_due_text_jobs(
             alt_text = str(shared_image.get("alt_text") or "").strip() or None
             if job.platform == "x":
                 publisher = publishers.get("x") or configured_text_publisher("x")
-                result = publisher.publish(content["text"], image_url, alt_text)
+                result = publisher.publish(
+                    content["text"], image_url, alt_text, content.get("reply_text")
+                )
             elif job.platform == "threads":
                 publisher = publishers.get("threads") or configured_text_publisher("threads")
                 result = publisher.publish(
-                    content["text"], content.get("topic_tag"), image_url, alt_text
+                    content["text"], content.get("topic_tag"), image_url, alt_text,
+                    content.get("reply_text")
                 )
             else:
                 continue
