@@ -212,7 +212,7 @@ def run_due_social_text(
         )
         if pending_review:
             automation = (pending_review.content_json or {}).get("automation") or {}
-            if int(automation.get("format_version") or 0) < 5:
+            if int(automation.get("format_version") or 0) < 6:
                 pending_review = regenerate_content_job(db, pending_review.id)
             line_review = _send_line_text_review_if_needed(db, pending_review)
             return {

@@ -240,7 +240,9 @@ def build_shared_text_prompt(
 {json.dumps(research, ensure_ascii=False, indent=2)}
 
 条件:
-- surprising_fact: subjectを明記し、verified_factの結論を25〜40文字で言い切る。「実は、」や括弧は付けない
+- surprising_fact: subjectを明記し、スクロール中でも一瞬で意味が伝わる具体的な意外性を10〜19文字で言い切る。「実は、」や括弧は付けない
+- surprising_factは「知らないと損」「驚きの事実」のような中身のない煽りにせず、元ネタの答えが分かる短い見出しにする
+- コードが付ける「【実は、」と「。】」を含め、1段落目全体が25文字以内になるようにする
 - supporting_point: 1段目を理解するために最も役立つ情報を30〜55文字で書く。特徴、前提、比較、数字、具体例のうち、調査メモに根拠がある最適なものを選ぶ
 - closing_point: 読後にもう一段「へぇ〜」となる情報を30〜55文字で書く。理由、仕組み、背景、例外、身近な意味のうち、調査メモに根拠がある最適なものを選ぶ
 - 雑学に理由が存在しない、または根拠が弱い場合は理由を作らず、比較・具体例・背景などで締める
@@ -275,6 +277,7 @@ def build_shared_text_review_prompt(trivia: Any, research: dict, draft: dict) ->
 次をすべて満たす場合だけapproved=trueにしてください:
 - 元のDB雑学の中心的な面白さを維持し、関連する別テーマへ変えていない
 - 1段目だけで対象と意外な結論が明確に分かる
+- 1段目は括弧を含め25文字以内で、短くても具体的な引きがある
 - 2段目が1段目を直接具体化し、3段目がさらに理解や驚きを一段進める
 - 各段落の関係が自然で、話題が飛ばない
 - 人物名、専門語、数字、指示語が説明なしに突然現れず、初見の読者が一度で意味を理解できる
@@ -321,6 +324,8 @@ def shared_text_quality_issues(data: dict, research: dict) -> list[str]:
     else:
         if not (paragraphs[0].startswith("【実は、") and paragraphs[0].endswith("。】")):
             issues.append("1段落目を【実は、〇〇。】の形にしてください")
+        if len(paragraphs[0]) > 25:
+            issues.append("1段落目を括弧込み25文字以内の、具体的で引きのある見出しにしてください")
         if len(set(paragraphs)) != 3:
             issues.append("3段階で別々の情報を伝え、同じ内容を繰り返さないでください")
     if plain_text.endswith(("？", "?")):
@@ -805,7 +810,7 @@ def generate_shared_text_content(trivia: Any, client: OpenAI | None = None) -> d
         for key in usage:
             usage[key] += item_usage[key]
     return {
-        "automation": {"mode": "daily_text", "format_version": 5},
+        "automation": {"mode": "daily_text", "format_version": 6},
         "x": {"text": text, "reply_text": social_cta_reply()},
         "threads": {"text": text, "reply_text": social_cta_reply(), "topic_tag": "雑学"},
         "shared_image": {

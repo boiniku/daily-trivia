@@ -724,6 +724,7 @@ class SocialPipelineTests(unittest.TestCase):
         self.assertIn("理由が存在しない、または根拠が弱い場合は理由を作らず", prompt)
         self.assertIn("3段階で新しい情報が一つずつ増える構成", prompt)
         self.assertIn("紹介していない人物名を突然出さない", prompt)
+        self.assertIn("1段落目全体が25文字以内", prompt)
 
     def test_research_prompt_keeps_the_curated_database_trivia_as_the_subject(self):
         prompt = build_research_prompt(self.trivia)
@@ -757,6 +758,23 @@ class SocialPipelineTests(unittest.TestCase):
             "二つはえらへ、残る一つは全身へ血液を送ります。\n\n"
             "泳ぐと全身用の心臓は止まるため、タコは泳ぐと疲れやすいのです。",
         )
+        self.assertLessEqual(len(composed["text"].split("\n\n")[0]), 25)
+
+    def test_shared_text_quality_rejects_a_headline_over_25_characters(self):
+        research = {"subject": "天然ゴム"}
+        draft = {
+            "text": (
+                "【実は、天然ゴムは18世紀に鉛筆の黒鉛跡を消す用途に使われていました。】\n\n"
+                "昔の消しゴムに使われていました。\n\n"
+                "英語の名前にもその使い方が残っています。"
+            ),
+            "answer": "天然ゴムは18世紀に鉛筆の黒鉛跡を消す用途に使われていました。",
+            "alt_text": "紙の上に置かれた天然ゴムと鉛筆を写した写真",
+        }
+
+        issues = shared_text_quality_issues(draft, research)
+
+        self.assertTrue(any("25文字以内" in issue for issue in issues))
 
     def test_shared_text_generation_uses_editor_review_and_repairs_once(self):
         research = {
@@ -1257,6 +1275,8 @@ class SocialPipelineTests(unittest.TestCase):
         )
         self.assertIn(text, messages[1]["text"])
         self.assertIn(reply_text, messages[1]["text"])
+        self.assertNotIn("画像説明", messages[1]["text"])
+        self.assertNotIn("海中のタコ", messages[1]["text"])
         footer = messages[2]["contents"]["footer"]["contents"]
         self.assertEqual(footer[0]["action"]["label"], "X・Threadsへ投稿")
         self.assertIn(f"content_job_id={job.id}", footer[0]["action"]["data"])
