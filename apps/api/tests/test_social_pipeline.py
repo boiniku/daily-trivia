@@ -718,21 +718,22 @@ class SocialPipelineTests(unittest.TestCase):
 
         self.assertIn("完成文の型・括弧・改行はコード側で固定", prompt)
         self.assertIn("surprising_fact", prompt)
-        self.assertIn("〇〇には、意外にも", prompt)
+        self.assertIn("理由が存在しない、または根拠が弱い場合は理由を作らず", prompt)
+        self.assertIn("3段階で新しい情報が一つずつ増える構成", prompt)
 
     def test_shared_text_is_composed_in_fixed_readable_format(self):
         composed = compose_shared_text({
             "surprising_fact": "実は、タコの心臓は3つあります。",
-            "detail": "タコには、意外にも役割の違う心臓があります。",
-            "reason": "その理由は、えらと全身へ別々に血液を送るためです。",
+            "supporting_point": "二つはえらへ、残る一つは全身へ血液を送ります。",
+            "closing_point": "泳ぐと全身用の心臓は止まるため、タコは泳ぐと疲れやすいのです。",
             "alt_text": "海中にいるタコの写真",
         })
 
         self.assertEqual(
             composed["text"],
             "【実は、タコの心臓は3つあります。】\n\n"
-            "タコには、意外にも役割の違う心臓があります。\n\n"
-            "その理由は、えらと全身へ別々に血液を送るためです。",
+            "二つはえらへ、残る一つは全身へ血液を送ります。\n\n"
+            "泳ぐと全身用の心臓は止まるため、タコは泳ぐと疲れやすいのです。",
         )
 
     def test_content_generation_researches_then_writes_script(self):
@@ -873,7 +874,7 @@ class SocialPipelineTests(unittest.TestCase):
             },
         }
         new_content = {
-            "automation": {"mode": "daily_text", "format_version": 2},
+            "automation": {"mode": "daily_text", "format_version": 3},
             "x": {"text": "新しい投稿案", "reply_text": "固定CTA"},
             "threads": {
                 "text": "新しい投稿案",

@@ -78,8 +78,8 @@ class SocialDraft(StrictModel):
 
 class SharedTextDraft(StrictModel):
     surprising_fact: str
-    detail: str
-    reason: str
+    supporting_point: str
+    closing_point: str
     alt_text: str
 
 
@@ -229,9 +229,12 @@ def build_shared_text_prompt(
 
 条件:
 - surprising_fact: subjectを明記し、verified_factの結論を25〜40文字で言い切る。「実は、」や括弧は付けない
-- detail: subjectを主語に「〇〇には、意外にも〜という特徴があります。」の流れで、単なる言い換えではない具体的な補足を30〜50文字のです・ます調で書く
-- reason: explanationまたはsupporting_detailsを根拠に、理由や仕組みを25〜45文字で書く。「その理由は、」は付けない
-- 理由が断定できない場合は「〜と考えられています」「〜といわれています」と正確に弱める
+- supporting_point: 1段目を理解するために最も役立つ情報を30〜55文字で書く。特徴、前提、比較、数字、具体例のうち、調査メモに根拠がある最適なものを選ぶ
+- closing_point: 読後にもう一段「へぇ〜」となる情報を30〜55文字で書く。理由、仕組み、背景、例外、身近な意味のうち、調査メモに根拠がある最適なものを選ぶ
+- 雑学に理由が存在しない、または根拠が弱い場合は理由を作らず、比較・具体例・背景などで締める
+- 3段階で新しい情報が一つずつ増える構成にし、同じ結論を言い換えて繰り返さない
+- supporting_pointとclosing_pointは自然なです・ます調の完成した文章にし、定型句を無理に付けない
+- 推定や諸説がある内容は「〜と考えられています」「〜といわれています」と正確に弱める
 - 全体はXの280ウェイトに収まる簡潔さにする
 - ニュース見出し、教科書調、同じ事実の反復、問いかけ、ハッシュタグは禁止
 - 「意外です」「秘密があります」「結論として」「説明すると」「〜ということです」は禁止
@@ -241,16 +244,17 @@ def build_shared_text_prompt(
 
 
 def compose_shared_text(data: dict) -> dict:
-    def sentence(value: str) -> str:
+    def sentence(value: str, *, strip_fact_prefix: bool = False) -> str:
         cleaned = str(value or "").strip().strip("【】")
-        cleaned = re.sub(r"^(?:実は、|その理由は、)", "", cleaned)
+        if strip_fact_prefix:
+            cleaned = re.sub(r"^実は、", "", cleaned)
         cleaned = cleaned.rstrip("。！？!?")
         return cleaned + "。"
 
-    fact = sentence(data.get("surprising_fact", ""))
-    detail = sentence(data.get("detail", ""))
-    reason = sentence(data.get("reason", ""))
-    text = f"【実は、{fact}】\n\n{detail}\n\nその理由は、{reason}"
+    fact = sentence(data.get("surprising_fact", ""), strip_fact_prefix=True)
+    supporting_point = sentence(data.get("supporting_point", ""))
+    closing_point = sentence(data.get("closing_point", ""))
+    text = f"【実は、{fact}】\n\n{supporting_point}\n\n{closing_point}"
     return {
         **data,
         "text": text,
@@ -275,10 +279,8 @@ def shared_text_quality_issues(data: dict, research: dict) -> list[str]:
     else:
         if not (paragraphs[0].startswith("【実は、") and paragraphs[0].endswith("。】")):
             issues.append("1段落目を【実は、〇〇。】の形にしてください")
-        if not paragraphs[2].startswith("その理由は、"):
-            issues.append("3段落目を「その理由は、」で始めてください")
-        if "意外にも" not in paragraphs[1]:
-            issues.append("2段落目に「意外にも」を入れて具体的な特徴を説明してください")
+        if len(set(paragraphs)) != 3:
+            issues.append("3段階で別々の情報を伝え、同じ内容を繰り返さないでください")
     if plain_text.endswith(("？", "?")):
         issues.append("問いかけで終わらず、答えや意味まで言い切ってください")
     if len(_spoken_text(plain_text)) < 45:
@@ -719,7 +721,7 @@ def generate_shared_text_content(trivia: Any, client: OpenAI | None = None) -> d
         for key in usage:
             usage[key] += item_usage[key]
     return {
-        "automation": {"mode": "daily_text", "format_version": 2},
+        "automation": {"mode": "daily_text", "format_version": 3},
         "x": {"text": text, "reply_text": social_cta_reply()},
         "threads": {"text": text, "reply_text": social_cta_reply(), "topic_tag": "雑学"},
         "shared_image": {
