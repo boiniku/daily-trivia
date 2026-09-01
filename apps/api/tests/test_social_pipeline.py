@@ -31,6 +31,7 @@ from services.social_content import (
     generate_shared_text_content,
     generate_social_content,
     normalize_social_content,
+    research_claim_is_publishable,
     script_quality_issues,
     shared_text_quality_issues,
     trim_for_x,
@@ -731,6 +732,8 @@ class SocialPipelineTests(unittest.TestCase):
 
         self.assertIn("別テーマへすり替えてはいけません", prompt)
         self.assertIn("中心的な主張をそのまま確認できた場合だけsupported", prompt)
+        self.assertIn("類義語や表記違い、必要なら英語表現", prompt)
+        self.assertIn("まとめサイト、個人ブログ、Wikipediaだけでsupported", prompt)
 
     def test_editor_review_requires_context_and_original_topic_fidelity(self):
         prompt = build_shared_text_review_prompt(
@@ -762,6 +765,11 @@ class SocialPipelineTests(unittest.TestCase):
             "original_claim": "昔はパンで鉛筆跡を消していた",
             "claim_status": "unsupported",
             "claim_alignment": "信頼できる資料で元の主張を確認できない",
+            "evidence_for_claim": [],
+            "evidence_against_claim": ["一次資料では確認できない"],
+            "authoritative_source_found": False,
+            "independent_source_count": 0,
+            "source_quality_notes": "まとめサイト以外の裏付けがない",
             "subject": "パンの消しゴム",
             "common_misconception": "",
             "verified_fact": "元の主張は確認できない",
@@ -785,6 +793,11 @@ class SocialPipelineTests(unittest.TestCase):
             "original_claim": "タコの心臓は三つある",
             "claim_status": "supported",
             "claim_alignment": "元の主張を資料で確認できた",
+            "evidence_for_claim": ["博物館資料が心臓は三つと説明している"],
+            "evidence_against_claim": [],
+            "authoritative_source_found": True,
+            "independent_source_count": 2,
+            "source_quality_notes": "公的な博物館資料と専門資料で照合した",
             "subject": "タコ",
             "common_misconception": "心臓は一つ",
             "verified_fact": "タコの心臓は三つある",
@@ -821,9 +834,30 @@ class SocialPipelineTests(unittest.TestCase):
 
         self.assertEqual(len(client.responses.calls), 5)
         self.assertEqual(client.responses.calls[0]["model"], "gpt-5.6-terra")
-        self.assertEqual(client.responses.calls[0]["reasoning"]["effort"], "medium")
+        self.assertEqual(client.responses.calls[0]["reasoning"]["effort"], "high")
+        self.assertEqual(client.responses.calls[0]["max_tool_calls"], 3)
+        self.assertEqual(
+            client.responses.calls[0]["tools"][0]["search_context_size"], "high"
+        )
         self.assertTrue(generated["generation_meta"]["repaired"])
         self.assertIn("役割を分けることで", generated["x"]["text"])
+
+    def test_supported_claim_still_requires_concrete_source_evidence(self):
+        weak_research = {
+            "claim_status": "supported",
+            "evidence_for_claim": [],
+            "authoritative_source_found": False,
+            "independent_source_count": 1,
+        }
+        corroborated_research = {
+            "claim_status": "supported",
+            "evidence_for_claim": ["公的資料で中心的な主張を確認"],
+            "authoritative_source_found": True,
+            "independent_source_count": 1,
+        }
+
+        self.assertFalse(research_claim_is_publishable(weak_research))
+        self.assertTrue(research_claim_is_publishable(corroborated_research))
 
     def test_content_generation_researches_then_writes_script(self):
         research = {

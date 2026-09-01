@@ -30,6 +30,10 @@ services:
         value: "12.0"
       - key: SOCIAL_TEXT_CANDIDATE_ATTEMPTS
         value: "3"
+      - key: SOCIAL_TEXT_RESEARCH_MAX_SEARCH_CALLS
+        value: "3"
+      - key: SOCIAL_TEXT_RESEARCH_SEARCH_CONTEXT_SIZE
+        value: high
       - key: SOCIAL_RESEARCH_MAX_SEARCH_CALLS
         value: "1"
       - key: SOCIAL_RESEARCH_SEARCH_CONTEXT_SIZE
@@ -203,6 +207,10 @@ services:
         value: "12.0"
       - key: SOCIAL_TEXT_CANDIDATE_ATTEMPTS
         value: "3"
+      - key: SOCIAL_TEXT_RESEARCH_MAX_SEARCH_CALLS
+        value: "3"
+      - key: SOCIAL_TEXT_RESEARCH_SEARCH_CONTEXT_SIZE
+        value: high
       - key: SOCIAL_RESEARCH_MAX_SEARCH_CALLS
         value: "1"
       - key: SOCIAL_RESEARCH_SEARCH_CONTEXT_SIZE

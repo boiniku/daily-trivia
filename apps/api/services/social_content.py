@@ -20,6 +20,11 @@ class ResearchBrief(StrictModel):
     original_claim: str
     claim_status: Literal["supported", "partially_supported", "unsupported"]
     claim_alignment: str
+    evidence_for_claim: list[str]
+    evidence_against_claim: list[str]
+    authoritative_source_found: bool
+    independent_source_count: int
+    source_quality_notes: str
     subject: str
     common_misconception: str
     verified_fact: str
@@ -155,6 +160,12 @@ DBの記述を無条件に正しいとみなさず、検索結果と照合して
 claim_statusは、中心的な主張をそのまま確認できた場合だけsupported、一部しか確認できない場合はpartially_supported、確認できない・否定された場合はunsupportedにしてください。
 claim_alignmentには、元の主張と確認結果が一致する点・一致しない点を具体的に書いてください。
 verified_factはoriginal_claimを検証した結果を書き、関連するだけの別雑学を主役にしないでください。
+検索は一つの言い回しで終えず、元の主張そのもの、類義語や表記違い、必要なら英語表現でも確認してください。
+DBに出典URLがある場合は最優先で内容を確認し、その出典が実際に元の主張を支えているか判定してください。
+可能なら一次資料、公的機関、大学、博物館、学術資料、専門団体、公式資料を一つ以上確認してください。
+まとめサイト、個人ブログ、Wikipediaだけでsupportedにしてはいけません。独立した複数資料で照合してください。
+evidence_for_claimとevidence_against_claimには、どの資料の何が元の主張を支持・否定するのかを具体的に書いてください。
+authoritative_source_foundとindependent_source_countを過大評価せず、source_quality_notesに資料の質と弱点を書いてください。
 元の出典を優先し、可能なら公的機関、博物館、大学、学術資料、専門団体など信頼性の高い情報でも確認してください。
 動画の主役は一つに絞り、subjectは冒頭でそのまま読める2〜15文字程度の具体的な名詞にしてください。
 確認できなかった情報は追加せず、異説や断定できない点はcaveatsへ入れてください。
@@ -606,6 +617,31 @@ def _max_research_calls() -> int:
     return max(1, min(value, 2))
 
 
+def _max_text_research_calls() -> int:
+    try:
+        value = int(os.getenv("SOCIAL_TEXT_RESEARCH_MAX_SEARCH_CALLS", "3"))
+    except ValueError:
+        value = 3
+    return max(2, min(value, 5))
+
+
+def research_claim_is_publishable(research: dict) -> bool:
+    if research.get("claim_status") != "supported":
+        return False
+    evidence = [
+        str(item).strip()
+        for item in research.get("evidence_for_claim", [])
+        if str(item).strip()
+    ]
+    if not evidence:
+        return False
+    try:
+        independent_count = int(research.get("independent_source_count") or 0)
+    except (TypeError, ValueError):
+        independent_count = 0
+    return bool(research.get("authoritative_source_found")) or independent_count >= 2
+
+
 def _estimated_generation_cost(
     usage: dict[str, int],
     *,
@@ -716,7 +752,9 @@ def generate_shared_text_content(trivia: Any, client: OpenAI | None = None) -> d
         model=model,
         tools=[{
             "type": "web_search",
-            "search_context_size": os.getenv("SOCIAL_RESEARCH_SEARCH_CONTEXT_SIZE", "low"),
+            "search_context_size": os.getenv(
+                "SOCIAL_TEXT_RESEARCH_SEARCH_CONTEXT_SIZE", "high"
+            ),
             "user_location": {
                 "type": "approximate",
                 "country": "JP",
@@ -724,10 +762,10 @@ def generate_shared_text_content(trivia: Any, client: OpenAI | None = None) -> d
             },
         }],
         tool_choice="required",
-        max_tool_calls=_max_research_calls(),
+        max_tool_calls=_max_text_research_calls(),
         include=["web_search_call.action.sources"],
-        reasoning={"effort": "medium"},
-        max_output_tokens=3000,
+        reasoning={"effort": "high"},
+        max_output_tokens=4500,
         text_format=ResearchBrief,
         input=build_research_prompt(trivia),
     )
@@ -738,7 +776,7 @@ def generate_shared_text_content(trivia: Any, client: OpenAI | None = None) -> d
     research["sources"] = [item for item in sources if item.startswith(("http://", "https://"))][:8]
     if not research["sources"]:
         raise RuntimeError("Social text research returned no source URLs")
-    if research.get("claim_status") != "supported":
+    if not research_claim_is_publishable(research):
         raise TriviaClaimRejected(research)
 
     responses = [research_response]
