@@ -998,6 +998,67 @@ class SocialPipelineTests(unittest.TestCase):
             all(item.status == "waiting_approval" for item in regenerated.publish_jobs)
         )
 
+    def test_unpublished_video_trivia_can_be_recycled_for_daily_text(self):
+        self.trivia.image_url = "https://cdn.example/octopus.png"
+        self.db.commit()
+        old_job = create_content_job(
+            self.db,
+            self.trivia.id,
+            generator=lambda trivia: sample_content(),
+        )
+        old_video_id = old_job.video_jobs[0].id
+        text_content = {
+            "automation": {"mode": "daily_text"},
+            "x": {"text": "タコには心臓が3つあります。"},
+            "threads": {
+                "text": "タコには心臓が3つあります。",
+                "topic_tag": "雑学",
+            },
+            "shared_image": {
+                "url": self.trivia.image_url,
+                "alt_text": "タコ",
+            },
+        }
+
+        recycled = create_daily_text_job(
+            self.db,
+            generator=lambda trivia: text_content,
+        )
+
+        self.assertEqual(recycled.id, old_job.id)
+        self.assertEqual(recycled.status, "review")
+        self.assertEqual(recycled.content_json, text_content)
+        self.assertEqual(recycled.video_jobs, [])
+        self.assertEqual(
+            {item.platform for item in recycled.publish_jobs},
+            {"x", "threads"},
+        )
+        self.assertIsNone(
+            self.db.query(SocialVideoJob).filter_by(id=old_video_id).one_or_none()
+        )
+
+    def test_published_video_trivia_is_not_recycled_for_daily_text(self):
+        self.trivia.image_url = "https://cdn.example/octopus.png"
+        self.db.commit()
+        old_job = create_content_job(
+            self.db,
+            self.trivia.id,
+            generator=lambda trivia: sample_content(),
+        )
+        self.db.add(SocialPublishJob(
+            content_job_id=old_job.id,
+            platform="instagram",
+            content_type="video",
+            status="published",
+        ))
+        self.db.commit()
+
+        with self.assertRaisesRegex(ValueError, "No unused trivia"):
+            create_daily_text_job(
+                self.db,
+                generator=lambda trivia: {},
+            )
+
     def test_static_video_render_archives_image_and_video(self):
         content_job = create_content_job(self.db, self.trivia.id, generator=lambda trivia: sample_content())
         video_job = self.db.query(SocialVideoJob).filter_by(content_job_id=content_job.id).one()
