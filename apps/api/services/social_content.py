@@ -1,7 +1,7 @@
 import json
 import os
 import re
-from typing import Any, Literal
+from typing import Any
 
 from openai import OpenAI
 from pydantic import BaseModel, ConfigDict
@@ -18,13 +18,6 @@ class StrictModel(BaseModel):
 
 class ResearchBrief(StrictModel):
     original_claim: str
-    claim_status: Literal["supported", "partially_supported", "unsupported"]
-    claim_alignment: str
-    evidence_for_claim: list[str]
-    evidence_against_claim: list[str]
-    authoritative_source_found: bool
-    independent_source_count: int
-    source_quality_notes: str
     subject: str
     common_misconception: str
     verified_fact: str
@@ -96,14 +89,6 @@ class SharedTextReview(StrictModel):
     issues: list[str]
 
 
-class TriviaClaimRejected(RuntimeError):
-    def __init__(self, research: dict):
-        self.research = research
-        status = str(research.get("claim_status") or "unsupported")
-        alignment = str(research.get("claim_alignment") or "元ネタを確認できませんでした")
-        super().__init__(f"Trivia claim rejected ({status}): {alignment}")
-
-
 def x_weighted_length(text: str) -> int:
     """Close server-side guard for X's weighted 280-character limit."""
     total = 0
@@ -154,19 +139,14 @@ def social_cta_reply() -> str:
 def build_research_prompt(trivia: Any) -> str:
     return f"""
 次のDB雑学を出発点としてWeb検索し、短いSNS動画の脚本に使える事実メモを日本語で作成してください。
-DBの記述を無条件に正しいとみなさず、検索結果と照合してください。
-最初にDBの中心的な主張をoriginal_claimへ一文で抜き出し、その主張自体が資料で確認できるかをclaim_statusで判定してください。
-中心的な主張と同じテーマの別事実が見つかっても、元の主張の裏付けにはなりません。別テーマへすり替えてはいけません。
-claim_statusは、中心的な主張をそのまま確認できた場合だけsupported、一部しか確認できない場合はpartially_supported、確認できない・否定された場合はunsupportedにしてください。
-claim_alignmentには、元の主張と確認結果が一致する点・一致しない点を具体的に書いてください。
-verified_factはoriginal_claimを検証した結果を書き、関連するだけの別雑学を主役にしないでください。
-検索は一つの言い回しで終えず、元の主張そのもの、類義語や表記違い、必要なら英語表現でも確認してください。
-DBに出典URLがある場合は最優先で内容を確認し、その出典が実際に元の主張を支えているか判定してください。
-可能なら一次資料、公的機関、大学、博物館、学術資料、専門団体、公式資料を一つ以上確認してください。
-まとめサイト、個人ブログ、Wikipediaだけでsupportedにしてはいけません。独立した複数資料で照合してください。
-evidence_for_claimとevidence_against_claimには、どの資料の何が元の主張を支持・否定するのかを具体的に書いてください。
-authoritative_source_foundとindependent_source_countを過大評価せず、source_quality_notesに資料の質と弱点を書いてください。
-元の出典を優先し、可能なら公的機関、博物館、大学、学術資料、専門団体など信頼性の高い情報でも確認してください。
+DBの内容は人間が精査済みなので、中心的な雑学を正として扱ってください。
+最初に中心的な雑学をoriginal_claimへ一文で抜き出し、その面白さを変えずに最後まで主役として維持してください。
+verified_factにはoriginal_claimの結論を、意味を変えずに初見向けの分かりやすい日本語で書いてください。
+Web検索は元ネタを却下・別テーマへ置き換えるためではなく、初見の人にも伝わる補足、背景、理由、具体例を探すために使ってください。
+まとめサイト、個人ブログ、Wikipediaを含め、関連情報が見つかる一般的なWebページを利用して構いません。
+検索結果に別の面白い事実があっても、original_claimより主役にしてはいけません。
+DBの内容と明確に矛盾する情報を見つけた場合だけcaveatsへ記録し、黙って別の雑学へ変更しないでください。
+DBに登録された出典がある場合は検索時の手掛かりとして使ってください。
 動画の主役は一つに絞り、subjectは冒頭でそのまま読める2〜15文字程度の具体的な名詞にしてください。
 確認できなかった情報は追加せず、異説や断定できない点はcaveatsへ入れてください。
 sourcesには実際に確認に使ったURLだけを入れてください。
@@ -299,7 +279,7 @@ def build_shared_text_review_prompt(trivia: Any, research: dict, draft: dict) ->
 - 各段落の関係が自然で、話題が飛ばない
 - 人物名、専門語、数字、指示語が説明なしに突然現れず、初見の読者が一度で意味を理解できる
 - 調査メモの箇条書きを並べた文章ではなく、人に話したくなる自然な日本語になっている
-- 調査で確認できた範囲だけを述べ、重要な留保を消していない
+- DBの元ネタとWeb検索で追加した補足を混同せず、検索で得た補足に留保がある場合は消していない
 
 approved=falseの場合、issuesへ修正内容を具体的に最大5件入れてください。
 """.strip()
@@ -619,27 +599,10 @@ def _max_research_calls() -> int:
 
 def _max_text_research_calls() -> int:
     try:
-        value = int(os.getenv("SOCIAL_TEXT_RESEARCH_MAX_SEARCH_CALLS", "3"))
+        value = int(os.getenv("SOCIAL_TEXT_RESEARCH_MAX_SEARCH_CALLS", "2"))
     except ValueError:
-        value = 3
-    return max(2, min(value, 5))
-
-
-def research_claim_is_publishable(research: dict) -> bool:
-    if research.get("claim_status") != "supported":
-        return False
-    evidence = [
-        str(item).strip()
-        for item in research.get("evidence_for_claim", [])
-        if str(item).strip()
-    ]
-    if not evidence:
-        return False
-    try:
-        independent_count = int(research.get("independent_source_count") or 0)
-    except (TypeError, ValueError):
-        independent_count = 0
-    return bool(research.get("authoritative_source_found")) or independent_count >= 2
+        value = 2
+    return max(1, min(value, 3))
 
 
 def _estimated_generation_cost(
@@ -753,7 +716,7 @@ def generate_shared_text_content(trivia: Any, client: OpenAI | None = None) -> d
         tools=[{
             "type": "web_search",
             "search_context_size": os.getenv(
-                "SOCIAL_TEXT_RESEARCH_SEARCH_CONTEXT_SIZE", "high"
+                "SOCIAL_TEXT_RESEARCH_SEARCH_CONTEXT_SIZE", "medium"
             ),
             "user_location": {
                 "type": "approximate",
@@ -764,8 +727,8 @@ def generate_shared_text_content(trivia: Any, client: OpenAI | None = None) -> d
         tool_choice="required",
         max_tool_calls=_max_text_research_calls(),
         include=["web_search_call.action.sources"],
-        reasoning={"effort": "high"},
-        max_output_tokens=4500,
+        reasoning={"effort": "medium"},
+        max_output_tokens=3000,
         text_format=ResearchBrief,
         input=build_research_prompt(trivia),
     )
@@ -776,9 +739,6 @@ def generate_shared_text_content(trivia: Any, client: OpenAI | None = None) -> d
     research["sources"] = [item for item in sources if item.startswith(("http://", "https://"))][:8]
     if not research["sources"]:
         raise RuntimeError("Social text research returned no source URLs")
-    if not research_claim_is_publishable(research):
-        raise TriviaClaimRejected(research)
-
     responses = [research_response]
     text_response = client.responses.parse(
         model=model,
@@ -845,7 +805,7 @@ def generate_shared_text_content(trivia: Any, client: OpenAI | None = None) -> d
         for key in usage:
             usage[key] += item_usage[key]
     return {
-        "automation": {"mode": "daily_text", "format_version": 4},
+        "automation": {"mode": "daily_text", "format_version": 5},
         "x": {"text": text, "reply_text": social_cta_reply()},
         "threads": {"text": text, "reply_text": social_cta_reply(), "topic_tag": "雑学"},
         "shared_image": {

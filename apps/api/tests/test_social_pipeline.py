@@ -12,7 +12,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from models import Base, SocialContentJob, SocialPublishJob, SocialVideoJob, Trivia
+from models import Base, SocialPublishJob, SocialVideoJob, Trivia
 from routers.social_automation import _authorize as authorize_social_automation
 from services.line_bot import (
     make_line_video_preview,
@@ -22,7 +22,6 @@ from services.line_bot import (
 from services.kling import KlingClient, KlingTask
 from services.seedance import SeedanceClient, SeedanceTask
 from services.social_content import (
-    TriviaClaimRejected,
     build_research_prompt,
     build_social_prompt,
     build_shared_text_prompt,
@@ -31,7 +30,6 @@ from services.social_content import (
     generate_shared_text_content,
     generate_social_content,
     normalize_social_content,
-    research_claim_is_publishable,
     script_quality_issues,
     shared_text_quality_issues,
     trim_for_x,
@@ -727,13 +725,13 @@ class SocialPipelineTests(unittest.TestCase):
         self.assertIn("3段階で新しい情報が一つずつ増える構成", prompt)
         self.assertIn("紹介していない人物名を突然出さない", prompt)
 
-    def test_research_prompt_forbids_replacing_the_original_trivia(self):
+    def test_research_prompt_keeps_the_curated_database_trivia_as_the_subject(self):
         prompt = build_research_prompt(self.trivia)
 
-        self.assertIn("別テーマへすり替えてはいけません", prompt)
-        self.assertIn("中心的な主張をそのまま確認できた場合だけsupported", prompt)
-        self.assertIn("類義語や表記違い、必要なら英語表現", prompt)
-        self.assertIn("まとめサイト、個人ブログ、Wikipediaだけでsupported", prompt)
+        self.assertIn("DBの内容は人間が精査済み", prompt)
+        self.assertIn("補足、背景、理由、具体例を探すため", prompt)
+        self.assertIn("まとめサイト、個人ブログ、Wikipediaを含め", prompt)
+        self.assertIn("original_claimより主役にしてはいけません", prompt)
 
     def test_editor_review_requires_context_and_original_topic_fidelity(self):
         prompt = build_shared_text_review_prompt(
@@ -760,44 +758,9 @@ class SocialPipelineTests(unittest.TestCase):
             "泳ぐと全身用の心臓は止まるため、タコは泳ぐと疲れやすいのです。",
         )
 
-    def test_shared_text_generation_rejects_an_unverified_original_claim(self):
-        research = {
-            "original_claim": "昔はパンで鉛筆跡を消していた",
-            "claim_status": "unsupported",
-            "claim_alignment": "信頼できる資料で元の主張を確認できない",
-            "evidence_for_claim": [],
-            "evidence_against_claim": ["一次資料では確認できない"],
-            "authoritative_source_found": False,
-            "independent_source_count": 0,
-            "source_quality_notes": "まとめサイト以外の裏付けがない",
-            "subject": "パンの消しゴム",
-            "common_misconception": "",
-            "verified_fact": "元の主張は確認できない",
-            "explanation": "",
-            "supporting_details": [],
-            "caveats": ["裏付けなし"],
-            "visual_anchors": [],
-            "sources": ["https://example.com/source"],
-        }
-        client = FakeOpenAI([
-            fake_model_response(research, searches=1),
-        ])
-
-        with self.assertRaises(TriviaClaimRejected):
-            generate_shared_text_content(self.trivia, client=client)
-
-        self.assertEqual(len(client.responses.calls), 1)
-
     def test_shared_text_generation_uses_editor_review_and_repairs_once(self):
         research = {
             "original_claim": "タコの心臓は三つある",
-            "claim_status": "supported",
-            "claim_alignment": "元の主張を資料で確認できた",
-            "evidence_for_claim": ["博物館資料が心臓は三つと説明している"],
-            "evidence_against_claim": [],
-            "authoritative_source_found": True,
-            "independent_source_count": 2,
-            "source_quality_notes": "公的な博物館資料と専門資料で照合した",
             "subject": "タコ",
             "common_misconception": "心臓は一つ",
             "verified_fact": "タコの心臓は三つある",
@@ -834,30 +797,13 @@ class SocialPipelineTests(unittest.TestCase):
 
         self.assertEqual(len(client.responses.calls), 5)
         self.assertEqual(client.responses.calls[0]["model"], "gpt-5.6-terra")
-        self.assertEqual(client.responses.calls[0]["reasoning"]["effort"], "high")
-        self.assertEqual(client.responses.calls[0]["max_tool_calls"], 3)
+        self.assertEqual(client.responses.calls[0]["reasoning"]["effort"], "medium")
+        self.assertEqual(client.responses.calls[0]["max_tool_calls"], 2)
         self.assertEqual(
-            client.responses.calls[0]["tools"][0]["search_context_size"], "high"
+            client.responses.calls[0]["tools"][0]["search_context_size"], "medium"
         )
         self.assertTrue(generated["generation_meta"]["repaired"])
         self.assertIn("役割を分けることで", generated["x"]["text"])
-
-    def test_supported_claim_still_requires_concrete_source_evidence(self):
-        weak_research = {
-            "claim_status": "supported",
-            "evidence_for_claim": [],
-            "authoritative_source_found": False,
-            "independent_source_count": 1,
-        }
-        corroborated_research = {
-            "claim_status": "supported",
-            "evidence_for_claim": ["公的資料で中心的な主張を確認"],
-            "authoritative_source_found": True,
-            "independent_source_count": 1,
-        }
-
-        self.assertFalse(research_claim_is_publishable(weak_research))
-        self.assertTrue(research_claim_is_publishable(corroborated_research))
 
     def test_content_generation_researches_then_writes_script(self):
         research = {
@@ -1024,52 +970,6 @@ class SocialPipelineTests(unittest.TestCase):
         self.assertEqual(regenerated.status, "review")
         self.assertTrue(
             all(item.status == "waiting_approval" for item in regenerated.publish_jobs)
-        )
-
-    def test_daily_text_job_rejects_unverified_claim_and_tries_next_trivia(self):
-        self.trivia.image_url = "https://cdn.example/octopus.png"
-        self.trivia.hee_count = 10
-        fallback = Trivia(
-            title="確認済みの雑学",
-            content="確認済みの内容",
-            explanation="確認済みの解説",
-            category="動物",
-            image_url="https://cdn.example/fallback.png",
-            hee_count=1,
-        )
-        self.db.add(fallback)
-        self.db.commit()
-
-        def generator(trivia):
-            if trivia.id == self.trivia.id:
-                raise TriviaClaimRejected({
-                    "claim_status": "unsupported",
-                    "claim_alignment": "元の主張を確認できない",
-                })
-            return {
-                "automation": {"mode": "daily_text", "format_version": 4},
-                "x": {"text": "確認済み投稿", "reply_text": "固定CTA"},
-                "threads": {
-                    "text": "確認済み投稿",
-                    "reply_text": "固定CTA",
-                    "topic_tag": "雑学",
-                },
-                "shared_image": {
-                    "url": trivia.image_url,
-                    "alt_text": "確認済み画像",
-                },
-            }
-
-        job = create_daily_text_job(self.db, generator=generator)
-
-        self.assertEqual(job.trivia_id, fallback.id)
-        rejected = self.db.query(SocialContentJob).filter_by(
-            trivia_id=self.trivia.id,
-            status="rejected",
-        ).one()
-        self.assertEqual(
-            rejected.content_json["automation"]["rejection_reason"],
-            "original_claim_not_supported",
         )
 
     def test_static_video_render_archives_image_and_video(self):

@@ -28,12 +28,10 @@ services:
         value: "2.0"
       - key: SOCIAL_TEXT_OUTPUT_USD_PER_MILLION
         value: "12.0"
-      - key: SOCIAL_TEXT_CANDIDATE_ATTEMPTS
-        value: "3"
       - key: SOCIAL_TEXT_RESEARCH_MAX_SEARCH_CALLS
-        value: "3"
+        value: "2"
       - key: SOCIAL_TEXT_RESEARCH_SEARCH_CONTEXT_SIZE
-        value: high
+        value: medium
       - key: SOCIAL_RESEARCH_MAX_SEARCH_CALLS
         value: "1"
       - key: SOCIAL_RESEARCH_SEARCH_CONTEXT_SIZE
@@ -205,12 +203,10 @@ services:
         value: "2.0"
       - key: SOCIAL_TEXT_OUTPUT_USD_PER_MILLION
         value: "12.0"
-      - key: SOCIAL_TEXT_CANDIDATE_ATTEMPTS
-        value: "3"
       - key: SOCIAL_TEXT_RESEARCH_MAX_SEARCH_CALLS
-        value: "3"
+        value: "2"
       - key: SOCIAL_TEXT_RESEARCH_SEARCH_CONTEXT_SIZE
-        value: high
+        value: medium
       - key: SOCIAL_RESEARCH_MAX_SEARCH_CALLS
         value: "1"
       - key: SOCIAL_RESEARCH_SEARCH_CONTEXT_SIZE
