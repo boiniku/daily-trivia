@@ -998,7 +998,7 @@ class SocialPipelineTests(unittest.TestCase):
             all(item.status == "waiting_approval" for item in regenerated.publish_jobs)
         )
 
-    def test_unpublished_video_trivia_can_be_recycled_for_daily_text(self):
+    def test_unpublished_video_trivia_can_also_get_a_daily_text_job(self):
         self.trivia.image_url = "https://cdn.example/octopus.png"
         self.db.commit()
         old_job = create_content_job(
@@ -1020,24 +1020,24 @@ class SocialPipelineTests(unittest.TestCase):
             },
         }
 
-        recycled = create_daily_text_job(
+        text_job = create_daily_text_job(
             self.db,
             generator=lambda trivia: text_content,
         )
 
-        self.assertEqual(recycled.id, old_job.id)
-        self.assertEqual(recycled.status, "review")
-        self.assertEqual(recycled.content_json, text_content)
-        self.assertEqual(recycled.video_jobs, [])
+        self.assertNotEqual(text_job.id, old_job.id)
+        self.assertEqual(text_job.status, "review")
+        self.assertEqual(text_job.content_json, text_content)
+        self.assertEqual(text_job.video_jobs, [])
         self.assertEqual(
-            {item.platform for item in recycled.publish_jobs},
+            {item.platform for item in text_job.publish_jobs},
             {"x", "threads"},
         )
-        self.assertIsNone(
+        self.assertIsNotNone(
             self.db.query(SocialVideoJob).filter_by(id=old_video_id).one_or_none()
         )
 
-    def test_published_video_trivia_is_not_recycled_for_daily_text(self):
+    def test_published_video_trivia_can_still_get_a_daily_text_job(self):
         self.trivia.image_url = "https://cdn.example/octopus.png"
         self.db.commit()
         old_job = create_content_job(
@@ -1053,11 +1053,50 @@ class SocialPipelineTests(unittest.TestCase):
         ))
         self.db.commit()
 
-        with self.assertRaisesRegex(ValueError, "No unused trivia"):
-            create_daily_text_job(
-                self.db,
-                generator=lambda trivia: {},
-            )
+        text_content = {
+            "automation": {"mode": "daily_text"},
+            "x": {"text": "タコには心臓が3つあります。"},
+            "threads": {"text": "タコには心臓が3つあります。"},
+            "shared_image": {
+                "url": self.trivia.image_url,
+                "alt_text": "タコ",
+            },
+        }
+        text_job = create_daily_text_job(
+            self.db,
+            generator=lambda trivia: text_content,
+        )
+
+        self.assertNotEqual(text_job.id, old_job.id)
+        self.assertEqual(text_job.trivia_id, old_job.trivia_id)
+
+    def test_text_trivia_can_also_get_a_separate_video_job(self):
+        self.trivia.image_url = "https://cdn.example/octopus.png"
+        self.db.commit()
+        text_content = {
+            "automation": {"mode": "daily_text"},
+            "x": {"text": "タコには心臓が3つあります。"},
+            "threads": {"text": "タコには心臓が3つあります。"},
+            "shared_image": {
+                "url": self.trivia.image_url,
+                "alt_text": "タコ",
+            },
+        }
+        text_job = create_daily_text_job(
+            self.db,
+            generator=lambda trivia: text_content,
+        )
+
+        video_job = create_content_job(
+            self.db,
+            self.trivia.id,
+            generator=lambda trivia: sample_content(),
+        )
+
+        self.assertNotEqual(video_job.id, text_job.id)
+        self.assertEqual(video_job.trivia_id, text_job.trivia_id)
+        self.assertEqual(len(video_job.video_jobs), 1)
+        self.assertEqual(text_job.video_jobs, [])
 
     def test_static_video_render_archives_image_and_video(self):
         content_job = create_content_job(self.db, self.trivia.id, generator=lambda trivia: sample_content())

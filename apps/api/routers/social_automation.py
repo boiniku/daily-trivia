@@ -134,7 +134,10 @@ def run_due_social_content(
         process_due_video_jobs(db)
         pending_review = (
             db.query(SocialContentJob)
-            .filter(SocialContentJob.status == "review")
+            .filter(
+                SocialContentJob.status == "review",
+                SocialContentJob.video_jobs.any(),
+            )
             .order_by(SocialContentJob.created_at.desc())
             .first()
         )
@@ -170,7 +173,12 @@ def run_due_social_content(
                 }
 
         interval_days = max(1, min(int(os.getenv("SOCIAL_GENERATION_INTERVAL_DAYS", "4")), 31))
-        latest = db.query(SocialContentJob).order_by(SocialContentJob.created_at.desc()).first()
+        latest = (
+            db.query(SocialContentJob)
+            .filter(SocialContentJob.video_jobs.any())
+            .order_by(SocialContentJob.created_at.desc())
+            .first()
+        )
         if latest and latest.created_at > datetime.utcnow() - timedelta(days=interval_days):
             return {
                 "status": "skipped",

@@ -44,6 +44,8 @@ def ensure_admin_schema():
     # a manually configured start command instead of render.yaml.
     from scripts.migrations.migrate_trivia_candidates import migrate
     migrate()
+    from scripts.migrations.migrate_social_content_lanes import migrate as migrate_social_lanes
+    migrate_social_lanes()
 
 from fastapi.middleware.cors import CORSMiddleware
 

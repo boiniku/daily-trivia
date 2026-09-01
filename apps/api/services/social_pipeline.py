@@ -57,35 +57,27 @@ def _video_prompt_json(video_content: dict) -> dict:
 
 
 def select_unused_trivia(db: Session) -> Trivia | None:
-    used_ids = db.query(SocialContentJob.trivia_id)
+    video_used_ids = (
+        db.query(SocialContentJob.trivia_id)
+        .filter(SocialContentJob.video_jobs.any())
+    )
     return (
         db.query(Trivia)
-        .filter(~Trivia.id.in_(used_ids))
+        .filter(~Trivia.id.in_(video_used_ids))
         .order_by(Trivia.hee_count.desc(), Trivia.id.asc())
         .first()
     )
 
 
 def select_unused_trivia_with_image(db: Session) -> Trivia | None:
-    # A generated video draft is not the same thing as a published social post.
-    # Older versions created video jobs (and sometimes legacy X/Threads delivery
-    # rows) that permanently removed the trivia from this lane even though
-    # nothing was ever posted. Keep completed posts and current text drafts out,
-    # but allow an unpublished video-only job to be recycled as a daily text post.
-    published_ids = (
-        db.query(SocialContentJob.trivia_id)
-        .join(SocialPublishJob)
-        .filter(SocialPublishJob.status == "published")
-    )
-    current_text_lane_ids = (
+    text_used_ids = (
         db.query(SocialContentJob.trivia_id)
         .filter(~SocialContentJob.video_jobs.any())
     )
     return (
         db.query(Trivia)
         .filter(
-            ~Trivia.id.in_(published_ids),
-            ~Trivia.id.in_(current_text_lane_ids),
+            ~Trivia.id.in_(text_used_ids),
             Trivia.image_url.isnot(None),
             Trivia.image_url.like("http%"),
         )
@@ -108,31 +100,17 @@ def create_daily_text_job(
     if not image_url.startswith(("http://", "https://")):
         raise ValueError("Daily text content requires one public image URL")
 
-    job = db.query(SocialContentJob).filter_by(trivia_id=trivia.id).one_or_none()
-    if job is None:
-        job = SocialContentJob(trivia_id=trivia.id)
-        db.add(job)
-        db.flush()
-    else:
-        # The old generated files remain safely stored in R2. Only their stale
-        # database job rows are replaced so the trivia can enter the text lane.
-        db.query(SocialPublishJob).filter_by(content_job_id=job.id).delete(
-            synchronize_session=False
-        )
-        db.query(SocialVideoJob).filter_by(content_job_id=job.id).delete(
-            synchronize_session=False
-        )
-        db.flush()
-        db.expire(job, ["publish_jobs", "video_jobs"])
-
     now = datetime.utcnow()
-    job.status = "review"
-    job.content_json = content
-    job.scheduled_at = scheduled_at
-    job.approved_at = None
-    job.error = None
-    job.created_at = now
-    job.updated_at = now
+    job = SocialContentJob(
+        trivia_id=trivia.id,
+        status="review",
+        content_json=content,
+        scheduled_at=scheduled_at,
+        created_at=now,
+        updated_at=now,
+    )
+    db.add(job)
+    db.flush()
     for platform in TEXT_PLATFORMS:
         db.add(SocialPublishJob(
             content_job_id=job.id,
@@ -159,7 +137,14 @@ def create_content_job(
     trivia = db.query(Trivia).filter(Trivia.id == trivia_id).first() if trivia_id else select_unused_trivia(db)
     if trivia is None:
         raise ValueError("No unused trivia is available")
-    existing = db.query(SocialContentJob).filter_by(trivia_id=trivia.id).first()
+    existing = (
+        db.query(SocialContentJob)
+        .filter(
+            SocialContentJob.trivia_id == trivia.id,
+            SocialContentJob.video_jobs.any(),
+        )
+        .first()
+    )
     if existing:
         return existing
 

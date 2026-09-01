@@ -122,7 +122,9 @@ class SocialContentJob(Base):
     __tablename__ = "social_content_jobs"
 
     id = Column(Integer, primary_key=True, index=True)
-    trivia_id = Column(Integer, ForeignKey("trivia.id"), nullable=False, unique=True, index=True)
+    # Text and video publishing are independent lanes. The same trivia may have
+    # one text content job and a separate video content job.
+    trivia_id = Column(Integer, ForeignKey("trivia.id"), nullable=False, index=True)
     status = Column(String, nullable=False, default="draft", index=True)
     content_json = Column(JSON, nullable=False, default=dict)
     scheduled_at = Column(DateTime, nullable=True, index=True)
