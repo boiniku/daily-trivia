@@ -78,8 +78,9 @@ class SocialDraft(StrictModel):
 
 
 class SharedTextDraft(StrictModel):
-    surprising_fact: str
-    supporting_point: str
+    headline_candidates: list[str]
+    headline: str
+    core_fact: str
     closing_point: str
     alt_text: str
 
@@ -240,14 +241,16 @@ def build_shared_text_prompt(
 {json.dumps(research, ensure_ascii=False, indent=2)}
 
 条件:
-- surprising_fact: subjectを明記し、スクロール中でも一瞬で意味が伝わる具体的な意外性を10〜19文字で言い切る。「実は、」や括弧は付けない
-- surprising_factは「知らないと損」「驚きの事実」のような中身のない煽りにせず、元ネタの答えが分かる短い見出しにする
-- コードが付ける「【実は、」と「。】」を含め、1段落目全体が25文字以内になるようにする
-- supporting_point: 1段目を理解するために最も役立つ情報を30〜55文字で書く。特徴、前提、比較、数字、具体例のうち、調査メモに根拠がある最適なものを選ぶ
+- headline_candidates: 角度の異なる自然な見出しを3案作る。各案はsubjectを明記し、7〜23文字、括弧なしにする
+- headline: headline_candidatesから、初見で意味が通り、元ネタの意外性が最も具体的に伝わる1案を完全一致で選ぶ
+- 見出しは単語を無理に詰めたり助詞を省いたりしない。「衝撃の事実」「まさかの正体」のように内容を隠す煽りも禁止
+- 良い見出しの例: 「昔の消しゴムはパンだった」「タコには心臓が3つある」。対象と意外な一点が一読で分かる
+- コードが付ける【】を含め、1段落目全体が25文字以内になるようにする
+- core_fact: DBの元ネタの結論を省略せず、30〜60文字の自然なです・ます調で説明する。見出しだけでは分からない前提や関係もここで補う
 - closing_point: 読後にもう一段「へぇ〜」となる情報を30〜55文字で書く。理由、仕組み、背景、例外、身近な意味のうち、調査メモに根拠がある最適なものを選ぶ
 - 雑学に理由が存在しない、または根拠が弱い場合は理由を作らず、比較・具体例・背景などで締める
 - 3段階で新しい情報が一つずつ増える構成にし、同じ結論を言い換えて繰り返さない
-- supporting_pointとclosing_pointは自然なです・ます調の完成した文章にし、定型句を無理に付けない
+- core_factとclosing_pointは自然なです・ます調の完成した文章にし、定型句を無理に付けない
 - 推定や諸説がある内容は「〜と考えられています」「〜といわれています」と正確に弱める
 - 全体はXの280ウェイトに収まる簡潔さにする
 - ニュース見出し、教科書調、同じ事実の反復、問いかけ、ハッシュタグは禁止
@@ -276,9 +279,9 @@ def build_shared_text_review_prompt(trivia: Any, research: dict, draft: dict) ->
 
 次をすべて満たす場合だけapproved=trueにしてください:
 - 元のDB雑学の中心的な面白さを維持し、関連する別テーマへ変えていない
-- 1段目だけで対象と意外な結論が明確に分かる
-- 1段目は括弧を含め25文字以内で、短くても具体的な引きがある
-- 2段目が1段目を直接具体化し、3段目がさらに理解や驚きを一段進める
+- 1段目だけで対象と具体的な意外性が分かり、日本語として自然な見出しになっている
+- 1段目は括弧を含め25文字以内で、助詞を不自然に省略していない
+- 2段目で元の雑学の結論を省略せず説明し、3段目がさらに理解や驚きを一段進める
 - 各段落の関係が自然で、話題が飛ばない
 - 人物名、専門語、数字、指示語が説明なしに突然現れず、初見の読者が一度で意味を理解できる
 - 調査メモの箇条書きを並べた文章ではなく、人に話したくなる自然な日本語になっている
@@ -289,21 +292,19 @@ approved=falseの場合、issuesへ修正内容を具体的に最大5件入れ�
 
 
 def compose_shared_text(data: dict) -> dict:
-    def sentence(value: str, *, strip_fact_prefix: bool = False) -> str:
+    def sentence(value: str) -> str:
         cleaned = str(value or "").strip().strip("【】")
-        if strip_fact_prefix:
-            cleaned = re.sub(r"^実は、", "", cleaned)
         cleaned = cleaned.rstrip("。！？!?")
         return cleaned + "。"
 
-    fact = sentence(data.get("surprising_fact", ""), strip_fact_prefix=True)
-    supporting_point = sentence(data.get("supporting_point", ""))
+    headline = str(data.get("headline", "")).strip().strip("【】").rstrip("。！!？?")
+    core_fact = sentence(data.get("core_fact", ""))
     closing_point = sentence(data.get("closing_point", ""))
-    text = f"【実は、{fact}】\n\n{supporting_point}\n\n{closing_point}"
+    text = f"【{headline}】\n\n{core_fact}\n\n{closing_point}"
     return {
         **data,
         "text": text,
-        "answer": fact,
+        "answer": core_fact,
     }
 
 
@@ -311,21 +312,31 @@ def shared_text_quality_issues(data: dict, research: dict) -> list[str]:
     text = str(data.get("text", "")).strip()
     answer = str(data.get("answer", "")).strip()
     alt_text = str(data.get("alt_text", "")).strip()
+    headline = str(data.get("headline", "")).strip().strip("【】")
+    candidates = [str(item).strip().strip("【】") for item in data.get("headline_candidates", [])]
     subject = str(research.get("subject", "")).strip()
     issues = []
     if subject and subject not in text:
         issues.append(f"本文に対象名「{subject}」を明記してください")
     if not answer or answer not in text:
-        issues.append("surprising_factの結論を本文内に入れ、答えを明言してください")
+        issues.append("core_factの結論を本文内に入れ、答えを明言してください")
+    if len(candidates) != 3 or len(set(candidates)) != 3:
+        issues.append("意味と角度の異なる見出し候補を3案作ってください")
+    if headline not in candidates:
+        issues.append("headlineはheadline_candidatesの1案と完全一致させてください")
     plain_text = text.strip()
     paragraphs = plain_text.split("\n\n")
     if len(paragraphs) != 3:
         issues.append("本文を空行で区切った3段落にしてください")
     else:
-        if not (paragraphs[0].startswith("【実は、") and paragraphs[0].endswith("。】")):
-            issues.append("1段落目を【実は、〇〇。】の形にしてください")
+        if not (paragraphs[0].startswith("【") and paragraphs[0].endswith("】")):
+            issues.append("1段落目を【短い見出し】の形にしてください")
         if len(paragraphs[0]) > 25:
             issues.append("1段落目を括弧込み25文字以内の、具体的で引きのある見出しにしてください")
+        if len(paragraphs[0]) < 9:
+            issues.append("1段落目を短くしすぎず、対象と具体的な意外性が分かる見出しにしてください")
+        if subject and subject not in paragraphs[0]:
+            issues.append(f"見出しに対象名「{subject}」を明記してください")
         if len(set(paragraphs)) != 3:
             issues.append("3段階で別々の情報を伝え、同じ内容を繰り返さないでください")
     if plain_text.endswith(("？", "?")):
@@ -336,7 +347,10 @@ def shared_text_quality_issues(data: dict, research: dict) -> list[str]:
         issues.append("本文をXの280ウェイト以内にしてください")
     if "#" in text:
         issues.append("本文にハッシュタグを入れないでください")
-    if any(phrase in text for phrase in ("意外です", "秘密があります", "結論として", "説明すると")):
+    if any(phrase in text for phrase in (
+        "意外です", "秘密があります", "結論として", "説明すると",
+        "衝撃の事実", "驚きの事実", "まさかの正体",
+    )):
         issues.append("抽象的な煽りや硬い解説口調を避け、具体的な事実を自然に説明してください")
     if subject and subject not in alt_text:
         issues.append(f"alt_textに対象名「{subject}」を入れてください")
@@ -810,7 +824,7 @@ def generate_shared_text_content(trivia: Any, client: OpenAI | None = None) -> d
         for key in usage:
             usage[key] += item_usage[key]
     return {
-        "automation": {"mode": "daily_text", "format_version": 6},
+        "automation": {"mode": "daily_text", "format_version": 7},
         "x": {"text": text, "reply_text": social_cta_reply()},
         "threads": {"text": text, "reply_text": social_cta_reply(), "topic_tag": "雑学"},
         "shared_image": {

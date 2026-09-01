@@ -720,7 +720,8 @@ class SocialPipelineTests(unittest.TestCase):
         prompt = build_shared_text_prompt(self.trivia, research)
 
         self.assertIn("完成文の型・括弧・改行はコード側で固定", prompt)
-        self.assertIn("surprising_fact", prompt)
+        self.assertIn("headline_candidates", prompt)
+        self.assertIn("core_fact", prompt)
         self.assertIn("理由が存在しない、または根拠が弱い場合は理由を作らず", prompt)
         self.assertIn("3段階で新しい情報が一つずつ増える構成", prompt)
         self.assertIn("紹介していない人物名を突然出さない", prompt)
@@ -746,16 +747,21 @@ class SocialPipelineTests(unittest.TestCase):
 
     def test_shared_text_is_composed_in_fixed_readable_format(self):
         composed = compose_shared_text({
-            "surprising_fact": "実は、タコの心臓は3つあります。",
-            "supporting_point": "二つはえらへ、残る一つは全身へ血液を送ります。",
+            "headline_candidates": [
+                "タコには心臓が3つある",
+                "タコの心臓は1つじゃない",
+                "タコは3つの心臓を持つ",
+            ],
+            "headline": "タコには心臓が3つある",
+            "core_fact": "タコには心臓が三つあり、二つはえらへ、残る一つは全身へ血液を送ります。",
             "closing_point": "泳ぐと全身用の心臓は止まるため、タコは泳ぐと疲れやすいのです。",
             "alt_text": "海中にいるタコの写真",
         })
 
         self.assertEqual(
             composed["text"],
-            "【実は、タコの心臓は3つあります。】\n\n"
-            "二つはえらへ、残る一つは全身へ血液を送ります。\n\n"
+            "【タコには心臓が3つある】\n\n"
+            "タコには心臓が三つあり、二つはえらへ、残る一つは全身へ血液を送ります。\n\n"
             "泳ぐと全身用の心臓は止まるため、タコは泳ぐと疲れやすいのです。",
         )
         self.assertLessEqual(len(composed["text"].split("\n\n")[0]), 25)
@@ -789,14 +795,16 @@ class SocialPipelineTests(unittest.TestCase):
             "sources": ["https://example.com/source"],
         }
         first_draft = {
-            "surprising_fact": "タコの心臓は3つあります",
-            "supporting_point": "二つはえらへ血液を送ります",
+            "headline_candidates": ["タコには心臓が3つある", "タコの心臓は1つじゃない", "タコは3つの心臓を持つ"],
+            "headline": "タコには心臓が3つある",
+            "core_fact": "タコには心臓が三つあり、そのうち二つはえらへ血液を送ります",
             "closing_point": "この人が発見しました",
             "alt_text": "青い海の中をゆっくり泳いでいるタコを写した写真",
         }
         repaired_draft = {
-            "surprising_fact": "タコの心臓は3つあります",
-            "supporting_point": "二つはえらへ、残る一つは全身へ血液を送ります",
+            "headline_candidates": ["タコには心臓が3つある", "タコの心臓は1つじゃない", "タコは3つの心臓を持つ"],
+            "headline": "タコには心臓が3つある",
+            "core_fact": "タコには心臓が三つあり、二つはえらへ、残る一つは全身へ血液を送ります",
             "closing_point": "役割を分けることで、全身とえらの両方へ血液を循環させます",
             "alt_text": "青い海の中をゆっくり泳いでいるタコを写した写真",
         }
