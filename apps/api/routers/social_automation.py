@@ -192,6 +192,7 @@ def run_due_social_content(
 
 @router.post("/run-due-text")
 def run_due_social_text(
+    force: bool = False,
     authorization: str | None = Header(default=None),
 ):
     """Create and publish at most one shared X/Threads image post per day."""
@@ -231,7 +232,11 @@ def run_due_social_text(
             .first()
         )
         interval_hours = max(1, min(int(os.getenv("SOCIAL_TEXT_INTERVAL_HOURS", "24")), 168))
-        if latest and latest.created_at > datetime.utcnow() - timedelta(hours=interval_hours):
+        if (
+            not force
+            and latest
+            and latest.created_at > datetime.utcnow() - timedelta(hours=interval_hours)
+        ):
             db.refresh(latest)
             return {
                 "status": "published" if resumed else "skipped",

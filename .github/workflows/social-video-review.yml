@@ -25,13 +25,14 @@ jobs:
         env:
           SOCIAL_AUTOMATION_URL: ${{ vars.SOCIAL_AUTOMATION_URL }}
           SOCIAL_AUTOMATION_SECRET: ${{ secrets.DAILY_COLLECTION_SECRET }}
+          TEXT_FORCE: ${{ github.event_name == 'workflow_dispatch' && inputs.text_only && 'true' || 'false' }}
         run: |
           test -n "$SOCIAL_AUTOMATION_URL"
           test -n "$SOCIAL_AUTOMATION_SECRET"
           response=$(curl --fail-with-body --max-time 300 \
             --request POST \
             --header "Authorization: Bearer ${SOCIAL_AUTOMATION_SECRET}" \
-            "${SOCIAL_AUTOMATION_URL%/}/internal/social/run-due-text")
+            "${SOCIAL_AUTOMATION_URL%/}/internal/social/run-due-text?force=${TEXT_FORCE}")
           echo "$response"
           echo "$response" | jq --exit-status '
             if .status == "review" then
