@@ -2,6 +2,7 @@ import html
 import json
 import os
 import time
+from datetime import datetime
 from types import SimpleNamespace
 from urllib.parse import parse_qs
 
@@ -12,12 +13,15 @@ from pydantic import BaseModel
 from database import SessionLocal
 from models import SocialContentJob, Trivia, TriviaCandidate
 from services.line_bot import (
+    SOCIAL_TEXT_REVIEW_MESSAGE_VERSION,
     candidate_carousel_message,
     is_allowed_user,
     mark_line_sent,
     new_candidate_message,
     push_message,
+    push_social_text_review,
     read_editor_token,
+    read_social_editor_token,
     reply_message,
     verify_signature,
 )
@@ -42,6 +46,7 @@ from services.image_storage import upload_trivia_image
 from services.map_trivia import create_map_trivia, create_map_trivia_from_candidate
 from services.trivia_collection import TriviaCollectionDiagnostics, collect_trivia_candidates
 from services.trivia_generation import TRIVIA_CATEGORIES, generate_trivia
+from services.social_content import x_weighted_length
 
 
 router = APIRouter()
@@ -65,6 +70,11 @@ class CandidateUpdateRequest(BaseModel):
     map_longitude: float = 139.7671
     map_radius: int = 500
     map_hint: str = ""
+
+
+class SocialTextUpdateRequest(BaseModel):
+    token: str
+    text: str
 
 
 def _text_message(text: str) -> dict:
@@ -490,6 +500,72 @@ def candidate_editor(candidate_id: int, token: str):
         db.close()
 
 
+@router.get("/admin/social/{content_job_id}/edit", response_class=HTMLResponse)
+def social_text_editor(content_job_id: int, token: str):
+    _validate_social_editor_token(content_job_id, token)
+    db = SessionLocal()
+    try:
+        job = _editable_social_text_job(db, content_job_id)
+        text = str(((job.content_json or {}).get("x") or {}).get("text") or "")
+        return HTMLResponse(_social_text_editor_html(job, token, text))
+    finally:
+        db.close()
+
+
+@router.put("/admin/social/{content_job_id}/edit")
+def save_social_text(content_job_id: int, request: SocialTextUpdateRequest):
+    _validate_social_editor_token(content_job_id, request.token)
+    text = request.text.strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="投稿文を入力してください。")
+    if x_weighted_length(text) > 280:
+        raise HTTPException(status_code=400, detail="投稿文をXの280ウェイト以内にしてください。")
+    db = SessionLocal()
+    try:
+        job = _editable_social_text_job(db, content_job_id)
+        content = dict(job.content_json or {})
+        x_content = dict(content.get("x") or {})
+        threads_content = dict(content.get("threads") or {})
+        x_content["text"] = text
+        threads_content["text"] = text
+        content["x"] = x_content
+        content["threads"] = threads_content
+        automation = dict(content.get("automation") or {})
+        automation.pop("line_review", None)
+        automation["line_edited_at"] = datetime.utcnow().isoformat()
+        content["automation"] = automation
+        job.content_json = content
+        db.commit()
+        db.refresh(job)
+
+        notification_error = None
+        try:
+            recipients = push_social_text_review(job)
+            review_meta = {
+                "image_url": str((content.get("shared_image") or {}).get("url") or ""),
+                "sent_at": datetime.utcnow().isoformat(),
+                "recipient_count": recipients,
+                "message_version": SOCIAL_TEXT_REVIEW_MESSAGE_VERSION,
+            }
+        except Exception as exc:
+            notification_error = str(exc)[:500]
+            review_meta = {"error": notification_error}
+        content = dict(job.content_json or {})
+        automation = dict(content.get("automation") or {})
+        automation["line_review"] = review_meta
+        content["automation"] = automation
+        job.content_json = content
+        db.commit()
+        return {
+            "ok": True,
+            "status": "review",
+            "notification_sent": notification_error is None,
+            "notification_error": notification_error,
+        }
+    finally:
+        db.close()
+
+
 @router.get("/admin/candidates/new", response_class=HTMLResponse)
 def new_candidate_editor(token: str, map: str = ""):
     _validate_editor_token(0, token)
@@ -622,6 +698,26 @@ def save_candidate(candidate_id: int, request: CandidateUpdateRequest):
         db.close()
 
 
+def _validate_social_editor_token(content_job_id: int, token: str) -> None:
+    try:
+        token_content_job_id = read_social_editor_token(token)
+    except ValueError as exc:
+        raise HTTPException(status_code=403, detail=str(exc))
+    if token_content_job_id != content_job_id:
+        raise HTTPException(status_code=403, detail="Token does not match social content")
+
+
+def _editable_social_text_job(db, content_job_id: int) -> SocialContentJob:
+    job = db.query(SocialContentJob).filter_by(id=content_job_id).one_or_none()
+    if not job:
+        raise HTTPException(status_code=404, detail="投稿案が見つかりません。")
+    if job.video_jobs:
+        raise HTTPException(status_code=400, detail="この画面では動画投稿文を編集できません。")
+    if job.status != "review":
+        raise HTTPException(status_code=409, detail="承認待ちの投稿案だけ編集できます。")
+    return job
+
+
 def _validate_editor_token(candidate_id: int, token: str) -> None:
     try:
         token_candidate_id = read_editor_token(token)
@@ -629,6 +725,39 @@ def _validate_editor_token(candidate_id: int, token: str) -> None:
         raise HTTPException(status_code=403, detail=str(exc))
     if token_candidate_id != candidate_id:
         raise HTTPException(status_code=403, detail="Token does not match candidate")
+
+
+def _social_text_editor_html(content_job: SocialContentJob, token: str, text: str) -> str:
+    title = html.escape(content_job.trivia.title or f"投稿案 #{content_job.id}")
+    return f"""<!doctype html>
+<html lang="ja"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>X・Threads投稿文を編集</title>
+<style>
+body{{margin:0;background:#f4f6f8;color:#17212b;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}}
+main{{max-width:680px;margin:auto;padding:20px 16px 48px}}.card{{background:white;padding:20px;border-radius:16px;box-shadow:0 4px 18px #00000012}}
+h1{{font-size:22px;margin:0 0 8px}}.subject{{color:#667085;margin-bottom:18px}}
+textarea{{width:100%;min-height:260px;box-sizing:border-box;padding:14px;border:1px solid #cbd3da;border-radius:10px;font-size:17px;line-height:1.6;resize:vertical}}
+.counter{{margin-top:8px;color:#667085;font-size:14px}}button{{width:100%;margin-top:20px;border:0;border-radius:11px;padding:14px;background:#1db446;color:white;font-size:16px;font-weight:700}}
+#message{{margin-top:14px;min-height:24px;font-weight:700;white-space:pre-wrap}}
+</style></head><body><main><div class="card">
+<h1>X・Threads投稿文を編集</h1><div class="subject">{title}</div>
+<textarea id="text" maxlength="5000">{html.escape(text)}</textarea>
+<div class="counter" id="counter"></div>
+<button onclick="saveText()">保存してLINEへ再送</button><div id="message"></div>
+</div></main><script>
+const editorToken={json.dumps(token)};
+const textArea=document.getElementById("text"),counter=document.getElementById("counter"),message=document.getElementById("message");
+function updateCounter(){{counter.textContent=`${{[...textArea.value].length}}文字（Xでは全角文字などを2ウェイトで数える場合があります）`;}}
+textArea.addEventListener("input",updateCounter);updateCounter();
+async function saveText(){{
+ message.textContent="保存中...";
+ const response=await fetch(window.location.pathname,{{method:"PUT",headers:{{"Content-Type":"application/json"}},body:JSON.stringify({{token:editorToken,text:textArea.value}})}});
+ const data=await response.json();
+ if(!response.ok){{message.textContent=data.detail||"保存できませんでした。";return}}
+ message.textContent=data.notification_sent?"保存しました。更新後の承認カードをLINEへ送りました。":"保存しました。LINE再送に失敗したため、次回の自動処理で再送します。";
+}}
+</script></body></html>"""
 
 
 def _editor_html(candidate: TriviaCandidate, token: str, is_new: bool, map_mode: bool = False) -> str:

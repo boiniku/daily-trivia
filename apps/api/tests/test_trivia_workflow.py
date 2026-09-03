@@ -14,7 +14,7 @@ from sqlalchemy import inspect
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from models import Base, Trivia, TriviaCandidate, MapTrivia
+from models import Base, Trivia, TriviaCandidate, MapTrivia, SocialContentJob, SocialPublishJob
 from routers import line_admin
 from routers.line_admin import _approve_candidate_from_line, _parse_collect_command, _parse_generate_command
 from services.trivia_generation import build_generation_prompt
@@ -44,7 +44,12 @@ from services.trivia_collection import (
     select_diverse_items,
     validate_collected_items,
 )
-from services.line_bot import make_editor_token, read_editor_token, verify_signature
+from services.line_bot import (
+    make_editor_token,
+    make_social_editor_token,
+    read_editor_token,
+    verify_signature,
+)
 from services.trivia_map import build_trivia_spot, format_trivia_spot_block, parse_trivia_spot_block
 from services.trivia_candidates import (
     CandidateError,
@@ -1273,6 +1278,71 @@ class MobileEditorIntegrationTests(unittest.TestCase):
             self.assertEqual(verify_db.query(TriviaCandidate).count(), 0)
         finally:
             verify_db.close()
+
+    def test_social_text_can_be_edited_and_resent_from_line_editor(self):
+        trivia = Trivia(
+            title="タコの心臓",
+            content="タコには心臓が3つあります。",
+            category="生物",
+        )
+        self.db.add(trivia)
+        self.db.flush()
+        job = SocialContentJob(
+            trivia_id=trivia.id,
+            status="review",
+            content_json={
+                "automation": {"mode": "daily_text"},
+                "x": {"text": "編集前の投稿文", "reply_text": "固定リプライ"},
+                "threads": {"text": "編集前の投稿文", "reply_text": "固定リプライ"},
+                "shared_image": {"url": "https://cdn.example/octopus.png"},
+            },
+        )
+        self.db.add(job)
+        self.db.flush()
+        for platform in ("x", "threads"):
+            self.db.add(SocialPublishJob(
+                content_job_id=job.id,
+                platform=platform,
+                content_type="text",
+                status="waiting_approval",
+            ))
+        self.db.commit()
+        token = make_social_editor_token(job.id)
+        path = f"/admin/social/{job.id}/edit"
+
+        page = self.client.get(path, params={"token": token})
+        self.assertEqual(page.status_code, 200)
+        self.assertIn("編集前の投稿文", page.text)
+
+        edited_text = "【タコには心臓が3つある】\n\n二つはえらへ、残る一つは全身へ血液を送ります。"
+        with patch.object(line_admin, "push_social_text_review", return_value=1):
+            saved = self.client.put(path, json={"token": token, "text": edited_text})
+
+        self.assertEqual(saved.status_code, 200)
+        self.assertTrue(saved.json()["notification_sent"])
+        verify_db = self.session_factory()
+        try:
+            refreshed = verify_db.query(SocialContentJob).filter_by(id=job.id).one()
+            self.assertEqual(refreshed.content_json["x"]["text"], edited_text)
+            self.assertEqual(refreshed.content_json["threads"]["text"], edited_text)
+            self.assertEqual(
+                refreshed.content_json["automation"]["line_review"]["recipient_count"],
+                1,
+            )
+            self.assertEqual(refreshed.status, "review")
+        finally:
+            verify_db.close()
+
+    def test_social_text_editor_rejects_overweight_x_text(self):
+        token = make_social_editor_token(999)
+
+        response = self.client.put(
+            "/admin/social/999/edit",
+            json={"token": token, "text": "雑" * 141},
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("280ウェイト以内", response.json()["detail"])
 
     def test_new_map_candidate_page_opens_with_map_fields(self):
         token = make_editor_token(0)

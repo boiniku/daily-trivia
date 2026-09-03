@@ -624,6 +624,14 @@ def _max_text_research_calls() -> int:
     return max(1, min(value, 3))
 
 
+def _max_text_generation_attempts() -> int:
+    try:
+        value = int(os.getenv("SOCIAL_TEXT_GENERATION_ATTEMPTS", "3"))
+    except ValueError:
+        value = 3
+    return max(1, min(value, 5))
+
+
 def _estimated_generation_cost(
     usage: dict[str, int],
     *,
@@ -759,64 +767,55 @@ def generate_shared_text_content(trivia: Any, client: OpenAI | None = None) -> d
     if not research["sources"]:
         raise RuntimeError("Social text research returned no source URLs")
     responses = [research_response]
-    text_response = client.responses.parse(
-        model=model,
-        reasoning={"effort": "medium"},
-        max_output_tokens=3000,
-        text_format=SharedTextDraft,
-        input=build_shared_text_prompt(trivia, research),
-    )
-    draft = compose_shared_text(
-        _parsed_response(text_response, "Social shared text").model_dump()
-    )
-    responses.append(text_response)
-    issues = shared_text_quality_issues(draft, research)
-    review_response = client.responses.parse(
-        model=model,
-        reasoning={"effort": "medium"},
-        max_output_tokens=2000,
-        text_format=SharedTextReview,
-        input=build_shared_text_review_prompt(trivia, research, draft),
-    )
-    review = _parsed_response(review_response, "Social shared text review").model_dump()
-    responses.append(review_response)
-    if not review.get("approved"):
-        issues.extend(str(item) for item in review.get("issues", []) if str(item).strip())
-    repaired = False
-    if issues:
-        repair_response = client.responses.parse(
+    draft = None
+    issues: list[str] = []
+    generation_attempts = 0
+    for attempt in range(_max_text_generation_attempts()):
+        generation_attempts += 1
+        draft_response = client.responses.parse(
             model=model,
             reasoning={"effort": "medium"},
             max_output_tokens=3000,
             text_format=SharedTextDraft,
-            input=build_shared_text_prompt(trivia, research, issues),
+            input=build_shared_text_prompt(
+                trivia,
+                research,
+                issues if attempt else None,
+            ),
         )
         draft = compose_shared_text(
-            _parsed_response(repair_response, "Social shared text repair").model_dump()
+            _parsed_response(
+                draft_response,
+                "Social shared text" if attempt == 0 else "Social shared text regeneration",
+            ).model_dump()
         )
-        responses.append(repair_response)
-        repaired = True
-        remaining = shared_text_quality_issues(draft, research)
-        final_review_response = client.responses.parse(
+        responses.append(draft_response)
+        issues = shared_text_quality_issues(draft, research)
+        review_response = client.responses.parse(
             model=model,
             reasoning={"effort": "medium"},
             max_output_tokens=2000,
             text_format=SharedTextReview,
             input=build_shared_text_review_prompt(trivia, research, draft),
         )
-        final_review = _parsed_response(
-            final_review_response, "Social shared text final review"
+        review = _parsed_response(
+            review_response,
+            "Social shared text review",
         ).model_dump()
-        responses.append(final_review_response)
-        if not final_review.get("approved"):
-            remaining.extend(
+        responses.append(review_response)
+        if not review.get("approved"):
+            issues.extend(
                 str(item)
-                for item in final_review.get("issues", [])
+                for item in review.get("issues", [])
                 if str(item).strip()
             )
-        if remaining:
-            raise RuntimeError("Social shared text quality check failed: " + "; ".join(remaining))
+        issues = list(dict.fromkeys(issues))
+        if not issues:
+            break
+    else:
+        raise RuntimeError("Social shared text quality check failed: " + "; ".join(issues))
 
+    assert draft is not None
     text = draft["text"]
     usage = {"input_tokens": 0, "output_tokens": 0, "web_search_calls": 0}
     for response in responses:
@@ -836,7 +835,8 @@ def generate_shared_text_content(trivia: Any, client: OpenAI | None = None) -> d
         "generation_meta": {
             "model": model,
             **usage,
-            "repaired": repaired,
+            "repaired": generation_attempts > 1,
+            "generation_attempts": generation_attempts,
             "estimated_cost_usd": _estimated_generation_cost(
                 usage,
                 input_rate=float(os.getenv("SOCIAL_TEXT_INPUT_USD_PER_MILLION", "2.0")),

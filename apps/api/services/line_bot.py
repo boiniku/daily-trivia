@@ -16,6 +16,7 @@ from services.social_storage import upload_social_asset
 
 
 LINE_API_BASE = "https://api.line.me/v2/bot/message"
+SOCIAL_TEXT_REVIEW_MESSAGE_VERSION = 2
 
 
 def verify_signature(body: bytes, signature: str) -> bool:
@@ -61,21 +62,21 @@ def _send(endpoint: str, payload: dict) -> None:
     response.raise_for_status()
 
 
-def make_editor_token(candidate_id: int, expires_in: int = 7 * 24 * 60 * 60) -> str:
+def _make_editor_token(payload: dict, expires_in: int) -> str:
     secret = os.getenv("CANDIDATE_EDITOR_SECRET") or os.getenv("LINE_CHANNEL_SECRET", "")
     if not secret:
         raise RuntimeError("CANDIDATE_EDITOR_SECRET is not configured")
-    payload = json.dumps(
-        {"candidate_id": candidate_id, "exp": int(time.time()) + expires_in},
+    encoded_payload = json.dumps(
+        {**payload, "exp": int(time.time()) + expires_in},
         separators=(",", ":"),
     ).encode("utf-8")
-    encoded = base64.urlsafe_b64encode(payload).decode("ascii").rstrip("=")
+    encoded = base64.urlsafe_b64encode(encoded_payload).decode("ascii").rstrip("=")
     signature = hmac.new(secret.encode("utf-8"), encoded.encode("ascii"), hashlib.sha256).digest()
     encoded_signature = base64.urlsafe_b64encode(signature).decode("ascii").rstrip("=")
     return f"{encoded}.{encoded_signature}"
 
 
-def read_editor_token(token: str) -> int:
+def _read_editor_token(token: str) -> dict:
     secret = os.getenv("CANDIDATE_EDITOR_SECRET") or os.getenv("LINE_CHANNEL_SECRET", "")
     if not secret:
         raise ValueError("Editor secret is not configured")
@@ -90,9 +91,34 @@ def read_editor_token(token: str) -> int:
         payload = json.loads(base64.urlsafe_b64decode(_pad_base64(encoded)))
         if int(payload["exp"]) < int(time.time()):
             raise ValueError("Editor token has expired")
-        return int(payload["candidate_id"])
+        return payload
     except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
         raise ValueError("Invalid editor token") from exc
+
+
+def make_editor_token(candidate_id: int, expires_in: int = 7 * 24 * 60 * 60) -> str:
+    return _make_editor_token({"candidate_id": candidate_id}, expires_in)
+
+
+def read_editor_token(token: str) -> int:
+    try:
+        return int(_read_editor_token(token)["candidate_id"])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError("Invalid editor token") from exc
+
+
+def make_social_editor_token(
+    content_job_id: int,
+    expires_in: int = 7 * 24 * 60 * 60,
+) -> str:
+    return _make_editor_token({"social_content_job_id": content_job_id}, expires_in)
+
+
+def read_social_editor_token(token: str) -> int:
+    try:
+        return int(_read_editor_token(token)["social_content_job_id"])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError("Invalid social editor token") from exc
 
 
 def _pad_base64(value: str) -> str:
@@ -364,6 +390,13 @@ def social_text_review_messages(content_job: SocialContentJob, image_url: str) -
     reply_text = str((content.get("x") or {}).get("reply_text") or "").strip()
     if not text or not image_url:
         raise ValueError("Text and image are required for LINE review")
+    public_base_url = os.getenv("PUBLIC_BASE_URL", "").rstrip("/")
+    if not public_base_url:
+        raise RuntimeError("PUBLIC_BASE_URL is not configured")
+    editor_url = (
+        f"{public_base_url}/admin/social/{content_job.id}/edit?"
+        f"{urlencode({'token': make_social_editor_token(content_job.id)})}"
+    )
     title = (content_job.trivia.title or f"投稿案 #{content_job.id}")[:80]
     detail = f"【X・Threads投稿案】\n{text}"
     if reply_text:
@@ -394,6 +427,15 @@ def social_text_review_messages(content_job: SocialContentJob, image_url: str) -
                 "layout": "vertical",
                 "spacing": "sm",
                 "contents": [
+                    {
+                        "type": "button",
+                        "style": "secondary",
+                        "action": {
+                            "type": "uri",
+                            "label": "文章を編集",
+                            "uri": editor_url,
+                        },
+                    },
                     {
                         "type": "button",
                         "style": "primary",

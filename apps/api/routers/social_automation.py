@@ -19,7 +19,11 @@ from services.social_pipeline import (
     render_static_video_job,
     submit_video_job,
 )
-from services.line_bot import push_social_review, push_social_text_review
+from services.line_bot import (
+    SOCIAL_TEXT_REVIEW_MESSAGE_VERSION,
+    push_social_review,
+    push_social_text_review,
+)
 from services.aivis_tts import generate_aivis_narration
 from services.social_storage import upload_social_asset
 
@@ -83,7 +87,11 @@ def _send_line_text_review_if_needed(db, job: SocialContentJob) -> dict:
     automation = dict(content.get("automation") or {})
     review_meta = dict(automation.get("line_review") or {})
     image_url = str((content.get("shared_image") or {}).get("url") or "")
-    if review_meta.get("image_url") == image_url and review_meta.get("sent_at"):
+    if (
+        review_meta.get("image_url") == image_url
+        and review_meta.get("sent_at")
+        and review_meta.get("message_version") == SOCIAL_TEXT_REVIEW_MESSAGE_VERSION
+    ):
         return review_meta
     try:
         recipients = push_social_text_review(job)
@@ -91,6 +99,7 @@ def _send_line_text_review_if_needed(db, job: SocialContentJob) -> dict:
             "image_url": image_url,
             "sent_at": datetime.utcnow().isoformat(),
             "recipient_count": recipients,
+            "message_version": SOCIAL_TEXT_REVIEW_MESSAGE_VERSION,
         }
     except Exception as exc:
         review_meta = {"image_url": image_url, "error": str(exc)[:500]}

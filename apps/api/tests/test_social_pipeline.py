@@ -13,7 +13,10 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from models import Base, SocialPublishJob, SocialVideoJob, Trivia
-from routers.social_automation import _authorize as authorize_social_automation
+from routers.social_automation import (
+    _authorize as authorize_social_automation,
+    _send_line_text_review_if_needed,
+)
 from services.line_bot import (
     make_line_video_preview,
     social_review_messages,
@@ -829,7 +832,89 @@ class SocialPipelineTests(unittest.TestCase):
             client.responses.calls[0]["tools"][0]["search_context_size"], "medium"
         )
         self.assertTrue(generated["generation_meta"]["repaired"])
+        self.assertEqual(generated["generation_meta"]["generation_attempts"], 2)
         self.assertIn("役割を分けることで", generated["x"]["text"])
+
+    def test_shared_text_generation_retries_after_a_failed_repair(self):
+        research = {
+            "original_claim": "タコの心臓は三つある",
+            "subject": "タコ",
+            "common_misconception": "心臓は一つ",
+            "verified_fact": "タコの心臓は三つある",
+            "explanation": "二つはえらへ血液を送る",
+            "supporting_details": ["残る一つは全身へ送る"],
+            "caveats": [],
+            "visual_anchors": ["タコ"],
+            "sources": ["https://example.com/source"],
+        }
+        invalid = {
+            "headline_candidates": ["タコの秘密", "タコは意外", "タコの不思議"],
+            "headline": "タコの秘密",
+            "core_fact": "タコには心臓が三つあります",
+            "closing_point": "意外です",
+            "alt_text": "海中を泳いでいるタコを写した写真",
+        }
+        still_invalid = {**invalid, "headline": "タコは意外"}
+        valid = {
+            "headline_candidates": [
+                "タコには心臓が3つある",
+                "タコの心臓は1つじゃない",
+                "タコは3つの心臓を持つ",
+            ],
+            "headline": "タコには心臓が3つある",
+            "core_fact": "タコには心臓が三つあり、二つはえらへ、残る一つは全身へ血液を送ります",
+            "closing_point": "役割を分けて、えらと全身の両方へ血液を循環させています",
+            "alt_text": "青い海の中をゆっくり泳いでいるタコを写した写真",
+        }
+        client = FakeOpenAI([
+            fake_model_response(research, searches=1),
+            fake_model_response(invalid),
+            fake_model_response({"approved": False, "issues": ["見出しが曖昧です"]}),
+            fake_model_response(still_invalid),
+            fake_model_response({"approved": False, "issues": ["意外性を具体化してください"]}),
+            fake_model_response(valid),
+            fake_model_response({"approved": True, "issues": []}),
+        ])
+
+        generated = generate_shared_text_content(self.trivia, client=client)
+
+        self.assertEqual(len(client.responses.calls), 7)
+        self.assertEqual(generated["generation_meta"]["generation_attempts"], 3)
+        self.assertIn("意外性を具体化してください", client.responses.calls[5]["input"])
+        self.assertIn("タコには心臓が3つある", generated["x"]["text"])
+
+    def test_shared_text_generation_stops_at_the_configured_attempt_limit(self):
+        research = {
+            "original_claim": "タコの心臓は三つある",
+            "subject": "タコ",
+            "common_misconception": "心臓は一つ",
+            "verified_fact": "タコの心臓は三つある",
+            "explanation": "二つはえらへ血液を送る",
+            "supporting_details": [],
+            "caveats": [],
+            "visual_anchors": ["タコ"],
+            "sources": ["https://example.com/source"],
+        }
+        invalid = {
+            "headline_candidates": ["タコの秘密", "タコは意外", "タコの不思議"],
+            "headline": "タコの秘密",
+            "core_fact": "タコには心臓が三つあります",
+            "closing_point": "意外です",
+            "alt_text": "海中を泳いでいるタコを写した写真",
+        }
+        client = FakeOpenAI([
+            fake_model_response(research, searches=1),
+            fake_model_response(invalid),
+            fake_model_response({"approved": False, "issues": ["見出しが曖昧です"]}),
+            fake_model_response(invalid),
+            fake_model_response({"approved": False, "issues": ["見出しが曖昧です"]}),
+        ])
+
+        with patch.dict("os.environ", {"SOCIAL_TEXT_GENERATION_ATTEMPTS": "2"}):
+            with self.assertRaisesRegex(RuntimeError, "quality check failed"):
+                generate_shared_text_content(self.trivia, client=client)
+
+        self.assertEqual(len(client.responses.calls), 5)
 
     def test_content_generation_researches_then_writes_script(self):
         research = {
@@ -1375,7 +1460,14 @@ class SocialPipelineTests(unittest.TestCase):
             },
         )
 
-        messages = social_text_review_messages(job, "https://cdn.example/line-preview.jpg")
+        with patch.dict(
+            "os.environ",
+            {
+                "PUBLIC_BASE_URL": "https://api.example.com",
+                "CANDIDATE_EDITOR_SECRET": "editor-secret",
+            },
+        ):
+            messages = social_text_review_messages(job, "https://cdn.example/line-preview.jpg")
 
         self.assertEqual(messages[0]["type"], "image")
         self.assertEqual(
@@ -1386,9 +1478,40 @@ class SocialPipelineTests(unittest.TestCase):
         self.assertNotIn("画像説明", messages[1]["text"])
         self.assertNotIn("海中のタコ", messages[1]["text"])
         footer = messages[2]["contents"]["footer"]["contents"]
-        self.assertEqual(footer[0]["action"]["label"], "X・Threadsへ投稿")
-        self.assertIn(f"content_job_id={job.id}", footer[0]["action"]["data"])
-        self.assertEqual(footer[1]["action"]["label"], "今回は使わない")
+        self.assertEqual(footer[0]["action"]["label"], "文章を編集")
+        self.assertIn(f"/admin/social/{job.id}/edit?", footer[0]["action"]["uri"])
+        self.assertEqual(footer[1]["action"]["label"], "X・Threadsへ投稿")
+        self.assertIn(f"content_job_id={job.id}", footer[1]["action"]["data"])
+        self.assertEqual(footer[2]["action"]["label"], "今回は使わない")
+
+    def test_pending_review_is_resent_when_line_card_version_is_old(self):
+        self.trivia.image_url = "https://cdn.example/octopus.png"
+        self.db.commit()
+        job = create_daily_text_job(
+            self.db,
+            generator=lambda trivia: {
+                "automation": {
+                    "mode": "daily_text",
+                    "line_review": {
+                        "image_url": trivia.image_url,
+                        "sent_at": "2026-09-03T00:00:00",
+                        "recipient_count": 1,
+                    },
+                },
+                "x": {"text": "タコには心臓が三つあります。"},
+                "threads": {"text": "タコには心臓が三つあります。"},
+                "shared_image": {"url": trivia.image_url, "alt_text": "海中のタコ"},
+            },
+        )
+
+        with patch(
+            "routers.social_automation.push_social_text_review",
+            return_value=1,
+        ) as push:
+            review_meta = _send_line_text_review_if_needed(self.db, job)
+
+        push.assert_called_once_with(job)
+        self.assertEqual(review_meta["message_version"], 2)
 
     def test_line_review_contains_video_and_explicit_approval(self):
         content_job = create_content_job(self.db, self.trivia.id, generator=lambda trivia: sample_content())

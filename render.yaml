@@ -32,6 +32,8 @@ services:
         value: "2"
       - key: SOCIAL_TEXT_RESEARCH_SEARCH_CONTEXT_SIZE
         value: medium
+      - key: SOCIAL_TEXT_GENERATION_ATTEMPTS
+        value: "3"
       - key: SOCIAL_RESEARCH_MAX_SEARCH_CALLS
         value: "1"
       - key: SOCIAL_RESEARCH_SEARCH_CONTEXT_SIZE
@@ -207,6 +209,8 @@ services:
         value: "2"
       - key: SOCIAL_TEXT_RESEARCH_SEARCH_CONTEXT_SIZE
         value: medium
+      - key: SOCIAL_TEXT_GENERATION_ATTEMPTS
+        value: "3"
       - key: SOCIAL_RESEARCH_MAX_SEARCH_CALLS
         value: "1"
       - key: SOCIAL_RESEARCH_SEARCH_CONTEXT_SIZE
