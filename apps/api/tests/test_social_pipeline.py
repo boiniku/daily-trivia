@@ -15,7 +15,9 @@ from sqlalchemy.pool import StaticPool
 from models import Base, SocialPublishJob, SocialVideoJob, Trivia
 from routers.social_automation import (
     _authorize as authorize_social_automation,
+    _notify_social_text_generation_failure,
     _send_line_text_review_if_needed,
+    run_due_social_text,
 )
 from services.line_bot import (
     make_line_video_preview,
@@ -48,6 +50,7 @@ from services.social_publishers import (
 )
 from services.social_pipeline import (
     approve_content_job,
+    configured_text_platforms,
     configured_video_platforms,
     create_daily_text_job,
     create_content_job,
@@ -458,6 +461,46 @@ class SocialPipelineTests(unittest.TestCase):
         self.assertLessEqual(x_weighted_length(text), 280)
         self.assertTrue(text.endswith("…"))
 
+    def test_social_text_generation_failure_is_sent_to_all_line_admins(self):
+        sent = []
+        with patch(
+            "routers.social_automation.get_admin_user_ids",
+            return_value=["admin-1", "admin-2"],
+        ), patch(
+            "routers.social_automation.push_message",
+            side_effect=lambda user_id, messages: sent.append((user_id, messages)),
+        ):
+            recipients = _notify_social_text_generation_failure(
+                RuntimeError("quality check failed")
+            )
+
+        self.assertEqual(recipients, 2)
+        self.assertEqual([item[0] for item in sent], ["admin-1", "admin-2"])
+        self.assertIn("Xの投稿案生成に失敗しました", sent[0][1][0]["text"])
+        self.assertIn("RuntimeError: quality check failed", sent[0][1][0]["text"])
+
+    def test_social_text_route_preserves_original_error_when_line_notification_fails(self):
+        session = sessionmaker(bind=self.engine)()
+        with patch.dict(
+            "os.environ",
+            {"SOCIAL_AUTOMATION_SECRET": "social-secret"},
+        ), patch(
+            "routers.social_automation.SessionLocal",
+            return_value=session,
+        ), patch(
+            "routers.social_automation.create_daily_text_job",
+            side_effect=RuntimeError("generation exploded"),
+        ), patch(
+            "routers.social_automation._notify_social_text_generation_failure",
+            side_effect=RuntimeError("LINE unavailable"),
+        ) as notify:
+            with self.assertRaises(HTTPException) as raised:
+                run_due_social_text(authorization="Bearer social-secret")
+
+        notify.assert_called_once()
+        self.assertEqual(raised.exception.status_code, 502)
+        self.assertIn("generation exploded", raised.exception.detail)
+
     def test_story_pattern_uses_origin_before_generic_misconception(self):
         pattern = select_story_pattern({
             "subject": "ネギトロ",
@@ -708,7 +751,7 @@ class SocialPipelineTests(unittest.TestCase):
         self.assertTrue(any("3段落" in issue for issue in issues))
         self.assertTrue(any("ハッシュタグ" in issue for issue in issues))
 
-    def test_shared_text_prompt_uses_one_complete_post_for_both_platforms(self):
+    def test_shared_text_prompt_requests_one_complete_x_post(self):
         research = {
             "subject": "タコ",
             "common_misconception": "心臓は一つ",
@@ -729,6 +772,8 @@ class SocialPipelineTests(unittest.TestCase):
         self.assertIn("3段階で新しい情報が一つずつ増える構成", prompt)
         self.assertIn("紹介していない人物名を突然出さない", prompt)
         self.assertIn("1段落目全体が25文字以内", prompt)
+        self.assertIn("X投稿の材料", prompt)
+        self.assertNotIn("Threads", prompt)
 
     def test_research_prompt_keeps_the_curated_database_trivia_as_the_subject(self):
         prompt = build_research_prompt(self.trivia)
@@ -833,7 +878,9 @@ class SocialPipelineTests(unittest.TestCase):
         )
         self.assertTrue(generated["generation_meta"]["repaired"])
         self.assertEqual(generated["generation_meta"]["generation_attempts"], 2)
+        self.assertEqual(generated["automation"]["format_version"], 8)
         self.assertIn("役割を分けることで", generated["x"]["text"])
+        self.assertNotIn("threads", generated)
 
     def test_shared_text_generation_retries_after_a_failed_repair(self):
         research = {
@@ -1030,6 +1077,16 @@ class SocialPipelineTests(unittest.TestCase):
         ):
             self.assertEqual(configured_video_platforms(), set())
 
+    def test_threads_flag_is_ignored_by_the_x_only_pipeline(self):
+        with patch.dict(
+            "os.environ",
+            {
+                "SOCIAL_X_PUBLISH_ENABLED": "true",
+                "SOCIAL_THREADS_PUBLISH_ENABLED": "true",
+            },
+        ):
+            self.assertEqual(configured_text_platforms(), {"x"})
+
     def test_unapproved_content_can_be_regenerated_before_media_creation(self):
         content_job = create_content_job(self.db, self.trivia.id, generator=lambda trivia: sample_content())
         regenerated = regenerate_content_job(
@@ -1054,13 +1111,8 @@ class SocialPipelineTests(unittest.TestCase):
             },
         }
         new_content = {
-            "automation": {"mode": "daily_text", "format_version": 3},
+            "automation": {"mode": "daily_text", "format_version": 8},
             "x": {"text": "新しい投稿案", "reply_text": "固定CTA"},
-            "threads": {
-                "text": "新しい投稿案",
-                "reply_text": "固定CTA",
-                "topic_tag": "雑学",
-            },
             "shared_image": {
                 "url": self.trivia.image_url,
                 "alt_text": "新しい画像説明",
@@ -1069,6 +1121,13 @@ class SocialPipelineTests(unittest.TestCase):
         content_job = create_daily_text_job(
             self.db, generator=lambda trivia: old_content
         )
+        self.db.add(SocialPublishJob(
+            content_job_id=content_job.id,
+            platform="threads",
+            content_type="text",
+            status="waiting_approval",
+        ))
+        self.db.commit()
 
         regenerated = regenerate_content_job(
             self.db,
@@ -1079,8 +1138,9 @@ class SocialPipelineTests(unittest.TestCase):
         self.assertEqual(regenerated.content_json, new_content)
         self.assertEqual(regenerated.video_jobs, [])
         self.assertEqual(regenerated.status, "review")
-        self.assertTrue(
-            all(item.status == "waiting_approval" for item in regenerated.publish_jobs)
+        self.assertEqual(
+            {item.platform: item.status for item in regenerated.publish_jobs},
+            {"x": "waiting_approval", "threads": "cancelled"},
         )
 
     def test_unpublished_video_trivia_can_also_get_a_daily_text_job(self):
@@ -1116,7 +1176,7 @@ class SocialPipelineTests(unittest.TestCase):
         self.assertEqual(text_job.video_jobs, [])
         self.assertEqual(
             {item.platform for item in text_job.publish_jobs},
-            {"x", "threads"},
+            {"x"},
         )
         self.assertIsNotNone(
             self.db.query(SocialVideoJob).filter_by(id=old_video_id).one_or_none()
@@ -1374,7 +1434,6 @@ class SocialPipelineTests(unittest.TestCase):
             self.db,
             generator=lambda trivia: {
                 "x": {"text": text},
-                "threads": {"text": text, "topic_tag": "雑学"},
                 "shared_image": {"url": trivia.image_url, "alt_text": "海中にいるタコの画像"},
             },
         )
@@ -1389,12 +1448,12 @@ class SocialPipelineTests(unittest.TestCase):
             enabled_platforms={"x", "threads"},
             publishers={"x": x, "threads": threads},
         )
-        self.assertEqual(len(completed), 2)
+        self.assertEqual(len(completed), 1)
         self.assertEqual(len(x.calls), 1)
-        self.assertEqual(len(threads.calls), 1)
+        self.assertEqual(len(threads.calls), 0)
         self.assertEqual(
             self.db.query(SocialPublishJob).filter_by(status="published").count(),
-            2,
+            1,
         )
         self.assertEqual(
             publish_due_text_jobs(
@@ -1405,7 +1464,7 @@ class SocialPipelineTests(unittest.TestCase):
             [],
         )
 
-    def test_daily_text_job_reuses_one_image_for_x_and_threads(self):
+    def test_daily_x_job_reuses_the_existing_image(self):
         self.trivia.image_url = "https://cdn.example/octopus.png"
         self.db.commit()
         shared_text = (
@@ -1415,7 +1474,6 @@ class SocialPipelineTests(unittest.TestCase):
         content = {
             "automation": {"mode": "daily_text"},
             "x": {"text": shared_text},
-            "threads": {"text": shared_text, "topic_tag": "雑学"},
             "shared_image": {
                 "url": self.trivia.image_url,
                 "alt_text": "海中にいるタコの姿を撮影した画像",
@@ -1438,9 +1496,9 @@ class SocialPipelineTests(unittest.TestCase):
 
         self.assertEqual(job.status, "approved")
         self.assertEqual(job.video_jobs, [])
-        self.assertEqual(len(completed), 2)
+        self.assertEqual(len(completed), 1)
         self.assertEqual(x.calls[0][1], self.trivia.image_url)
-        self.assertEqual(threads.calls[0][2], self.trivia.image_url)
+        self.assertEqual(threads.calls, [])
 
     def test_line_text_review_contains_image_text_and_approval(self):
         self.trivia.image_url = "https://cdn.example/octopus.png"
@@ -1480,7 +1538,7 @@ class SocialPipelineTests(unittest.TestCase):
         footer = messages[2]["contents"]["footer"]["contents"]
         self.assertEqual(footer[0]["action"]["label"], "文章を編集")
         self.assertIn(f"/admin/social/{job.id}/edit?", footer[0]["action"]["uri"])
-        self.assertEqual(footer[1]["action"]["label"], "X・Threadsへ投稿")
+        self.assertEqual(footer[1]["action"]["label"], "Xへ投稿")
         self.assertIn(f"content_job_id={job.id}", footer[1]["action"]["data"])
         self.assertEqual(footer[2]["action"]["label"], "今回は使わない")
 
@@ -1511,7 +1569,7 @@ class SocialPipelineTests(unittest.TestCase):
             review_meta = _send_line_text_review_if_needed(self.db, job)
 
         push.assert_called_once_with(job)
-        self.assertEqual(review_meta["message_version"], 2)
+        self.assertEqual(review_meta["message_version"], 3)
 
     def test_line_review_contains_video_and_explicit_approval(self):
         content_job = create_content_job(self.db, self.trivia.id, generator=lambda trivia: sample_content())

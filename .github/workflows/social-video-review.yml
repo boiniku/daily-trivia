@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       text_only:
-        description: "Publish only the daily X and Threads post"
+        description: "Publish only the daily X post"
         required: false
         type: boolean
         default: false
@@ -21,7 +21,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - name: Create and publish the daily X and Threads post
+      - name: Create and publish the daily X post
         env:
           SOCIAL_AUTOMATION_URL: ${{ vars.SOCIAL_AUTOMATION_URL }}
           SOCIAL_AUTOMATION_SECRET: ${{ secrets.DAILY_COLLECTION_SECRET }}
@@ -42,8 +42,8 @@ jobs:
             if .status == "review" then
               (.line_review.sent_at != null)
             else
-              [.publish_jobs[]? | select(.platform == "x" or .platform == "threads")] as $jobs
-              | ($jobs | length) == 2 and ($jobs | all(.status == "published"))
+              [.publish_jobs[]? | select(.platform == "x")] as $jobs
+              | ($jobs | length) == 1 and ($jobs | all(.status == "published"))
             end
           '
 

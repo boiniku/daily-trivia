@@ -234,7 +234,7 @@ def build_shared_text_prompt(
         feedback = "\n前回案の問題点。すべて修正してください:\n- " + "\n- ".join(quality_feedback)
     return f"""
 あなたは、短い文章だけで雑学を面白く伝えるSNS編集者です。
-次の調査済み事実だけを根拠に、XとThreads投稿の材料を日本語で作ってください。
+次の調査済み事実だけを根拠に、X投稿の材料を日本語で作ってください。
 完成文の型・括弧・改行はコード側で固定するため、各フィールドには指定された一文だけを入れてください。
 
 調査済み事実メモ:
@@ -731,7 +731,7 @@ def generate_social_content(trivia: Any, client: OpenAI | None = None) -> dict:
 
 
 def generate_shared_text_content(trivia: Any, client: OpenAI | None = None) -> dict:
-    """Research and write one complete daily post shared by X and Threads."""
+    """Research and write one complete daily X post."""
     api_key = os.getenv("OPENAI_API_KEY", "").strip()
     if client is None:
         if not api_key:
@@ -823,9 +823,8 @@ def generate_shared_text_content(trivia: Any, client: OpenAI | None = None) -> d
         for key in usage:
             usage[key] += item_usage[key]
     return {
-        "automation": {"mode": "daily_text", "format_version": 7},
+        "automation": {"mode": "daily_text", "format_version": 8},
         "x": {"text": text, "reply_text": social_cta_reply()},
-        "threads": {"text": text, "reply_text": social_cta_reply(), "topic_tag": "雑学"},
         "shared_image": {
             "url": str(getattr(trivia, "image_url", "") or "").strip(),
             "alt_text": draft["alt_text"],

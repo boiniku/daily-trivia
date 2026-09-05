@@ -94,19 +94,11 @@ services:
         sync: false
       - key: BUFFER_X_CHANNEL_ID
         sync: false
-      - key: BUFFER_THREADS_CHANNEL_ID
-        sync: false
       - key: SOCIAL_X_PUBLISH_ENABLED
-        value: "false"
+        value: "true"
       - key: X_ACCESS_TOKEN
         sync: false
       - key: X_USERNAME
-        sync: false
-      - key: SOCIAL_THREADS_PUBLISH_ENABLED
-        value: "false"
-      - key: THREADS_ACCESS_TOKEN
-        sync: false
-      - key: THREADS_USER_ID
         sync: false
       - key: SOCIAL_VIDEO_MANUAL_ONLY
         value: "true"
@@ -271,19 +263,11 @@ services:
         sync: false
       - key: BUFFER_X_CHANNEL_ID
         sync: false
-      - key: BUFFER_THREADS_CHANNEL_ID
-        sync: false
       - key: SOCIAL_X_PUBLISH_ENABLED
         value: "false"
       - key: X_ACCESS_TOKEN
         sync: false
       - key: X_USERNAME
-        sync: false
-      - key: SOCIAL_THREADS_PUBLISH_ENABLED
-        value: "false"
-      - key: THREADS_ACCESS_TOKEN
-        sync: false
-      - key: THREADS_USER_ID
         sync: false
       - key: SOCIAL_VIDEO_MANUAL_ONLY
         value: "true"

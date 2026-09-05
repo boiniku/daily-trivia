@@ -16,7 +16,7 @@ from services.social_storage import upload_social_asset
 
 
 LINE_API_BASE = "https://api.line.me/v2/bot/message"
-SOCIAL_TEXT_REVIEW_MESSAGE_VERSION = 2
+SOCIAL_TEXT_REVIEW_MESSAGE_VERSION = 3
 
 
 def verify_signature(body: bytes, signature: str) -> bool:
@@ -398,12 +398,12 @@ def social_text_review_messages(content_job: SocialContentJob, image_url: str) -
         f"{urlencode({'token': make_social_editor_token(content_job.id)})}"
     )
     title = (content_job.trivia.title or f"投稿案 #{content_job.id}")[:80]
-    detail = f"【X・Threads投稿案】\n{text}"
+    detail = f"【X投稿案】\n{text}"
     if reply_text:
         detail += f"\n\n【投稿後のリプライ】\n{reply_text}"
     card = {
         "type": "flex",
-        "altText": f"X・Threads投稿の確認: {title}",
+        "altText": f"X投稿の確認: {title}",
         "contents": {
             "type": "bubble",
             "size": "kilo",
@@ -415,7 +415,7 @@ def social_text_review_messages(content_job: SocialContentJob, image_url: str) -
                     {"type": "text", "text": title, "weight": "bold", "size": "lg", "wrap": True},
                     {
                         "type": "text",
-                        "text": "文章と画像を確認してください。承認するとXとThreadsの両方へ投稿します。",
+                        "text": "文章と画像を確認してください。承認するとXへ投稿します。",
                         "size": "sm",
                         "wrap": True,
                         "color": "#555555",
@@ -442,9 +442,9 @@ def social_text_review_messages(content_job: SocialContentJob, image_url: str) -
                         "color": "#1DB446",
                         "action": {
                             "type": "postback",
-                            "label": "X・Threadsへ投稿",
+                            "label": "Xへ投稿",
                             "data": f"action=social_approve&content_job_id={content_job.id}",
-                            "displayText": f"「{title}」をX・Threadsへ投稿します",
+                            "displayText": f"「{title}」をXへ投稿します",
                         },
                     },
                     {

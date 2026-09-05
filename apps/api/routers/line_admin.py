@@ -294,8 +294,12 @@ def _push_pending_candidates(user_id: str) -> None:
 
 
 def _social_publish_status_text(job: SocialContentJob) -> str:
-    labels = {"x": "X", "threads": "Threads", "instagram": "Instagram", "tiktok": "TikTok"}
-    rows = [f"{labels.get(item.platform, item.platform)}: {item.status}" for item in job.publish_jobs]
+    labels = {"x": "X", "instagram": "Instagram", "tiktok": "TikTok"}
+    rows = [
+        f"{labels.get(item.platform, item.platform)}: {item.status}"
+        for item in job.publish_jobs
+        if item.platform != "threads"
+    ]
     return "投稿処理の状況\n" + "\n".join(rows)
 
 
@@ -525,11 +529,8 @@ def save_social_text(content_job_id: int, request: SocialTextUpdateRequest):
         job = _editable_social_text_job(db, content_job_id)
         content = dict(job.content_json or {})
         x_content = dict(content.get("x") or {})
-        threads_content = dict(content.get("threads") or {})
         x_content["text"] = text
-        threads_content["text"] = text
         content["x"] = x_content
-        content["threads"] = threads_content
         automation = dict(content.get("automation") or {})
         automation.pop("line_review", None)
         automation["line_edited_at"] = datetime.utcnow().isoformat()
@@ -732,7 +733,7 @@ def _social_text_editor_html(content_job: SocialContentJob, token: str, text: st
     return f"""<!doctype html>
 <html lang="ja"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>X・Threads投稿文を編集</title>
+<title>X投稿文を編集</title>
 <style>
 body{{margin:0;background:#f4f6f8;color:#17212b;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}}
 main{{max-width:680px;margin:auto;padding:20px 16px 48px}}.card{{background:white;padding:20px;border-radius:16px;box-shadow:0 4px 18px #00000012}}
@@ -741,7 +742,7 @@ textarea{{width:100%;min-height:260px;box-sizing:border-box;padding:14px;border:
 .counter{{margin-top:8px;color:#667085;font-size:14px}}button{{width:100%;margin-top:20px;border:0;border-radius:11px;padding:14px;background:#1db446;color:white;font-size:16px;font-weight:700}}
 #message{{margin-top:14px;min-height:24px;font-weight:700;white-space:pre-wrap}}
 </style></head><body><main><div class="card">
-<h1>X・Threads投稿文を編集</h1><div class="subject">{title}</div>
+<h1>X投稿文を編集</h1><div class="subject">{title}</div>
 <textarea id="text" maxlength="5000">{html.escape(text)}</textarea>
 <div class="counter" id="counter"></div>
 <button onclick="saveText()">保存してLINEへ再送</button><div id="message"></div>

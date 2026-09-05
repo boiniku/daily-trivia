@@ -1,6 +1,6 @@
 # SNS投稿自動化
 
-承認済みの`trivia`から、Instagram / TikTok / YouTube Shortsへ手動投稿する動画と、X / Threadsへ投稿するテキストを作成します。どちらもLINEで内容を確認し、承認してから投稿します。通常運用は複数の生成画像、パン・ズーム、字幕、Aivis音声、共通BGMを組み合わせた静止画動画です。外部の動画生成モデルは明示的に選んだ場合だけ使います。
+承認済みの`trivia`から、Instagram / TikTok / YouTube Shortsへ手動投稿する動画と、Xへ投稿するテキストを作成します。どちらもLINEで内容を確認し、承認してから投稿します。通常運用は複数の生成画像、パン・ズーム、字幕、Aivis音声、共通BGMを組み合わせた静止画動画です。外部の動画生成モデルは明示的に選んだ場合だけ使います。
 
 ## LINE確認から投稿まで
 
@@ -11,40 +11,40 @@
 - `確認済みにする`: 動画を確認済みとして記録
 - `今回は使わない`: 投稿候補を取り消し
 
-動画は`SOCIAL_VIDEO_MANUAL_ONLY=true`を既定とし、LINEで確認して各公式アプリから手動投稿します。X・Threadsの日次投稿は動画とは別のジョブで文章と画像をLINEへ送り、「X・Threadsへ投稿」を押した場合だけBufferから両方へ投稿します。未承認案がある間は新しい案を作りません。LINEのWebhookは既存の`POST /line/webhook`を使います。
+動画は`SOCIAL_VIDEO_MANUAL_ONLY=true`を既定とし、LINEで確認して各公式アプリから手動投稿します。Xの日次投稿は動画とは別のジョブで文章と画像をLINEへ送り、「Xへ投稿」を押した場合だけBufferから投稿します。未承認案がある間は新しい案を作りません。LINEのWebhookは既存の`POST /line/webhook`を使います。
 
 GitHub Actionsの`social-video-review.yml`は毎日1回`run-due`を呼びます。API側で前回から4日経ったかを判定するため、実際の生成は4日に最大1本です。完成済みのLINE確認が残っている間も新しい動画を作らず、不要な生成費を防ぎます。GitHubへ次を登録してください。
 
 - Actions variable `SOCIAL_AUTOMATION_URL`: `https://daily-trivia-e7ge.onrender.com`
 - Actions secret `DAILY_COLLECTION_SECRET`: Renderの同名環境変数と同じ値
 
-## X・Threadsの毎日投稿案
+## Xの毎日投稿案
 
-動画とは別に、`run-due-text`が24時間に最大1件の共通本文を作ってLINEへ送ります。文章は「具体的な引き→答え→理由または意味」までを280ウェイト内で完結させ、XとThreadsに完全に同じ文章を使います。問いかけだけで答えがない文章など、品質検査に通らない場合は、指摘を反映して最大3回まで投稿文を生成します。回数は`SOCIAL_TEXT_GENERATION_ATTEMPTS`（1〜5）で変更できます。LINEで承認するまで外部投稿は行いません。
+動画とは別に、`run-due-text`が24時間に最大1件のX本文を作ってLINEへ送ります。文章は「具体的な引き→答え→理由または意味」までを280ウェイト内で完結させます。問いかけだけで答えがない文章など、品質検査に通らない場合は、指摘を反映して最大3回まで投稿文を生成します。回数は`SOCIAL_TEXT_GENERATION_ATTEMPTS`（1〜5）で変更できます。LINEで承認するまで外部投稿は行いません。
+
+投稿案の生成または再生成に失敗した場合は、`LINE_ADMIN_USER_IDS`の全管理者へエラー概要を通知します。LINE通知自体が失敗しても、元のAPIエラーは維持され、GitHub Actionsは失敗として記録されます。
 
 画像生成は行わず、雑学DBの既存画像を1枚共通で添付します。公開画像URLのある未使用雑学だけを選ぶため、新たな画像料金はかかりません。Web事実確認と本文生成のAI料金は1日1回分かかります。
 
-X・ThreadsはBufferの公式API連携を使います。Meta Developer / X Developerアプリを自分で作る必要はありません。Buffer無料プランのAPI枠（3,000リクエスト/月）に対し、この運用は通常60リクエスト/月程度です。
+XはBufferの公式API連携を使います。X Developerアプリを自分で作る必要はありません。
 
-LINEの承認カードにある「文章を編集」を押すと、LINE内ブラウザでX・Threads共通本文を編集できます。「保存してLINEへ再送」を押すと両媒体の本文が同時に更新され、更新後の承認カードがLINEへ届きます。編集できるのは承認待ちの投稿案だけで、Xの280ウェイトを超える本文は保存できません。
+LINEの承認カードにある「文章を編集」を押すと、LINE内ブラウザでX本文を編集できます。「保存してLINEへ再送」を押すと、更新後の承認カードがLINEへ届きます。編集できるのは承認待ちの投稿案だけで、Xの280ウェイトを超える本文は保存できません。
 
-BufferでXとThreadsを接続し、Settings → APIでPersonal API Keyを作成します。キーはRenderだけに登録し、Gitやチャットには貼りません。接続済みチャンネルはAPIから自動判別します。同じ媒体を複数接続している場合だけ、対象のチャンネルIDを明示します。
+BufferでXを接続し、Settings → APIでPersonal API Keyを作成します。キーはRenderだけに登録し、Gitやチャットには貼りません。接続済みチャンネルはAPIから自動判別します。Xを複数接続している場合だけ、対象のチャンネルIDを明示します。
 
 ```text
 SOCIAL_TEXT_PUBLISH_PROVIDER=buffer
 BUFFER_API_KEY=...
-BUFFER_X_CHANNEL_ID=...        # 同じ媒体が複数ある場合のみ
-BUFFER_THREADS_CHANNEL_ID=...  # 同じ媒体が複数ある場合のみ
+BUFFER_X_CHANNEL_ID=...  # Xを複数接続している場合のみ
 ```
 
 ## 安全な初期状態
 
-実投稿は既定で無効です。X・Threadsは認証情報を設定したうえで、対応するフラグを`true`にした媒体だけが投稿されます。動画は手動投稿が既定です。
+実投稿は既定で無効です。Xは認証情報を設定したうえで、`SOCIAL_X_PUBLISH_ENABLED=true`にした場合だけ投稿されます。動画は手動投稿が既定です。
 
 ```text
 SOCIAL_VIDEO_MANUAL_ONLY=true
 SOCIAL_X_PUBLISH_ENABLED=true
-SOCIAL_THREADS_PUBLISH_ENABLED=true
 ```
 
 Instagramリールにはプロアカウント、`instagram_content_publish`権限、ユーザーIDとアクセストークンが必要です。
@@ -215,7 +215,7 @@ POST /internal/social/publish-text
 POST /internal/social/publish-video
 ```
 
-作成直後のX・Threads投稿は`waiting_approval`です。`approve`後に`queued`となり、`publish-text`の対象になります。失敗時は最大3回まで再試行します。
+作成直後のX投稿は`waiting_approval`です。`approve`後に`queued`となり、`publish-text`の対象になります。失敗時は最大3回まで再試行します。
 
 ## 現在の実装範囲
 
@@ -229,7 +229,6 @@ POST /internal/social/publish-video
 - Seedance非同期タスクの投入・状態確認
 - Kling 3.0の720p・5秒・無音タスク投入、月5本制限、R2退避
 - Xテキスト投稿
-- Threadsテキスト投稿
 - LINEへの完成動画、サムネイル、3媒体用投稿文の通知と確認記録
 - Instagramリール、TikTok、YouTube Shortsへの手動投稿用データ生成
 - 投稿の承認、冪等性、再試行、外部投稿の明示的な有効化

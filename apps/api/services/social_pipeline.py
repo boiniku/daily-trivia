@@ -11,9 +11,7 @@ from services.seedance import SeedanceClient
 from services.social_content import generate_shared_text_content, generate_social_content
 from services.social_publishers import (
     BufferTextPublisher,
-    BufferThreadsTextPublisher,
     InstagramReelPublisher,
-    ThreadsTextPublisher,
     TikTokVideoPublisher,
     XTextPublisher,
 )
@@ -29,7 +27,7 @@ from services.static_video import (
 )
 
 
-TEXT_PLATFORMS = ("x", "threads")
+TEXT_PLATFORMS = ("x",)
 VIDEO_PLATFORMS = ("instagram", "tiktok")
 STATIC_RENDER_VERSION = 3
 
@@ -217,9 +215,14 @@ def regenerate_content_job(
             video.source_video_urls = []
             video.duration_seconds = None
     for publish_job in job.publish_jobs:
-        publish_job.status = (
-            "waiting_approval" if publish_job.content_type == "text" else "waiting_video"
-        )
+        if publish_job.content_type == "text":
+            publish_job.status = (
+                "waiting_approval"
+                if publish_job.platform in TEXT_PLATFORMS
+                else "cancelled"
+            )
+        else:
+            publish_job.status = "waiting_video"
         publish_job.attempt_count = 0
         publish_job.last_error = None
     db.commit()
@@ -235,9 +238,13 @@ def approve_content_job(db: Session, content_job_id: int) -> SocialContentJob:
     job.approved_at = datetime.utcnow()
     for publish_job in job.publish_jobs:
         if publish_job.content_type == "text" and publish_job.status == "waiting_approval":
-            # Legacy video jobs used to include X/Threads. The daily text lane
-            # now owns those platforms, so approving a video must not duplicate them.
-            publish_job.status = "cancelled" if job.video_jobs else "queued"
+            # Legacy video and daily-text jobs could include Threads. Only the
+            # active X lane may be queued now.
+            publish_job.status = (
+                "queued"
+                if not job.video_jobs and publish_job.platform in TEXT_PLATFORMS
+                else "cancelled"
+            )
         elif publish_job.content_type == "video" and publish_job.status == "waiting_video":
             if any(video.status == "ready" for video in job.video_jobs):
                 publish_job.status = "queued"
@@ -611,20 +618,18 @@ def configured_text_platforms() -> set[str]:
     enabled = set()
     if os.getenv("SOCIAL_X_PUBLISH_ENABLED", "false").lower() == "true":
         enabled.add("x")
-    if os.getenv("SOCIAL_THREADS_PUBLISH_ENABLED", "false").lower() == "true":
-        enabled.add("threads")
     return enabled
 
 
 def configured_text_publisher(platform: str):
+    if platform != "x":
+        raise RuntimeError(f"Unsupported text publishing platform: {platform}")
     provider = os.getenv("SOCIAL_TEXT_PUBLISH_PROVIDER", "direct").strip().lower()
     if provider == "buffer":
-        channel_id = os.getenv(f"BUFFER_{platform.upper()}_CHANNEL_ID", "").strip()
-        if platform == "threads":
-            return BufferThreadsTextPublisher(channel_id, platform="threads")
+        channel_id = os.getenv("BUFFER_X_CHANNEL_ID", "").strip()
         return BufferTextPublisher(channel_id, platform="x")
     if provider == "direct":
-        return XTextPublisher() if platform == "x" else ThreadsTextPublisher()
+        return XTextPublisher()
     raise RuntimeError(f"Unsupported SOCIAL_TEXT_PUBLISH_PROVIDER: {provider}")
 
 
@@ -648,7 +653,11 @@ def publish_due_text_jobs(
     content_job_id: int | None = None,
 ) -> list[SocialPublishJob]:
     now = now or datetime.utcnow()
-    enabled = configured_text_platforms() if enabled_platforms is None else enabled_platforms
+    enabled = (
+        configured_text_platforms()
+        if enabled_platforms is None
+        else set(enabled_platforms) & set(TEXT_PLATFORMS)
+    )
     if not enabled:
         return []
     publishers = publishers or {}
@@ -680,12 +689,6 @@ def publish_due_text_jobs(
                 publisher = publishers.get("x") or configured_text_publisher("x")
                 result = publisher.publish(
                     content["text"], image_url, alt_text, content.get("reply_text")
-                )
-            elif job.platform == "threads":
-                publisher = publishers.get("threads") or configured_text_publisher("threads")
-                result = publisher.publish(
-                    content["text"], content.get("topic_tag"), image_url, alt_text,
-                    content.get("reply_text")
                 )
             else:
                 continue

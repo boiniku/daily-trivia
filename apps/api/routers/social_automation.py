@@ -1,3 +1,4 @@
+import logging
 import os
 import secrets
 from datetime import datetime, timedelta
@@ -21,6 +22,8 @@ from services.social_pipeline import (
 )
 from services.line_bot import (
     SOCIAL_TEXT_REVIEW_MESSAGE_VERSION,
+    get_admin_user_ids,
+    push_message,
     push_social_review,
     push_social_text_review,
 )
@@ -29,6 +32,7 @@ from services.social_storage import upload_social_asset
 
 
 router = APIRouter(prefix="/internal/social", tags=["social-automation"])
+logger = logging.getLogger(__name__)
 
 
 class PrepareRequest(BaseModel):
@@ -39,6 +43,24 @@ class PrepareRequest(BaseModel):
 
 class VoicePreviewRequest(BaseModel):
     styles: list[str] = Field(default_factory=list, max_length=3)
+
+
+def _notify_social_text_generation_failure(exc: Exception) -> int:
+    admin_ids = get_admin_user_ids()
+    if not admin_ids:
+        raise RuntimeError("LINE_ADMIN_USER_IDS is not configured")
+    error_detail = f"{type(exc).__name__}: {str(exc)}"[:1000]
+    message = {
+        "type": "text",
+        "text": (
+            "Xの投稿案生成に失敗しました。\n"
+            "自動投稿は行われていません。\n\n"
+            f"エラー: {error_detail}"
+        ),
+    }
+    for user_id in admin_ids:
+        push_message(user_id, [message])
+    return len(admin_ids)
 
 
 def _authorize(
@@ -212,7 +234,7 @@ def run_due_social_text(
     force: bool = False,
     authorization: str | None = Header(default=None),
 ):
-    """Create and publish at most one shared X/Threads image post per day."""
+    """Create and publish at most one X image post per day."""
     _authorize(authorization, allow_scheduler_secret=True)
     db = SessionLocal()
     try:
@@ -229,7 +251,7 @@ def run_due_social_text(
         )
         if pending_review:
             automation = (pending_review.content_json or {}).get("automation") or {}
-            if int(automation.get("format_version") or 0) < 7:
+            if int(automation.get("format_version") or 0) < 8:
                 pending_review = regenerate_content_job(db, pending_review.id)
             line_review = _send_line_text_review_if_needed(db, pending_review)
             return {
@@ -279,6 +301,13 @@ def run_due_social_text(
     except HTTPException:
         raise
     except Exception as exc:
+        try:
+            _notify_social_text_generation_failure(exc)
+        except Exception:
+            logger.warning(
+                "Could not send the social text generation failure to LINE",
+                exc_info=True,
+            )
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=f"Social text generation failed: {type(exc).__name__}: {str(exc)[:1200]}",

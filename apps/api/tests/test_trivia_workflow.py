@@ -1293,13 +1293,12 @@ class MobileEditorIntegrationTests(unittest.TestCase):
             content_json={
                 "automation": {"mode": "daily_text"},
                 "x": {"text": "編集前の投稿文", "reply_text": "固定リプライ"},
-                "threads": {"text": "編集前の投稿文", "reply_text": "固定リプライ"},
                 "shared_image": {"url": "https://cdn.example/octopus.png"},
             },
         )
         self.db.add(job)
         self.db.flush()
-        for platform in ("x", "threads"):
+        for platform in ("x",):
             self.db.add(SocialPublishJob(
                 content_job_id=job.id,
                 platform=platform,
@@ -1324,7 +1323,6 @@ class MobileEditorIntegrationTests(unittest.TestCase):
         try:
             refreshed = verify_db.query(SocialContentJob).filter_by(id=job.id).one()
             self.assertEqual(refreshed.content_json["x"]["text"], edited_text)
-            self.assertEqual(refreshed.content_json["threads"]["text"], edited_text)
             self.assertEqual(
                 refreshed.content_json["automation"]["line_review"]["recipient_count"],
                 1,
