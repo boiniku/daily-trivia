@@ -20,7 +20,7 @@
     "ios": {
       "supportsTablet": false,
       "bundleIdentifier": "com.dailytrivia.app",
-      "buildNumber": "145",
+      "buildNumber": "147",
       "entitlements": {
         "com.apple.security.application-groups": [
           "group.com.dailytrivia.app"
@@ -30,7 +30,6 @@
         "NSPhotoLibraryAddUsageDescription": "ウィジェットのスクリーンショットをカメラロールに保存するために使用します。",
         "NSLocationWhenInUseUsageDescription": "現在地の近くにあるご当地雑学を表示・解放するために位置情報を使用します。",
         "NSLocationAlwaysAndWhenInUseUsageDescription": "アプリを開いていないときも近くのご当地雑学を見つけてお知らせするために位置情報を使用します。移動履歴は保存しません。",
-        "NSUserNotificationUsageDescription": "近くのご当地雑学が解放されたことをお知らせするために通知を使用します。",
         "UIBackgroundModes": [
           "location",
           "fetch"
@@ -66,10 +65,19 @@
     "plugins": [
       "./plugins/withPodfileFix",
       [
+        "expo-image-picker",
+        {
+          "photosPermission": "ウィジェットの背景に使用する画像を写真ライブラリから選択するために使用します。",
+          "cameraPermission": false,
+          "microphonePermission": false
+        }
+      ],
+      [
         "expo-location",
         {
           "locationWhenInUsePermission": "現在地の近くにあるご当地雑学を表示・解放するために位置情報を使用します。",
           "locationAlwaysAndWhenInUsePermission": "アプリを開いていないときも近くのご当地雑学を見つけてお知らせするために位置情報を使用します。移動履歴は保存しません。",
+          "locationAlwaysPermission": false,
           "isIosBackgroundLocationEnabled": true
         }
       ],
