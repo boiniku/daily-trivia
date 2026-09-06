@@ -31,7 +31,7 @@ class MapTrivia(Base):
     map_prefecture = Column(String, nullable=False)
     map_latitude = Column(Float, nullable=False)
     map_longitude = Column(Float, nullable=False)
-    map_radius = Column(Integer, nullable=False, default=500)
+    map_radius = Column(Integer, nullable=False, default=1200)
     map_hint = Column(String, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

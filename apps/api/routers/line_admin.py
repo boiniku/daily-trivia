@@ -68,7 +68,7 @@ class CandidateUpdateRequest(BaseModel):
     map_prefecture: str = ""
     map_latitude: float = 35.6812
     map_longitude: float = 139.7671
-    map_radius: int = 500
+    map_radius: int = 1200
     map_hint: str = ""
 
 
@@ -775,7 +775,7 @@ def _editor_html(candidate: TriviaCandidate, token: str, is_new: bool, map_mode:
     map_hint_value = value(getattr(candidate, "map_hint", "") or "")
     map_latitude_value = getattr(candidate, "map_latitude", None) or 35.6812
     map_longitude_value = getattr(candidate, "map_longitude", None) or 139.7671
-    map_radius_value = getattr(candidate, "map_radius", None) or 500
+    map_radius_value = getattr(candidate, "map_radius", None) or 1200
     has_map_values = any([
         getattr(candidate, "map_address", None),
         getattr(candidate, "map_prefecture", None),

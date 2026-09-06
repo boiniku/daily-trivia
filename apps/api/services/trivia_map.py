@@ -198,7 +198,7 @@ def build_trivia_spot(
     explanation: str = "",
     spot_id: str = "",
     address: str = "",
-    unlock_radius_meters: int = 300,
+    unlock_radius_meters: int = 1200,
     hint: str = "",
 ) -> dict:
     final_spot_id = (spot_id or "").strip() or build_trivia_spot_id(prefecture, title)

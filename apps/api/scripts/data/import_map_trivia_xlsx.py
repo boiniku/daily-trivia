@@ -209,7 +209,7 @@ def import_rows(xlsx_path: str, dry_run: bool = False) -> tuple[int, int]:
                     map_prefecture=row.prefecture.strip(),
                     map_latitude=row.latitude,
                     map_longitude=row.longitude,
-                    map_radius=500,
+                    map_radius=1200,
                     map_hint=row.status.strip() or None,
                 )
             )

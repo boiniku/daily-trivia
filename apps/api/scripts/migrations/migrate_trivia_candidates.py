@@ -49,6 +49,11 @@ def migrate():
             "ON trivia_candidates (published_trivia_id) "
             "WHERE published_trivia_id IS NOT NULL"
         ))
+        if engine.dialect.name == "postgresql":
+            conn.execute(text(
+                "ALTER TABLE map_trivia "
+                "ALTER COLUMN map_radius SET DEFAULT 1200"
+            ))
         trivia_columns = {column["name"] for column in inspector.get_columns("trivia")}
         if {"map_address", "map_prefecture", "map_latitude", "map_longitude"} <= trivia_columns:
             conn.execute(text("""
@@ -58,7 +63,7 @@ def migrate():
                 )
                 SELECT
                     t.title, t.content, t.explanation, t.source, t.category, t.image_url,
-                    t.map_address, t.map_prefecture, t.map_latitude, t.map_longitude, COALESCE(t.map_radius, 500), t.map_hint
+                    t.map_address, t.map_prefecture, t.map_latitude, t.map_longitude, COALESCE(t.map_radius, 1200), t.map_hint
                 FROM trivia t
                 WHERE t.map_address IS NOT NULL
                   AND t.map_prefecture IS NOT NULL

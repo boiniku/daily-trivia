@@ -281,7 +281,7 @@ def build_map_collection_focus(output_count: int) -> str:
 - map_addressは「対象物・施設名 / 具体的な住所」とし、ユーザーが現地へ向かえる情報にする
 - 座標は施設全体の代表点より、傷、石碑、店舗、遺構、モニュメントなど雑学の対象物そのものへ可能な限り近づける
 - 公式案内図、文化財資料、施設情報、信頼できる地図で位置を確認する。座標を推測しない。対象位置に自信がなければ候補自体を出力しない
-- map_radiusは、対象点が明確なら100m、建物や小規模施設なら200〜300m、広い公園・城跡なら500〜800mを目安にする
+- map_radiusは通常1200mにする
 
 【内部評価】
 候補を広く調査してから、「予想とのズレ」「前提知識なしで伝わるか」「理由を知った納得感」「具体的に想像できるか」「一文で話したくなるか」「場所との強い結びつき」「信頼性」を各0〜5点で評価する。「場所との強い結びつき」は全国唯一かではなく、その地点の具体物・出来事・習慣として確認できるかで評価する。
@@ -583,7 +583,7 @@ Web検索を最大{max_search_calls}回まで行い、Web上の個別ページ�
       "map_prefecture": "都道府県。場所に関係しない雑学なら空文字",
       "map_latitude": 35.6812,
       "map_longitude": 139.7671,
-      "map_radius": 300,
+      "map_radius": 1200,
       "map_hint": "現地で何を、どこで、どう探したり体験したりできるか"
     }}
   ]
@@ -594,7 +594,7 @@ Web検索を最大{max_search_calls}回まで行い、Web上の個別ページ�
 - 場所に関係しない雑学では、map_address/map_prefecture/map_hintは空文字、map_latitude/map_longitude/map_radiusはnullにする
 - map_addressはユーザーが現地へ向かえる具体的な施設名や住所にする
 - 緯度経度はその地点の代表座標にする
-- map_radiusは通常500、広い公園や城跡などは500〜800にする
+- map_radiusは通常1200にする
 {"- 地図用収集モードでは、場所情報が欠ける候補は出力しない" if map_mode else ""}
 
 【除外リスト】
@@ -664,7 +664,7 @@ def has_complete_map_fields(item: CollectedTrivia) -> bool:
         and item.map_latitude is not None
         and item.map_longitude is not None
         and item.map_radius is not None
-        and 50 <= item.map_radius <= 1000
+        and 50 <= item.map_radius <= 2000
     )
 
 

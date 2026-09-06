@@ -16,7 +16,7 @@ def create_map_trivia(
     map_prefecture: str,
     map_latitude: float,
     map_longitude: float,
-    map_radius: int,
+    map_radius: int = 1200,
     map_hint: str = "",
 ) -> MapTrivia:
     item = MapTrivia(
@@ -30,7 +30,7 @@ def create_map_trivia(
         map_prefecture=map_prefecture.strip(),
         map_latitude=float(map_latitude),
         map_longitude=float(map_longitude),
-        map_radius=int(map_radius or 500),
+        map_radius=int(map_radius or 1200),
         map_hint=(map_hint or "").strip() or None,
     )
     db.add(item)
@@ -52,6 +52,6 @@ def create_map_trivia_from_candidate(db: Session, candidate: TriviaCandidate) ->
         map_prefecture=candidate.map_prefecture or "",
         map_latitude=float(candidate.map_latitude),
         map_longitude=float(candidate.map_longitude),
-        map_radius=int(candidate.map_radius or 500),
+        map_radius=int(candidate.map_radius or 1200),
         map_hint=candidate.map_hint or "",
     )

@@ -240,6 +240,7 @@ class TriviaWorkflowTests(unittest.TestCase):
 
         self.assertIn("explanation", block)
         self.assertEqual(parsed["explanation"], spot["explanation"])
+        self.assertEqual(parsed["unlockRadiusMeters"], 1200)
 
     def test_line_approve_map_candidate_publishes_to_map_trivia(self):
         candidate = create_candidate(self.db, {
