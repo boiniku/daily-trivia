@@ -27,3 +27,4 @@ apps/api/artifacts/
 .DS_Store
 Thumbs.db
 *.tsbuildinfo
+/.worktrees/
