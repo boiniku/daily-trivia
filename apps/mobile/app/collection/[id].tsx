@@ -1,4 +1,4 @@
-import { useLocalSearchParams, useRouter, useFocusEffect } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import { View, Text, StyleSheet, FlatList, Pressable, ActivityIndicator, Alert, Platform, ScrollView, TextInput } from 'react-native';
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -56,14 +56,15 @@ export default function CollectionDetailsScreen() {
     const [sortType, setSortType] = useState<'default' | 'total' | 'user'>('default');
 
     // Ads
-    const [adLoaded, setAdLoaded] = useState(false);
+    const pendingNavigationRef = useRef<(() => void) | null>(null);
+    const isOpeningItemRef = useRef(false);
     const normalizedTitle = Array.isArray(title) ? title[0] : title;
     const isHistoryCollection = (normalizedTitle ?? '').trim().includes('過去に見た雑学');
 
-    const tryShowInterstitial = useCallback(async (reason: string) => {
-        if (isPro) return;
-        if (!isHistoryCollection) return;
-        if (!adLoaded && !interstitial.loaded) return;
+    const tryShowInterstitial = useCallback(async (reason: string): Promise<boolean> => {
+        if (isPro) return false;
+        if (!isHistoryCollection) return false;
+        if (!interstitial.loaded) return false;
 
         try {
             const lastShown = await AsyncStorage.getItem('last_interstitial_shown');
@@ -74,40 +75,44 @@ export default function CollectionDetailsScreen() {
             const isCooldownPassed = !hasValidLastShown || (now - parsedLastShown) > COOLDOWN;
             if (isCooldownPassed) {
                 console.log('[Ads] Showing interstitial:', { reason, interstitialId: INTERSTITIAL_ID });
-                interstitial.show();
+                await interstitial.show();
                 await AsyncStorage.setItem('last_interstitial_shown', now.toString());
+                return true;
             } else {
                 console.log('[Ads] Interstitial cooldown active');
             }
         } catch (e) {
             console.error("Ad cooldown error", e);
         }
-    }, [adLoaded, isHistoryCollection, isPro]);
+        return false;
+    }, [isHistoryCollection, isPro]);
 
     useEffect(() => {
         // Ad Logic
-        if (!isPro) {
+        if (!isPro && isHistoryCollection) {
             console.log('[Ads] Interstitial setup:', {
                 interstitialId: INTERSTITIAL_ID,
                 isHistoryCollection,
                 title: normalizedTitle ?? '',
             });
-            if (interstitial.loaded) {
-                setAdLoaded(true);
-            }
 
             const unsubscribe = interstitial.addAdEventListener(AdEventType.LOADED, () => {
-                setAdLoaded(true);
-                tryShowInterstitial('loaded_event');
+                console.log('[Ads] Interstitial loaded');
             });
 
             const unsubscribeClosed = interstitial.addAdEventListener(AdEventType.CLOSED, () => {
-                setAdLoaded(false);
+                const navigate = pendingNavigationRef.current;
+                pendingNavigationRef.current = null;
+                isOpeningItemRef.current = false;
+                navigate?.();
                 interstitial.load();
             });
             const unsubscribeError = interstitial.addAdEventListener(AdEventType.ERROR, (error) => {
-                setAdLoaded(false);
                 console.error('[Ads] Interstitial failed to load/show:', error);
+                const navigate = pendingNavigationRef.current;
+                pendingNavigationRef.current = null;
+                isOpeningItemRef.current = false;
+                navigate?.();
             });
 
             if (!interstitial.loaded) {
@@ -120,14 +125,7 @@ export default function CollectionDetailsScreen() {
                 unsubscribeError();
             };
         }
-    }, [id, isPro, isHistoryCollection, normalizedTitle, tryShowInterstitial]);
-
-    // Show when folder is opened and ad is already ready.
-    useEffect(() => {
-        if (adLoaded || interstitial.loaded) {
-            tryShowInterstitial('screen_open');
-        }
-    }, [adLoaded, tryShowInterstitial]);
+    }, [isPro, isHistoryCollection, normalizedTitle]);
 
     const normalizeTriviaItems = (rawData: unknown): TriviaItem[] => {
         if (!Array.isArray(rawData)) return [];
@@ -230,15 +228,13 @@ export default function CollectionDetailsScreen() {
         return () => clearTimeout(timer);
     }, [searchText]);
 
-    useFocusEffect(
-        useCallback(() => {
-            if (isHistoryCollection) {
-                fetchHistoryItems();
-            } else {
-                fetchCollectionItems();
-            }
-        }, [normalizedCollectionId, isHistoryCollection, debouncedSearch, selectedCategory, sortType, currentPage])
-    );
+    useEffect(() => {
+        if (isHistoryCollection) {
+            fetchHistoryItems();
+        } else {
+            fetchCollectionItems();
+        }
+    }, [normalizedCollectionId, isHistoryCollection, debouncedSearch, selectedCategory, sortType, currentPage]);
 
     const applySortAndFilter = (cat: string | null, sort: 'default' | 'total' | 'user', data: TriviaItem[]) => {
         let result = [...data];
@@ -280,19 +276,36 @@ export default function CollectionDetailsScreen() {
         (_, index) => firstVisiblePage + index,
     );
 
+    const openTrivia = useCallback((item: TriviaItem) => {
+        router.push({
+            pathname: '/details',
+            params: {
+                id: item.id,
+                user_hee_count: item.user_hee_count,
+                image_url: item.image_url ?? ''
+            }
+        });
+    }, [router]);
+
+    const handleItemPress = useCallback(async (item: TriviaItem) => {
+        if (isOpeningItemRef.current) return;
+        isOpeningItemRef.current = true;
+
+        const navigate = () => openTrivia(item);
+        pendingNavigationRef.current = navigate;
+        const didShowAd = await tryShowInterstitial('history_item_tap');
+
+        if (!didShowAd && pendingNavigationRef.current) {
+            pendingNavigationRef.current = null;
+            isOpeningItemRef.current = false;
+            navigate();
+        }
+    }, [openTrivia, tryShowInterstitial]);
+
     const renderItem = ({ item }: { item: TriviaItem }) => (
         <Pressable
             style={styles.itemContainer}
-            onPress={() => {
-                router.push({
-                    pathname: '/details',
-                    params: {
-                        id: item.id,
-                        user_hee_count: item.user_hee_count,
-                        image_url: item.image_url ?? ''
-                    }
-                });
-            }}
+            onPress={() => handleItemPress(item)}
         >
             <View style={styles.itemIcon}>
                 <Ionicons name="bulb" size={28} color={Colors.light.accent} />
