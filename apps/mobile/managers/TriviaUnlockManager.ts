@@ -55,22 +55,49 @@ const writeRecords = async (records: Record<string, UnlockedTriviaRecord>) => {
     await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(records));
 };
 
-const syncRecords = async (records: UnlockedTriviaRecord[]) => {
-    if (records.length === 0) return;
+type UnlockSyncPayload = {
+    unlockCounts?: Record<string, number>;
+    spotIdAliases?: Record<string, string>;
+};
+
+const syncRecords = async (records: UnlockedTriviaRecord[]): Promise<UnlockSyncPayload | null> => {
+    if (records.length === 0) return null;
     try {
         const response = await fetchWithToken(`${getBackendUrl()}/trivia/map/unlocks`, {
             method: 'POST',
             body: JSON.stringify({ spot_ids: records.map((record) => record.id) }),
         });
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        const payload = await response.json() as { unlockCounts?: Record<string, number> };
+        const payload = await response.json() as UnlockSyncPayload;
         Object.entries(payload.unlockCounts ?? {}).forEach(([spotId, count]) => {
             if (Number.isFinite(count)) syncedUnlockCounts[spotId] = count;
         });
+        return payload;
     } catch (error) {
         // The local unlock remains authoritative and is retried on the next map load.
         console.warn('Map trivia unlock sync failed:', error);
+        return null;
     }
+};
+
+const addCanonicalAliases = (
+    records: Record<string, UnlockedTriviaRecord>,
+    aliases: Record<string, string>,
+) => {
+    let changed = false;
+    Object.entries(aliases).forEach(([legacyId, canonicalId]) => {
+        const legacyRecord = records[legacyId];
+        if (!legacyRecord || records[canonicalId]) return;
+
+        // Keep the legacy entry as a non-destructive backup. The canonical
+        // entry makes the same unlock visible under the current API ID.
+        records[canonicalId] = {
+            id: canonicalId,
+            unlockedAt: legacyRecord.unlockedAt,
+        };
+        changed = true;
+    });
+    return changed;
 };
 
 export const TriviaUnlockManager = {
@@ -79,8 +106,13 @@ export const TriviaUnlockManager = {
     },
 
     async syncUnlockedRecords() {
-        const records = Object.values(await readRecords());
-        await syncRecords(records);
+        return runWithUnlockLock(async () => {
+            const records = await readRecords();
+            const payload = await syncRecords(Object.values(records));
+            if (payload?.spotIdAliases && addCanonicalAliases(records, payload.spotIdAliases)) {
+                await writeRecords(records);
+            }
+        });
     },
 
     async hydrateSpots(spots: TriviaSpot[]) {

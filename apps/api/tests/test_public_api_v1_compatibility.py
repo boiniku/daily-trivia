@@ -101,6 +101,87 @@ class PublicApiV1CompatibilityTests(unittest.TestCase):
         finally:
             db.close()
 
+    def test_legacy_trivia_spot_id_is_mapped_without_discarding_it(self):
+        db = self.session_factory()
+        try:
+            legacy_trivia = Trivia(
+                title="旧ID引き継ぎテスト",
+                content="旧地図IDで解放済み",
+                explanation="旧形式から移行する",
+                source="https://example.com/legacy-map-source",
+                category="地域",
+            )
+            current_map = MapTrivia(
+                title="旧ID引き継ぎテスト",
+                content="旧地図IDで解放済み",
+                explanation="旧形式から移行する",
+                source="https://example.com/legacy-map-source",
+                category="地域",
+                map_address="東京都千代田区",
+                map_prefecture="東京都",
+                map_latitude=35.6812,
+                map_longitude=139.7671,
+                map_radius=300,
+            )
+            db.add_all([legacy_trivia, current_map])
+            db.commit()
+            legacy_id = f"trivia_{legacy_trivia.id}"
+            current_id = f"map_{current_map.id}"
+
+            payload = record_map_trivia_unlocks(
+                MapTriviaUnlockRequest(spot_ids=[legacy_id]),
+                user_id="legacy-user",
+                db=db,
+            )
+
+            self.assertEqual(payload["spotIdAliases"], {legacy_id: current_id})
+            self.assertEqual(payload["unlockCounts"][current_id], 1)
+            unlock = db.query(MapTriviaUnlock).one()
+            self.assertEqual(unlock.map_trivia_id, current_map.id)
+        finally:
+            db.close()
+
+    def test_legacy_trivia_spot_id_is_not_guessed_when_match_is_ambiguous(self):
+        db = self.session_factory()
+        try:
+            legacy_trivia = Trivia(
+                title="重複タイトル",
+                content="同一本文",
+                explanation="説明",
+                source="https://example.com/ambiguous",
+                category="地域",
+            )
+            duplicate_maps = [
+                MapTrivia(
+                    title="重複タイトル",
+                    content="同一本文",
+                    explanation="説明",
+                    source="https://example.com/ambiguous",
+                    category="地域",
+                    map_address=f"候補{i}",
+                    map_prefecture="東京都",
+                    map_latitude=35.0 + i,
+                    map_longitude=139.0,
+                    map_radius=300,
+                )
+                for i in range(2)
+            ]
+            db.add_all([legacy_trivia, *duplicate_maps])
+            db.commit()
+            legacy_id = f"trivia_{legacy_trivia.id}"
+
+            payload = record_map_trivia_unlocks(
+                MapTriviaUnlockRequest(spot_ids=[legacy_id]),
+                user_id="legacy-user",
+                db=db,
+            )
+
+            self.assertEqual(payload["spotIdAliases"], {})
+            self.assertEqual(payload["unlockCounts"], {})
+            self.assertEqual(db.query(MapTriviaUnlock).count(), 0)
+        finally:
+            db.close()
+
     def test_today_contract_still_accepts_anonymous_legacy_request(self):
         with patch("main.AppSessionLocal", self.session_factory):
             payload = get_todays_trivia(

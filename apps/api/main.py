@@ -229,6 +229,7 @@ class MapTriviaUnlockRequest(BaseModel):
 
 class MapTriviaUnlockResponse(BaseModel):
     unlockCounts: dict[str, int]
+    spotIdAliases: dict[str, str] = {}
 
 
 @app.post("/trivia/map/unlocks", response_model=MapTriviaUnlockResponse)
@@ -238,13 +239,45 @@ def record_map_trivia_unlocks(
     db: Session = Depends(get_db),
 ):
     """Idempotently record this user's locally verified map unlocks."""
+    requested_spot_ids = request.spot_ids[:1000]
     numeric_ids = {
         int(spot_id[4:])
-        for spot_id in request.spot_ids[:1000]
+        for spot_id in requested_spot_ids
         if spot_id.startswith("map_") and spot_id[4:].isdigit()
     }
+
+    # Map IDs used to be based on the source trivia row (``trivia_123``).
+    # Those IDs are still stored on users' devices. Resolve them by the exact
+    # title/content copied during the map_trivia migration; never guess when
+    # there is no unique match.
+    legacy_ids = {
+        int(spot_id[7:])
+        for spot_id in requested_spot_ids
+        if spot_id.startswith("trivia_") and spot_id[7:].isdigit()
+    }
+    spot_id_aliases: dict[str, str] = {}
+    if legacy_ids:
+        legacy_trivias = db.query(Trivia).filter(Trivia.id.in_(legacy_ids)).all()
+        legacy_by_identity = {
+            (item.title, item.content): item.id
+            for item in legacy_trivias
+        }
+        if legacy_by_identity:
+            candidate_maps = db.query(MapTrivia).filter(
+                MapTrivia.title.in_({identity[0] for identity in legacy_by_identity})
+            ).all()
+            maps_by_identity: dict[tuple[str, str], list[int]] = {}
+            for item in candidate_maps:
+                maps_by_identity.setdefault((item.title, item.content), []).append(item.id)
+            for identity, trivia_id in legacy_by_identity.items():
+                matches = maps_by_identity.get(identity, [])
+                if len(matches) == 1:
+                    map_trivia_id = matches[0]
+                    numeric_ids.add(map_trivia_id)
+                    spot_id_aliases[f"trivia_{trivia_id}"] = f"map_{map_trivia_id}"
+
     if not numeric_ids:
-        return {"unlockCounts": {}}
+        return {"unlockCounts": {}, "spotIdAliases": spot_id_aliases}
 
     existing_ids = {
         row[0]
@@ -278,7 +311,8 @@ def record_map_trivia_unlocks(
         "unlockCounts": {
             f"map_{map_trivia_id}": int(counts.get(map_trivia_id, 0))
             for map_trivia_id in valid_ids
-        }
+        },
+        "spotIdAliases": spot_id_aliases,
     }
 
 @app.get("/trivia/today", response_model=List[TriviaSchema])
