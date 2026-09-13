@@ -8,6 +8,7 @@ import { useRevenueCat } from '../../contexts/RevenueCatContext';
 import { useAuth } from '../../contexts/AuthContext';
 import LoginModal from '../../components/LoginModal';
 import { TriviaGeofenceManager, TriviaGeofenceStatus } from '../../managers/TriviaGeofenceManager';
+import Constants from 'expo-constants';
 
 export default function SettingsScreen() {
     const router = useRouter();
@@ -285,7 +286,7 @@ export default function SettingsScreen() {
                     <View style={styles.infoRow}>
                         <Text style={styles.infoLabel}>バージョン</Text>
                         <Text style={styles.infoValue}>
-                            1.1.1
+                            {Constants.expoConfig?.version ?? '-'}
                         </Text>
                     </View>
                     <Pressable style={styles.infoRow} onPress={() => Linking.openURL('https://docs.google.com/document/d/1_K7priRhIk6OSG3c_YQBngnW4uVpTcCOdIEHVN7jFnw/edit?usp=sharing')}>

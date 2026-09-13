@@ -1,7 +1,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 
-const EXPECTED_VERSION = process.env.RELEASE_VERSION || '1.1.0';
+const EXPECTED_VERSION = process.env.RELEASE_VERSION || '1.1.1';
 const EXPECTED_PRODUCTION_API = 'https://daily-trivia-e7ge.onrender.com';
 
 const readJson = (relativePath) => JSON.parse(

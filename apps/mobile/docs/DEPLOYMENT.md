@@ -54,7 +54,7 @@ TestFlight版は`EXPO_PUBLIC_APP_ENV=staging`で作られ、ステージングAP
 8. 旧APIの削除は、旧版の利用がなくなり、最低対応バージョンを引き上げた後の別リリースで行う。
 
 App Storeで新版が実際にダウンロード可能になったことを確認してから、Render本番サービスの
-`LATEST_APP_VERSION`を新版（今回なら`1.1.0`）へ更新する。
+`LATEST_APP_VERSION`を新版（今回なら`1.1.1`）へ更新する。
 公開前に変更すると、App Storeからまだ取得できない更新を旧版ユーザーへ案内してしまう。
 旧版も「あとで」を選んで継続利用できるため、バックエンドの後方互換性は維持する。
 `MINIMUM_SUPPORTED_APP_VERSION`は今回`1.0.5`のままにする。現状の画面は強制更新ではなく
@@ -67,13 +67,13 @@ npm run submit:production
 
 ### GitHub Actionsで半自動実行
 
-`main`へマージした後、GitHubのActionsから`Production release 1.1.0`を手動実行する。
-各回の`version`は`1.1.0`、`confirmation`は`RELEASE-1.1.0`と入力する。
+`main`へマージした後、GitHubのActionsから`Production release 1.1.1`を手動実行する。
+各回の`version`は`1.1.1`、`confirmation`は`RELEASE-1.1.1`と入力する。
 
 1. `deploy-backend`: Render本番サービスを旧`backend/`構成から`apps/api/`構成へ更新し、自動デプロイをOFFにして、指定コミットをデプロイする。`/health`が同じコミットを返すまで待つ。
 2. `build-and-upload-ios`: 本番APIが同じコミットであることを再確認し、EAS本番ビルドをApp Store Connectへ送る。
 3. App Store Connectでビルドを選択し、審査へ提出する。リリース方法は「手動」または段階的リリースを選ぶ。
-4. Appleで1.1.0が公開された後、`enable-update-prompt`を実行する。Apple公開APIが1.1.0を返さない間は自動停止する。
+4. Appleで1.1.1が公開された後、`enable-update-prompt`を実行する。Apple公開APIが1.1.1を返さない間は自動停止する。
 
 GitHubリポジトリには次を一度だけ設定する。
 

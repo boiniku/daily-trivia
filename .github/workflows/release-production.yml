@@ -1,4 +1,4 @@
-name: Production release 1.1.0
+name: Production release 1.1.1
 
 on:
   workflow_dispatch:
@@ -14,9 +14,9 @@ on:
       version:
         description: App version
         required: true
-        default: 1.1.0
+        default: 1.1.1
       confirmation:
-        description: Type RELEASE-1.1.0
+        description: Type RELEASE-1.1.1
         required: true
 
 permissions:
@@ -41,8 +41,8 @@ jobs:
           RELEASE_CONFIRMATION: ${{ inputs.confirmation }}
         run: |
           test "$GITHUB_REF" = "refs/heads/main"
-          test "$RELEASE_VERSION" = "1.1.0"
-          test "$RELEASE_CONFIRMATION" = "RELEASE-1.1.0"
+          test "$RELEASE_VERSION" = "1.1.1"
+          test "$RELEASE_CONFIRMATION" = "RELEASE-1.1.1"
           echo "Validated $RELEASE_PHASE for $RELEASE_VERSION at $GITHUB_SHA"
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v4
