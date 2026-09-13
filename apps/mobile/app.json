@@ -20,7 +20,7 @@
     "ios": {
       "supportsTablet": false,
       "bundleIdentifier": "com.dailytrivia.app",
-      "buildNumber": "149",
+      "buildNumber": "150",
       "entitlements": {
         "com.apple.security.application-groups": [
           "group.com.dailytrivia.app"
@@ -148,6 +148,9 @@
     },
     "runtimeVersion": {
       "policy": "appVersion"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/36d60f1c-778f-453a-8260-fa712a7fe652"
     }
   }
 }

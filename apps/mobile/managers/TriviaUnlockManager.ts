@@ -58,10 +58,10 @@ const writeRecords = async (records: Record<string, UnlockedTriviaRecord>) => {
 type UnlockSyncPayload = {
     unlockCounts?: Record<string, number>;
     spotIdAliases?: Record<string, string>;
+    unlockedRecords?: UnlockedTriviaRecord[];
 };
 
 const syncRecords = async (records: UnlockedTriviaRecord[]): Promise<UnlockSyncPayload | null> => {
-    if (records.length === 0) return null;
     try {
         const response = await fetchWithToken(`${getBackendUrl()}/trivia/map/unlocks`, {
             method: 'POST',
@@ -100,6 +100,26 @@ const addCanonicalAliases = (
     return changed;
 };
 
+const mergeServerRecords = (
+    records: Record<string, UnlockedTriviaRecord>,
+    serverRecords: UnlockedTriviaRecord[],
+) => {
+    let changed = false;
+    serverRecords.forEach((record) => {
+        if (
+            !record ||
+            typeof record.id !== 'string' ||
+            typeof record.unlockedAt !== 'string' ||
+            records[record.id] ||
+            Number.isNaN(new Date(record.unlockedAt).getTime())
+        ) return;
+
+        records[record.id] = record;
+        changed = true;
+    });
+    return changed;
+};
+
 export const TriviaUnlockManager = {
     async getUnlockedRecords() {
         return readRecords();
@@ -109,7 +129,13 @@ export const TriviaUnlockManager = {
         return runWithUnlockLock(async () => {
             const records = await readRecords();
             const payload = await syncRecords(Object.values(records));
-            if (payload?.spotIdAliases && addCanonicalAliases(records, payload.spotIdAliases)) {
+            const aliasesChanged = payload?.spotIdAliases
+                ? addCanonicalAliases(records, payload.spotIdAliases)
+                : false;
+            const serverRecordsChanged = payload?.unlockedRecords
+                ? mergeServerRecords(records, payload.unlockedRecords)
+                : false;
+            if (aliasesChanged || serverRecordsChanged) {
                 await writeRecords(records);
             }
         });

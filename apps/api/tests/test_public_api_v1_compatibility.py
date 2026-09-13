@@ -4,6 +4,7 @@ from unittest.mock import patch
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
+from starlette.requests import Request
 
 from main import MapTriviaUnlockRequest, get_app_version, get_map_trivia, get_todays_trivia, health_check, record_map_trivia_unlocks
 from models import Base, MapTrivia, MapTriviaUnlock, Trivia
@@ -84,6 +85,20 @@ class PublicApiV1CompatibilityTests(unittest.TestCase):
         self.assertTrue(payload["id"].startswith("map_"))
         self.assertEqual(payload["unlockCount"], 0)
 
+    def test_distributed_1_1_0_uses_pre_count_map_read_path(self):
+        request = Request({
+            "type": "http",
+            "headers": [(b"x-daily-trivia-app-version", b"1.1.0")],
+        })
+        db = self.session_factory()
+        try:
+            payload = get_map_trivia(db=db, request=request)[0]
+        finally:
+            db.close()
+
+        self.assertTrue(payload["id"].startswith("map_"))
+        self.assertNotIn("unlockCount", payload)
+
     def test_map_unlock_count_is_idempotent_per_user(self):
         db = self.session_factory()
         try:
@@ -98,6 +113,25 @@ class PublicApiV1CompatibilityTests(unittest.TestCase):
             self.assertEqual(third["unlockCounts"][spot_id], 2)
             self.assertEqual(db.query(MapTriviaUnlock).count(), 2)
             self.assertEqual(get_map_trivia(db=db)[0]["unlockCount"], 2)
+            self.assertEqual(first["unlockedRecords"][0]["id"], spot_id)
+        finally:
+            db.close()
+
+    def test_empty_sync_returns_server_ledger_for_local_recovery(self):
+        db = self.session_factory()
+        try:
+            map_trivia_id = db.query(MapTrivia.id).scalar()
+            db.add(MapTriviaUnlock(user_id="recover-user", map_trivia_id=map_trivia_id))
+            db.commit()
+
+            payload = record_map_trivia_unlocks(
+                MapTriviaUnlockRequest(spot_ids=[]),
+                user_id="recover-user",
+                db=db,
+            )
+
+            self.assertEqual(payload["unlockCounts"], {})
+            self.assertEqual(payload["unlockedRecords"][0]["id"], f"map_{map_trivia_id}")
         finally:
             db.close()
 

@@ -190,8 +190,36 @@ def get_app_version():
     }
 
 
-@app.get("/trivia/map", response_model=List[TriviaMapSpotSchema])
-def get_map_trivia(db: Session = Depends(get_db)):
+@app.get(
+    "/trivia/map",
+    response_model=List[TriviaMapSpotSchema],
+    response_model_exclude_unset=True,
+)
+def get_map_trivia(db: Session = Depends(get_db), request: Request = None):
+    # 1.1.0 predates aggregate unlock counts. Keep its read path byte-for-byte
+    # compatible with the pre-count endpoint while the recovery build rolls out.
+    # Unlock state in that release is local and keyed by the IDs returned here.
+    if request is not None and request.headers.get("X-Daily-Trivia-App-Version") == "1.1.0":
+        items = db.query(MapTrivia).order_by(MapTrivia.id.desc()).all()
+        return [
+            {
+                "id": f"map_{item.id}",
+                "title": item.title,
+                "description": item.content,
+                "explanation": item.explanation or "",
+                "latitude": float(item.map_latitude),
+                "longitude": float(item.map_longitude),
+                "unlockRadiusMeters": int(item.map_radius or 1200),
+                "isUnlocked": False,
+                "unlockedAt": None,
+                "prefecture": item.map_prefecture,
+                "address": item.map_address,
+                "category": item.category,
+                "hint": item.map_hint or "",
+            }
+            for item in items
+        ]
+
     unlock_counts = db.query(
         MapTriviaUnlock.map_trivia_id.label("map_trivia_id"),
         func.count(MapTriviaUnlock.id).label("unlock_count"),
@@ -230,6 +258,7 @@ class MapTriviaUnlockRequest(BaseModel):
 class MapTriviaUnlockResponse(BaseModel):
     unlockCounts: dict[str, int]
     spotIdAliases: dict[str, str] = {}
+    unlockedRecords: List[dict] = []
 
 
 @app.post("/trivia/map/unlocks", response_model=MapTriviaUnlockResponse)
@@ -276,30 +305,29 @@ def record_map_trivia_unlocks(
                     numeric_ids.add(map_trivia_id)
                     spot_id_aliases[f"trivia_{trivia_id}"] = f"map_{map_trivia_id}"
 
-    if not numeric_ids:
-        return {"unlockCounts": {}, "spotIdAliases": spot_id_aliases}
-
-    existing_ids = {
-        row[0]
-        for row in db.query(MapTriviaUnlock.map_trivia_id).filter(
-            MapTriviaUnlock.user_id == user_id,
-            MapTriviaUnlock.map_trivia_id.in_(numeric_ids),
-        ).all()
-    }
-    valid_ids = {
-        row[0]
-        for row in db.query(MapTrivia.id).filter(MapTrivia.id.in_(numeric_ids)).all()
-    }
-    for map_trivia_id in valid_ids - existing_ids:
-        try:
-            with db.begin_nested():
-                db.add(MapTriviaUnlock(user_id=user_id, map_trivia_id=map_trivia_id))
-                db.flush()
-        except IntegrityError:
-            # Foreground and geofence callbacks can report the same first unlock
-            # concurrently. The unique constraint makes that safe and idempotent.
-            pass
-    db.commit()
+    valid_ids: set[int] = set()
+    if numeric_ids:
+        existing_ids = {
+            row[0]
+            for row in db.query(MapTriviaUnlock.map_trivia_id).filter(
+                MapTriviaUnlock.user_id == user_id,
+                MapTriviaUnlock.map_trivia_id.in_(numeric_ids),
+            ).all()
+        }
+        valid_ids = {
+            row[0]
+            for row in db.query(MapTrivia.id).filter(MapTrivia.id.in_(numeric_ids)).all()
+        }
+        for map_trivia_id in valid_ids - existing_ids:
+            try:
+                with db.begin_nested():
+                    db.add(MapTriviaUnlock(user_id=user_id, map_trivia_id=map_trivia_id))
+                    db.flush()
+            except IntegrityError:
+                # Foreground and geofence callbacks can report the same first unlock
+                # concurrently. The unique constraint makes that safe and idempotent.
+                pass
+        db.commit()
 
     counts = dict(db.query(
         MapTriviaUnlock.map_trivia_id,
@@ -307,12 +335,26 @@ def record_map_trivia_unlocks(
     ).filter(
         MapTriviaUnlock.map_trivia_id.in_(valid_ids),
     ).group_by(MapTriviaUnlock.map_trivia_id).all())
+    user_unlocks = db.query(
+        MapTriviaUnlock.map_trivia_id,
+        MapTriviaUnlock.unlocked_at,
+    ).filter(MapTriviaUnlock.user_id == user_id).all()
     return {
         "unlockCounts": {
             f"map_{map_trivia_id}": int(counts.get(map_trivia_id, 0))
             for map_trivia_id in valid_ids
         },
         "spotIdAliases": spot_id_aliases,
+        # The client merges this ledger into local storage without deleting any
+        # local entry. This repairs devices whose local view was lost while
+        # retaining offline-first behaviour.
+        "unlockedRecords": [
+            {
+                "id": f"map_{map_trivia_id}",
+                "unlockedAt": unlocked_at.isoformat(),
+            }
+            for map_trivia_id, unlocked_at in user_unlocks
+        ],
     }
 
 @app.get("/trivia/today", response_model=List[TriviaSchema])
