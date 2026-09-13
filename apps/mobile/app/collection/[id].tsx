@@ -1,4 +1,4 @@
-import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import { View, Text, StyleSheet, FlatList, Pressable, ActivityIndicator, Alert, Platform, ScrollView, TextInput } from 'react-native';
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -61,6 +61,13 @@ export default function CollectionDetailsScreen() {
     const normalizedTitle = Array.isArray(title) ? title[0] : title;
     const isHistoryCollection = (normalizedTitle ?? '').trim().includes('過去に見た雑学');
 
+    useFocusEffect(useCallback(() => {
+        // Keep navigation locked while the detail screen is being presented.
+        // It is safe to accept another tap only after this list regains focus.
+        pendingNavigationRef.current = null;
+        isOpeningItemRef.current = false;
+    }, []));
+
     const tryShowInterstitial = useCallback(async (reason: string): Promise<boolean> => {
         if (isPro) return false;
         if (!isHistoryCollection) return false;
@@ -103,7 +110,6 @@ export default function CollectionDetailsScreen() {
             const unsubscribeClosed = interstitial.addAdEventListener(AdEventType.CLOSED, () => {
                 const navigate = pendingNavigationRef.current;
                 pendingNavigationRef.current = null;
-                isOpeningItemRef.current = false;
                 navigate?.();
                 interstitial.load();
             });
@@ -111,7 +117,6 @@ export default function CollectionDetailsScreen() {
                 console.error('[Ads] Interstitial failed to load/show:', error);
                 const navigate = pendingNavigationRef.current;
                 pendingNavigationRef.current = null;
-                isOpeningItemRef.current = false;
                 navigate?.();
             });
 
@@ -297,7 +302,6 @@ export default function CollectionDetailsScreen() {
 
         if (!didShowAd && pendingNavigationRef.current) {
             pendingNavigationRef.current = null;
-            isOpeningItemRef.current = false;
             navigate();
         }
     }, [openTrivia, tryShowInterstitial]);

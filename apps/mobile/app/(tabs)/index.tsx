@@ -79,6 +79,9 @@ export default function HomeScreen() {
     const shouldShowSwipeAfterTapGuideRef = useRef(true);
     const rewardHandledRef = useRef(false);
     const rewardRequestPendingRef = useRef(false);
+    const isSwipeTransitioningRef = useRef(false);
+    const cardAdvanceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const isOpeningDetailsRef = useRef(false);
 
     const handleCardAreaLayout = useCallback((event: LayoutChangeEvent) => {
         const { width, height } = event.nativeEvent.layout;
@@ -144,6 +147,10 @@ export default function HomeScreen() {
     };
 
     const swipeTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+    useEffect(() => () => {
+        if (cardAdvanceTimerRef.current) clearTimeout(cardAdvanceTimerRef.current);
+    }, []);
 
     const showTapGuide = (shouldShowSwipeAfterTap: boolean) => {
         shouldShowSwipeAfterTapGuideRef.current = shouldShowSwipeAfterTap;
@@ -519,6 +526,8 @@ export default function HomeScreen() {
     };
 
     const handleSwipe = async (direction: 'left' | 'right') => {
+        if (isSwipeTransitioningRef.current || isOpeningDetailsRef.current) return;
+        isSwipeTransitioningRef.current = true;
         console.log(`Swiped ${direction}`);
 
         // Dismiss the swipe guide if it's currently showing
@@ -535,8 +544,9 @@ export default function HomeScreen() {
         }
 
         // Wait a bit for animation to finish before updating state to remove card
-        setTimeout(() => {
+        cardAdvanceTimerRef.current = setTimeout(() => {
             const nextIndex = currentIndex + 1;
+            currentIndexRef.current = nextIndex;
             setCurrentIndex(nextIndex);
 
             // Save state
@@ -551,6 +561,8 @@ export default function HomeScreen() {
 
             // Check for review prompt on swipe (threshold logic handled inside)
             checkAndRequestReview();
+            isSwipeTransitioningRef.current = false;
+            cardAdvanceTimerRef.current = null;
         }, 200);
     };
 
@@ -574,7 +586,10 @@ export default function HomeScreen() {
     };
 
     const handlePressDetails = () => {
+        if (isOpeningDetailsRef.current || isSwipeTransitioningRef.current) return;
         const item = triviaList[currentIndex];
+        if (!item) return;
+        isOpeningDetailsRef.current = true;
         router.push({
             pathname: '/details',
             params: {
@@ -646,6 +661,7 @@ export default function HomeScreen() {
 
     useFocusEffect(
         useCallback(() => {
+            isOpeningDetailsRef.current = false;
             checkDateAndRefresh();
         }, [userId])
     );
