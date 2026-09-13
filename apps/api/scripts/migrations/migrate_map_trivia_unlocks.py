@@ -1,4 +1,4 @@
-"""Create the per-user map trivia unlock ledger used for aggregate counts."""
+"""Create the private map trivia unlock ledger used by authenticated API routes."""
 
 from sqlalchemy import inspect, text
 
@@ -14,6 +14,14 @@ def migrate() -> None:
         return
 
     with engine.begin() as connection:
+        app_user_exists = connection.execute(text(
+            "SELECT 1 FROM pg_roles WHERE rolname = 'app_user'"
+        )).scalar()
+        # Some isolated staging databases use only the owner connection. The
+        # table stays private there because no application role has a grant.
+        if not app_user_exists:
+            return
+
         connection.execute(text(
             "GRANT SELECT, INSERT ON map_trivia_unlocks TO app_user"
         ))
