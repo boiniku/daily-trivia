@@ -20,7 +20,11 @@ const withTimeout = async <T,>(promise: Promise<T>, timeoutMs: number, label: st
  * A wrapper around the standard `fetch` that automatically attaches the
  * Firebase ID token to the Authorization header if a user is logged in.
  */
-export async function fetchWithToken(url: string, options: RequestInit = {}) {
+export async function fetchWithToken(
+    url: string,
+    options: RequestInit = {},
+    expectedUserId?: string,
+) {
     // 1. Prepare headers
     const headers: Record<string, string> = {
         'Content-Type': 'application/json',
@@ -46,6 +50,9 @@ export async function fetchWithToken(url: string, options: RequestInit = {}) {
     }
 
     if (currentUser) {
+        if (expectedUserId && currentUser.uid !== expectedUserId) {
+            throw new Error('Authenticated user changed before the request was sent');
+        }
         try {
             // Force refresh is false (fetches from cache if valid)
             const idToken = await withTimeout(getIdToken(currentUser, false), 2000, 'Firebase token fetch');

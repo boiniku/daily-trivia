@@ -4,6 +4,7 @@ import {
     AppleAuthProvider,
     FirebaseAuthTypes,
     getAuth,
+    getIdToken,
     onAuthStateChanged,
     signInAnonymously,
     signInWithCredential,
@@ -16,6 +17,7 @@ import { Alert } from 'react-native';
 import { Config } from '../constants/Config';
 import { useRevenueCat } from './RevenueCatContext';
 import { fetchWithToken } from '../utils/apiClient';
+import { TriviaUnlockManager } from '../managers/TriviaUnlockManager';
 
 interface AuthContextType {
     user: FirebaseAuthTypes.User | null;
@@ -52,6 +54,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     // Handle user state changes
     function handleAuthStateChanged(user: FirebaseAuthTypes.User | null) {
         setUser(user);
+        // Hide the previous identity immediately. Its map collection must never
+        // remain active while a new Firebase identity is being established.
+        setUserId((current) => current === user?.uid ? current : null);
         if (loading) setLoading(false);
     }
 
@@ -82,6 +87,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const updateEffectiveUserId = async () => {
         if (user) {
             // Logged in
+            if (firebaseAuth.currentUser?.uid !== user.uid) return;
             setUserId(user.uid);
             await syncUserIdToStorage(user.uid);
         } else {
@@ -89,6 +95,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             if (!firebaseAuth.currentUser) {
                 try {
                     const anonCred = await withTimeout(signInAnonymously(firebaseAuth), 2500, 'Anonymous sign-in');
+                    if (firebaseAuth.currentUser?.uid !== anonCred.user.uid) return;
                     setUserId(anonCred.user.uid);
                     await syncUserIdToStorage(anonCred.user.uid);
                 } catch (e) {
@@ -97,7 +104,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                     let guestId = await AsyncStorage.getItem('user_id');
                     if (!guestId) {
                         const newGuestId = Crypto.randomUUID();
-                        await syncUserIdToStorage(newGuestId);
+                        await syncUserIdToStorage(newGuestId, true);
                         setUserId(newGuestId);
                     } else {
                         setUserId(guestId);
@@ -106,16 +113,28 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             } else {
                 // If currentUser exists but `user` state was null (race condition or weird state),
                 // just use the current anonymous user's uid
-                setUserId(firebaseAuth.currentUser!.uid);
+                const currentUid = firebaseAuth.currentUser.uid;
+                setUserId(currentUid);
+                await syncUserIdToStorage(currentUid);
             }
         }
     };
 
 
 
-    const syncUserIdToStorage = async (id: string) => {
+    const syncUserIdToStorage = async (id: string, isLocalFallback = false) => {
         try {
+            const previousId = await AsyncStorage.getItem('user_id');
+            const previousWasFallback = await AsyncStorage.getItem('user_id_is_local_fallback') === 'true';
+            if (!isLocalFallback && previousWasFallback && previousId && previousId !== id) {
+                await TriviaUnlockManager.transferUserRecords(previousId, id);
+            }
             await AsyncStorage.setItem('user_id', id);
+            if (isLocalFallback) {
+                await AsyncStorage.setItem('user_id_is_local_fallback', 'true');
+            } else {
+                await AsyncStorage.removeItem('user_id_is_local_fallback');
+            }
         } catch (e) {
             console.error('Failed to save user_id to AsyncStorage:', e);
         }
@@ -154,6 +173,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
             // Save guest ID before signing in
             const guestUserId = await AsyncStorage.getItem('user_id');
+            const guestUser = firebaseAuth.currentUser;
+            const guestIdToken = guestUser?.isAnonymous
+                ? await getIdToken(guestUser, true)
+                : null;
 
             // sign the node in with the credential
             const userCredential = await signInWithCredential(firebaseAuth, firebaseCredential);
@@ -164,12 +187,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             // Merge Data if coming from a valid guest session
             // Relaxed check: Allow any non-empty guest ID
             if (guestUserId && guestUserId !== authUser.uid) {
-                await mergeData(guestUserId, authUser.uid);
+                // Copy the on-device ledger first. Even if the network merge is
+                // unavailable, Apple ownership and an immediate sync preserve it.
+                await TriviaUnlockManager.transferUserRecords(guestUserId, authUser.uid);
+                if (guestIdToken) await mergeData(guestIdToken);
             }
 
             // Force update user ID immediately
             setUserId(authUser.uid);
             await syncUserIdToStorage(authUser.uid);
+            await TriviaUnlockManager.syncUnlockedRecords(authUser.uid);
 
             // Sync with RevenueCat (Transfer subscription)
             await logIn(authUser.uid);
@@ -188,13 +215,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
     };
 
-    const mergeData = async (guestId: string, authId: string) => {
+    const mergeData = async (guestIdToken: string) => {
         try {
-            console.log(`Merging guest ${guestId} to auth ${authId}...`);
-            const response = await fetchWithToken(`${Config.BACKEND_URL}/auth/merge`, {
+            console.log('Merging verified guest data into Apple account...');
+            const response = await fetchWithToken(`${Config.BACKEND_URL}/auth/merge/verified`, {
                 method: 'POST',
                 body: JSON.stringify({
-                    guest_user_id: guestId
+                    guest_id_token: guestIdToken,
                 })
             });
 
@@ -215,6 +242,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     const signOut = async () => {
         try {
+            // Prevent background work from writing the outgoing account's local
+            // ledger under the next anonymous identity during auth transition.
+            await AsyncStorage.removeItem('user_id');
+            await AsyncStorage.removeItem('user_id_is_local_fallback');
             await AsyncStorage.removeItem('triviaState');
             await firebaseSignOut(firebaseAuth);
             await rcLogOut(); // Sync RevenueCat logout
@@ -248,7 +279,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             console.log("Backend delete success. Cleaning up local data...");
 
             // 2. Sign out & Cleanup
+            await TriviaUnlockManager.removeUserRecords(userId);
             await AsyncStorage.removeItem('user_id');
+            await AsyncStorage.removeItem('user_id_is_local_fallback');
             await AsyncStorage.removeItem('hasSeenTutorial');
             await AsyncStorage.removeItem('hasSeenTutorialRevision');
             await AsyncStorage.removeItem('hasSeenWidgetGuide');

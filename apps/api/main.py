@@ -71,7 +71,7 @@ from routers import social_automation
 app.include_router(social_automation.router)
 
 # Pydantic Schemas
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 try:
     from pydantic import field_validator
 except ImportError:
@@ -174,6 +174,11 @@ def health_check():
         "status": "ok",
         "environment": APP_ENV,
         "api_version": API_VERSION,
+        "capabilities": [
+            "map_unlock_backup_v2",
+            "verified_guest_merge",
+            "archived_map_collectibles",
+        ],
         # Render supplies this value at runtime. It lets the release workflow
         # prove that the exact reviewed commit is serving production traffic.
         "release_commit": os.getenv("RENDER_GIT_COMMIT", "").strip(),
@@ -274,8 +279,15 @@ def get_map_trivia(
     ]
 
 
+class MapTriviaUnlockRecordRequest(BaseModel):
+    id: str
+    unlockedAt: datetime.datetime
+
+
 class MapTriviaUnlockRequest(BaseModel):
-    spot_ids: List[str]
+    # spot_ids remains supported for the already distributed client.
+    spot_ids: List[str] = Field(default_factory=list)
+    records: List[MapTriviaUnlockRecordRequest] = Field(default_factory=list)
 
 
 class MapTriviaUnlockResponse(BaseModel):
@@ -291,7 +303,22 @@ def record_map_trivia_unlocks(
     db: Session = Depends(get_db),
 ):
     """Idempotently record this user's locally verified map unlocks."""
-    requested_spot_ids = request.spot_ids[:1000]
+    requested_records = request.records[:1000]
+    requested_spot_ids = list(dict.fromkeys([
+        *request.spot_ids,
+        *(record.id for record in requested_records),
+    ]))[:1000]
+    requested_timestamps: dict[str, datetime.datetime] = {}
+    now_utc = datetime.datetime.now(datetime.timezone.utc)
+    for record in requested_records:
+        unlocked_at = record.unlockedAt
+        if unlocked_at.tzinfo is None:
+            unlocked_at = unlocked_at.replace(tzinfo=datetime.timezone.utc)
+        unlocked_at = unlocked_at.astimezone(datetime.timezone.utc)
+        # Do not let a bad client create a collection date in the future.
+        if unlocked_at > now_utc + datetime.timedelta(minutes=5):
+            unlocked_at = now_utc
+        requested_timestamps[record.id] = unlocked_at.replace(tzinfo=None)
     numeric_ids = {
         int(spot_id[4:])
         for spot_id in requested_spot_ids
@@ -308,6 +335,24 @@ def record_map_trivia_unlocks(
         if spot_id.startswith("trivia_") and spot_id[7:].isdigit()
     }
     spot_id_aliases: dict[str, str] = {}
+    durable_aliases = db.query(MapTrivia).filter(or_(
+        MapTrivia.legacy_spot_id.in_(requested_spot_ids),
+        MapTrivia.legacy_trivia_id.in_(legacy_ids) if legacy_ids else False,
+    )).all() if requested_spot_ids else []
+    for item in durable_aliases:
+        aliases = []
+        if item.legacy_spot_id in requested_spot_ids:
+            aliases.append(item.legacy_spot_id)
+        trivia_alias = f"trivia_{item.legacy_trivia_id}" if item.legacy_trivia_id else None
+        if trivia_alias in requested_spot_ids:
+            aliases.append(trivia_alias)
+        for alias in aliases:
+            canonical_id = f"map_{item.id}"
+            spot_id_aliases[alias] = canonical_id
+            numeric_ids.add(item.id)
+            if alias in requested_timestamps:
+                requested_timestamps[canonical_id] = requested_timestamps[alias]
+
     if legacy_ids:
         legacy_trivias = db.query(Trivia).filter(Trivia.id.in_(legacy_ids)).all()
         legacy_by_identity = {
@@ -327,12 +372,15 @@ def record_map_trivia_unlocks(
                     map_trivia_id = matches[0]
                     numeric_ids.add(map_trivia_id)
                     spot_id_aliases[f"trivia_{trivia_id}"] = f"map_{map_trivia_id}"
+                    legacy_key = f"trivia_{trivia_id}"
+                    if legacy_key in requested_timestamps:
+                        requested_timestamps[f"map_{map_trivia_id}"] = requested_timestamps[legacy_key]
 
     valid_ids: set[int] = set()
     if numeric_ids:
-        existing_ids = {
-            row[0]
-            for row in db.query(MapTriviaUnlock.map_trivia_id).filter(
+        existing_unlocks = {
+            row.map_trivia_id: row
+            for row in db.query(MapTriviaUnlock).filter(
                 MapTriviaUnlock.user_id == user_id,
                 MapTriviaUnlock.map_trivia_id.in_(numeric_ids),
             ).all()
@@ -341,10 +389,20 @@ def record_map_trivia_unlocks(
             row[0]
             for row in db.query(MapTrivia.id).filter(MapTrivia.id.in_(numeric_ids)).all()
         }
-        for map_trivia_id in valid_ids - existing_ids:
+        for map_trivia_id in valid_ids:
+            supplied_at = requested_timestamps.get(f"map_{map_trivia_id}")
+            existing_unlock = existing_unlocks.get(map_trivia_id)
+            if existing_unlock:
+                if supplied_at and supplied_at < existing_unlock.unlocked_at:
+                    existing_unlock.unlocked_at = supplied_at
+                continue
             try:
                 with db.begin_nested():
-                    db.add(MapTriviaUnlock(user_id=user_id, map_trivia_id=map_trivia_id))
+                    db.add(MapTriviaUnlock(
+                        user_id=user_id,
+                        map_trivia_id=map_trivia_id,
+                        unlocked_at=supplied_at or datetime.datetime.utcnow(),
+                    ))
                     db.flush()
             except IntegrityError:
                 # Foreground and geofence callbacks can report the same first unlock
@@ -374,7 +432,9 @@ def record_map_trivia_unlocks(
         "unlockedRecords": [
             {
                 "id": f"map_{map_trivia_id}",
-                "unlockedAt": unlocked_at.isoformat(),
+                "unlockedAt": unlocked_at.replace(
+                    tzinfo=datetime.timezone.utc
+                ).isoformat().replace("+00:00", "Z"),
             }
             for map_trivia_id, unlocked_at in user_unlocks
         ],

@@ -4,7 +4,9 @@ from sqlalchemy.orm import Session
 from pydantic import BaseModel
 import sys
 import os
+import datetime
 from typing import List
+from firebase_admin import auth as firebase_auth
 
 # Add parent directory to path to import models and database
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -17,18 +19,57 @@ from auth import get_current_user_id
 router = APIRouter()
 
 class MergeRequest(BaseModel):
+    guest_id_token: str
+
+class LegacyMergeRequest(BaseModel):
     guest_user_id: str
 
-@router.post("/auth/merge")
-def merge_guest_data(request: MergeRequest, auth_user_id: str = Depends(get_current_user_id)):
+
+@router.post("/auth/merge/verified")
+def merge_verified_guest_data(request: MergeRequest, auth_user_id: str = Depends(get_current_user_id)):
     """
     Merge guest data into authenticated user account.
     """
-    guest_id = request.guest_user_id
-    auth_id = auth_user_id
+    try:
+        guest_claims = firebase_auth.verify_id_token(request.guest_id_token)
+    except Exception:
+        raise HTTPException(status_code=401, detail="Invalid guest authentication token")
+
+    guest_id = guest_claims.get("uid")
+    sign_in_provider = (guest_claims.get("firebase") or {}).get("sign_in_provider")
+    if not guest_id or sign_in_provider != "anonymous":
+        raise HTTPException(
+            status_code=400,
+            detail="The merge token must belong to an anonymous Firebase user",
+        )
+    return _merge_guest_data(guest_id, auth_user_id)
+
+
+@router.post("/auth/merge")
+def merge_legacy_guest_data(
+    request: LegacyMergeRequest,
+    auth_user_id: str = Depends(get_current_user_id),
+):
+    """Temporary compatibility path for 1.1.0; automatically expires."""
+    deadline_text = os.getenv(
+        "LEGACY_GUEST_MERGE_DEADLINE",
+        "2026-10-31T00:00:00+00:00",
+    )
+    try:
+        deadline = datetime.datetime.fromisoformat(deadline_text)
+        if deadline.tzinfo is None:
+            deadline = deadline.replace(tzinfo=datetime.timezone.utc)
+    except ValueError:
+        raise HTTPException(status_code=500, detail="Invalid legacy merge deadline")
+    if datetime.datetime.now(datetime.timezone.utc) >= deadline:
+        raise HTTPException(status_code=410, detail="Legacy guest merge has expired; update the app")
+    return _merge_guest_data(request.guest_user_id, auth_user_id)
+
+
+def _merge_guest_data(guest_id: str, auth_id: str):
     
     if not guest_id or not auth_id:
-        raise HTTPException(status_code=400, detail="Both guest_user_id and auth_user_id are required")
+        raise HTTPException(status_code=400, detail="Both guest and authenticated user IDs are required")
         
     if guest_id == auth_id:
         return {"message": "Same user ID, nothing to merge"}

@@ -1,3 +1,4 @@
+import datetime
 import unittest
 from unittest.mock import patch
 
@@ -62,6 +63,11 @@ class PublicApiV1CompatibilityTests(unittest.TestCase):
             }.issubset(get_app_version())
         )
         self.assertTrue({"status", "environment"}.issubset(health_check()))
+        self.assertTrue({
+            "map_unlock_backup_v2",
+            "verified_guest_merge",
+            "archived_map_collectibles",
+        }.issubset(health_check()["capabilities"]))
 
     def test_map_contract_keeps_legacy_camel_case_fields(self):
         db = self.session_factory()
@@ -132,6 +138,94 @@ class PublicApiV1CompatibilityTests(unittest.TestCase):
 
             self.assertEqual(payload["unlockCounts"], {})
             self.assertEqual(payload["unlockedRecords"][0]["id"], f"map_{map_trivia_id}")
+        finally:
+            db.close()
+
+    def test_sync_preserves_original_unlock_time_and_returns_explicit_utc(self):
+        db = self.session_factory()
+        try:
+            spot_id = f"map_{db.query(MapTrivia.id).scalar()}"
+            original = "2024-01-02T03:04:05Z"
+            payload = record_map_trivia_unlocks(
+                MapTriviaUnlockRequest(records=[{
+                    "id": spot_id,
+                    "unlockedAt": original,
+                }]),
+                user_id="apple-user",
+                db=db,
+            )
+
+            self.assertEqual(payload["unlockedRecords"][0]["unlockedAt"], original)
+            self.assertEqual(
+                db.query(MapTriviaUnlock).one().unlocked_at,
+                datetime.datetime(2024, 1, 2, 3, 4, 5),
+            )
+        finally:
+            db.close()
+
+    def test_fixed_legacy_spot_id_maps_to_archived_collectible(self):
+        db = self.session_factory()
+        try:
+            legacy = MapTrivia(
+                title="東京タワーの色の雑学",
+                content="旧固定スポット",
+                explanation="説明",
+                source="",
+                category="地域",
+                map_address="東京タワー",
+                map_prefecture="東京都",
+                map_latitude=35.6586,
+                map_longitude=139.7454,
+                map_radius=300,
+                is_active=False,
+                legacy_spot_id="tokyo_001",
+            )
+            db.add(legacy)
+            db.commit()
+
+            payload = record_map_trivia_unlocks(
+                MapTriviaUnlockRequest(
+                    records=[{"id": "tokyo_001", "unlockedAt": "2024-01-01T00:00:00Z"}],
+                ),
+                user_id="legacy-user",
+                db=db,
+            )
+
+            self.assertEqual(payload["spotIdAliases"], {"tokyo_001": f"map_{legacy.id}"})
+            collected = get_map_trivia(db=db, user_id="legacy-user")
+            restored = next(item for item in collected if item["id"] == f"map_{legacy.id}")
+            self.assertTrue(restored["isArchived"])
+        finally:
+            db.close()
+
+    def test_update_sync_restores_each_identity_without_cross_user_leakage(self):
+        db = self.session_factory()
+        try:
+            spot_id = f"map_{db.query(MapTrivia.id).scalar()}"
+
+            for user_id in ("anonymous-user", "apple-user"):
+                record_map_trivia_unlocks(
+                    MapTriviaUnlockRequest(spot_ids=[spot_id]),
+                    user_id=user_id,
+                    db=db,
+                )
+                restored = record_map_trivia_unlocks(
+                    MapTriviaUnlockRequest(spot_ids=[]),
+                    user_id=user_id,
+                    db=db,
+                )
+                self.assertEqual(
+                    [item["id"] for item in restored["unlockedRecords"]],
+                    [spot_id],
+                )
+
+            unrelated = record_map_trivia_unlocks(
+                MapTriviaUnlockRequest(spot_ids=[]),
+                user_id="different-user",
+                db=db,
+            )
+            self.assertEqual(unrelated["unlockedRecords"], [])
+            self.assertEqual(db.query(MapTriviaUnlock).count(), 2)
         finally:
             db.close()
 

@@ -7,8 +7,15 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from models import Base, MapTrivia, MapTriviaUnlock
-from routers.user import MergeRequest, delete_user, merge_guest_data
+from routers.user import (
+    LegacyMergeRequest,
+    MergeRequest,
+    delete_user,
+    merge_legacy_guest_data,
+    merge_verified_guest_data,
+)
 from services.map_trivia import archive_map_trivia
+from scripts.migrations.migrate_map_trivia_unlocks import LEGACY_STATIC_SPOTS, migrate
 
 
 class MapUnlockAccountLifecycleTests(unittest.TestCase):
@@ -55,8 +62,14 @@ class MapUnlockAccountLifecycleTests(unittest.TestCase):
         db.commit()
         db.close()
 
-        with patch("database.SessionLocal", self.session_factory):
-            merge_guest_data(MergeRequest(guest_user_id="guest"), auth_user_id="apple")
+        with (
+            patch("database.SessionLocal", self.session_factory),
+            patch("routers.user.firebase_auth.verify_id_token", return_value={
+                "uid": "guest",
+                "firebase": {"sign_in_provider": "anonymous"},
+            }),
+        ):
+            merge_verified_guest_data(MergeRequest(guest_id_token="verified-guest-token"), auth_user_id="apple")
 
         db = self.session_factory()
         try:
@@ -86,6 +99,35 @@ class MapUnlockAccountLifecycleTests(unittest.TestCase):
         finally:
             db.close()
 
+    def test_merge_rejects_a_token_that_is_not_anonymous(self):
+        with patch("routers.user.firebase_auth.verify_id_token", return_value={
+            "uid": "another-apple-user",
+            "firebase": {"sign_in_provider": "apple.com"},
+        }):
+            with self.assertRaisesRegex(Exception, "anonymous Firebase user"):
+                merge_verified_guest_data(
+                    MergeRequest(guest_id_token="not-a-guest-token"),
+                    auth_user_id="apple",
+                )
+
+    def test_legacy_merge_remains_available_only_during_rollout_window(self):
+        with (
+            patch("database.SessionLocal", self.session_factory),
+            patch.dict("os.environ", {"LEGACY_GUEST_MERGE_DEADLINE": "2099-01-01T00:00:00+00:00"}),
+        ):
+            result = merge_legacy_guest_data(
+                LegacyMergeRequest(guest_user_id="guest"),
+                auth_user_id="apple",
+            )
+            self.assertEqual(result["message"], "Merge successful")
+
+        with patch.dict("os.environ", {"LEGACY_GUEST_MERGE_DEADLINE": "2020-01-01T00:00:00+00:00"}):
+            with self.assertRaisesRegex(Exception, "expired"):
+                merge_legacy_guest_data(
+                    LegacyMergeRequest(guest_user_id="guest"),
+                    auth_user_id="apple",
+                )
+
     def test_explicit_account_deletion_removes_unlock_ledger(self):
         db = self.session_factory()
         map_id = db.query(MapTrivia.id).first()[0]
@@ -99,6 +141,22 @@ class MapUnlockAccountLifecycleTests(unittest.TestCase):
         db = self.session_factory()
         try:
             self.assertEqual(db.query(MapTriviaUnlock).count(), 0)
+        finally:
+            db.close()
+
+    def test_legacy_static_seed_is_complete_and_idempotent(self):
+        with patch("scripts.migrations.migrate_map_trivia_unlocks.engine", self.engine):
+            migrate()
+            migrate()
+
+        db = self.session_factory()
+        try:
+            seeded = db.query(MapTrivia).filter(MapTrivia.legacy_spot_id.isnot(None)).all()
+            self.assertEqual(
+                {item.legacy_spot_id for item in seeded},
+                {item["legacy_spot_id"] for item in LEGACY_STATIC_SPOTS},
+            )
+            self.assertTrue(all(not item.is_active for item in seeded))
         finally:
             db.close()
 

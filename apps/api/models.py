@@ -34,6 +34,10 @@ class MapTrivia(Base):
     map_radius = Column(Integer, nullable=False, default=1200)
     map_hint = Column(String, nullable=True)
     is_active = Column(Boolean, nullable=False, default=True)
+    # Durable aliases survive edits to title/content and preserve collectibles
+    # created by every historical map implementation.
+    legacy_spot_id = Column(String, nullable=True, unique=True)
+    legacy_trivia_id = Column(Integer, nullable=True, unique=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 

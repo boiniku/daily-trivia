@@ -204,7 +204,7 @@ export default function TriviaMapScreen() {
     };
 
     const refreshUnlockedState = async (sourceSpots = spotsRef.current) => {
-        const hydrated = await TriviaUnlockManager.hydrateSpots(sourceSpots);
+        const hydrated = await TriviaUnlockManager.hydrateSpots(sourceSpots, userId);
         setTriviaSpots(hydrated);
         return hydrated;
     };
@@ -224,7 +224,7 @@ export default function TriviaMapScreen() {
     };
 
     const checkUnlocks = async (location: Coordinates, sourceSpots = spotsRef.current) => {
-        const newlyUnlocked = await TriviaUnlockManager.unlockNearbySpots(sourceSpots, location);
+        const newlyUnlocked = await TriviaUnlockManager.unlockNearbySpots(sourceSpots, location, userId);
         await handleUnlockedRecords(newlyUnlocked, sourceSpots);
         if (newlyUnlocked.length > 0) {
             await TriviaGeofenceManager.refreshRegistration(sourceSpots, location);
@@ -233,14 +233,22 @@ export default function TriviaMapScreen() {
     };
 
     useEffect(() => {
+        if (!userId) {
+            setTriviaSpots([]);
+            setSelectedSpotId(null);
+            setIsLoading(true);
+            return;
+        }
         let isMounted = true;
         let subscription: { remove: () => void } | null = null;
 
         const initialize = async () => {
             try {
+                // Upload/restore first so archived collectibles owned by this
+                // identity are included in the following map response.
+                await TriviaUnlockManager.syncUnlockedRecords(userId);
                 const baseSpots = await getTriviaSpots();
-                await TriviaUnlockManager.syncUnlockedRecords();
-                const hydrated = await TriviaUnlockManager.hydrateSpots(baseSpots);
+                const hydrated = await TriviaUnlockManager.hydrateSpots(baseSpots, userId);
                 if (!isMounted) return;
 
                 setTriviaSpots(hydrated);
@@ -284,29 +292,6 @@ export default function TriviaMapScreen() {
         return () => {
             isMounted = false;
             subscription?.remove();
-        };
-    }, []);
-
-    useEffect(() => {
-        if (!userId) return;
-        let cancelled = false;
-
-        const restoreForAuthenticatedUser = async () => {
-            try {
-                // Refetch after an Apple sign-in so archived collectibles owned
-                // by this account are included, then merge both ledgers.
-                const baseSpots = await getTriviaSpots();
-                await TriviaUnlockManager.syncUnlockedRecords();
-                const hydrated = await TriviaUnlockManager.hydrateSpots(baseSpots);
-                if (!cancelled) setTriviaSpots(hydrated);
-            } catch (error) {
-                console.error('Authenticated map unlock recovery failed:', error);
-            }
-        };
-
-        restoreForAuthenticatedUser();
-        return () => {
-            cancelled = true;
         };
     }, [userId]);
 

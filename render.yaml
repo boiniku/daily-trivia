@@ -160,6 +160,8 @@ services:
         sync: false
       - key: LATEST_APP_VERSION
         sync: false
+      - key: LEGACY_GUEST_MERGE_DEADLINE
+        value: "2026-10-31T00:00:00+00:00"
       - key: FIREBASE_SERVICE_ACCOUNT_JSON
         sync: false
 
