@@ -1,6 +1,5 @@
 import { View, Text, StyleSheet, Pressable, Alert, AppState, ScrollView, ActivityIndicator, Linking, Platform, Switch } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import Constants from 'expo-constants';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useEffect, useState } from 'react';
 import { useRouter } from 'expo-router';
@@ -286,7 +285,7 @@ export default function SettingsScreen() {
                     <View style={styles.infoRow}>
                         <Text style={styles.infoLabel}>バージョン</Text>
                         <Text style={styles.infoValue}>
-                            {Constants.expoConfig?.version ?? '-'}
+                            1.1.1
                         </Text>
                     </View>
                     <Pressable style={styles.infoRow} onPress={() => Linking.openURL('https://docs.google.com/document/d/1_K7priRhIk6OSG3c_YQBngnW4uVpTcCOdIEHVN7jFnw/edit?usp=sharing')}>
