@@ -9,6 +9,7 @@ export type TriviaSpot = {
     isUnlocked: boolean;
     unlockedAt: Date | null;
     unlockCount: number;
+    isArchived?: boolean;
     prefecture?: string;
     address?: string;
     category?: string;

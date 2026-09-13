@@ -7,6 +7,16 @@ from models import MapTriviaUnlock
 
 
 def migrate() -> None:
+    map_columns = {
+        column["name"] for column in inspect(engine).get_columns("map_trivia")
+    }
+    if "is_active" not in map_columns:
+        with engine.begin() as connection:
+            connection.execute(text(
+                "ALTER TABLE map_trivia "
+                "ADD COLUMN is_active BOOLEAN NOT NULL DEFAULT TRUE"
+            ))
+
     if "map_trivia_unlocks" not in inspect(engine).get_table_names():
         MapTriviaUnlock.__table__.create(engine)
 
@@ -14,6 +24,33 @@ def migrate() -> None:
         return
 
     with engine.begin() as connection:
+        # A map entry may be archived but must never cascade-delete a
+        # collector's ledger. RESTRICT also catches accidental hard deletes.
+        connection.execute(text("""
+            DO $$
+            DECLARE fk_name text;
+                    delete_action "char";
+            BEGIN
+                SELECT conname, confdeltype INTO fk_name, delete_action
+                FROM pg_constraint
+                WHERE conrelid = 'map_trivia_unlocks'::regclass
+                  AND contype = 'f'
+                  AND pg_get_constraintdef(oid) LIKE '%map_trivia_id%';
+                IF fk_name IS NULL OR delete_action <> 'r' THEN
+                    IF fk_name IS NOT NULL THEN
+                        EXECUTE format(
+                            'ALTER TABLE map_trivia_unlocks DROP CONSTRAINT %I',
+                            fk_name
+                        );
+                    END IF;
+                    ALTER TABLE map_trivia_unlocks
+                        ADD CONSTRAINT map_trivia_unlocks_map_trivia_id_fkey
+                        FOREIGN KEY (map_trivia_id) REFERENCES map_trivia(id)
+                        ON DELETE RESTRICT;
+                END IF;
+            END $$;
+        """))
+
         app_user_exists = connection.execute(text(
             "SELECT 1 FROM pg_roles WHERE rolname = 'app_user'"
         )).scalar()

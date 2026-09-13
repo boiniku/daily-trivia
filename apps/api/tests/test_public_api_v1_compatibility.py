@@ -135,6 +135,24 @@ class PublicApiV1CompatibilityTests(unittest.TestCase):
         finally:
             db.close()
 
+    def test_archived_map_trivia_remains_visible_to_its_collector(self):
+        db = self.session_factory()
+        try:
+            map_trivia = db.query(MapTrivia).one()
+            map_trivia.is_active = False
+            db.add(MapTriviaUnlock(
+                user_id="apple-user",
+                map_trivia_id=map_trivia.id,
+            ))
+            db.commit()
+
+            self.assertEqual(get_map_trivia(db=db, user_id=None), [])
+            collected = get_map_trivia(db=db, user_id="apple-user")
+            self.assertEqual(len(collected), 1)
+            self.assertTrue(collected[0]["isArchived"])
+        finally:
+            db.close()
+
     def test_legacy_trivia_spot_id_is_mapped_without_discarding_it(self):
         db = self.session_factory()
         try:

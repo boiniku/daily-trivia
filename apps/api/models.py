@@ -33,6 +33,7 @@ class MapTrivia(Base):
     map_longitude = Column(Float, nullable=False)
     map_radius = Column(Integer, nullable=False, default=1200)
     map_hint = Column(String, nullable=True)
+    is_active = Column(Boolean, nullable=False, default=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -47,7 +48,7 @@ class MapTriviaUnlock(Base):
     user_id = Column(String, nullable=False, index=True)
     map_trivia_id = Column(
         Integer,
-        ForeignKey("map_trivia.id", ondelete="CASCADE"),
+        ForeignKey("map_trivia.id", ondelete="RESTRICT"),
         nullable=False,
         index=True,
     )

@@ -31,7 +31,7 @@ from services.trivia_candidates import (
     reject_candidate,
     update_candidate,
 )
-from services.map_trivia import create_map_trivia, create_map_trivia_from_candidate
+from services.map_trivia import archive_map_trivia, create_map_trivia, create_map_trivia_from_candidate
 from datetime import datetime
 
 # Load env vars
@@ -466,6 +466,7 @@ def _map_spot_identity(spot: dict) -> tuple:
 def _load_published_trivia_map_spots(db_session: Session) -> list[dict]:
     trivias = (
         db_session.query(MapTrivia)
+        .filter(MapTrivia.is_active.is_(True))
         .order_by(MapTrivia.id.desc())
         .all()
     )
@@ -503,11 +504,7 @@ def _update_trivia_map_spot(db_session: Session, trivia_id: int, values: dict) -
 
 
 def _hide_trivia_map_spot(db_session: Session, trivia_id: int) -> None:
-    trivia = db_session.query(MapTrivia).filter(MapTrivia.id == trivia_id).first()
-    if not trivia:
-        raise ValueError("公開済み雑学が見つかりません。")
-    db_session.delete(trivia)
-    db_session.commit()
+    archive_map_trivia(db_session, trivia_id)
 
 
 def render_trivia_map_admin():

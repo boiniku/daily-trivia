@@ -178,6 +178,7 @@ export const TriviaUnlockManager = {
             const newlyUnlocked: UnlockedTriviaRecord[] = [];
 
             spots.forEach((spot) => {
+                if (spot.isArchived) return;
                 if (records[spot.id]) return;
 
                 const distance = calculateDistanceMeters(userLocation, {

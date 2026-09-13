@@ -11,7 +11,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from database import AppSessionLocal
 from sqlalchemy import text
-from models import TriviaHee, Collection, CollectionItem, DailyAssignment
+from models import TriviaHee, MapTriviaUnlock, Collection, CollectionItem, DailyAssignment
 from auth import get_current_user_id
 
 router = APIRouter()
@@ -56,8 +56,27 @@ def merge_guest_data(request: MergeRequest, auth_user_id: str = Depends(get_curr
             else:
                 # specific update
                 g_hee.user_id = auth_id
+
+        # 2. Merge map unlocks. Preserve the earliest collection timestamp and
+        # never let account linking discard an unlock already owned by either ID.
+        guest_unlocks = db.query(MapTriviaUnlock).filter(
+            MapTriviaUnlock.user_id == guest_id
+        ).all()
+        for guest_unlock in guest_unlocks:
+            auth_unlock = db.query(MapTriviaUnlock).filter(
+                MapTriviaUnlock.user_id == auth_id,
+                MapTriviaUnlock.map_trivia_id == guest_unlock.map_trivia_id,
+            ).first()
+            if auth_unlock:
+                auth_unlock.unlocked_at = min(
+                    auth_unlock.unlocked_at,
+                    guest_unlock.unlocked_at,
+                )
+                db.delete(guest_unlock)
+            else:
+                guest_unlock.user_id = auth_id
         
-        # 2. Merge Collections ("History", "Favorites", Custom)
+        # 3. Merge Collections ("History", "Favorites", Custom)
         # Title normalization map (English -> Japanese)
         TITLE_MAP = {
             "History": "過去に見た雑学",
@@ -104,7 +123,7 @@ def merge_guest_data(request: MergeRequest, auth_user_id: str = Depends(get_curr
                     g_col.title = target_title
                 g_col.user_id = auth_id
 
-        # 3. Merge Daily Assignments
+        # 4. Merge Daily Assignments
         # Just update user_id. If duplicate, we effectively ignore (allow double assignment logic-wise or unique constraint fails)
         # Since standard flow has no unique constraint on DB level for (user, date, trivia), we simple update.
         # But to be clean, let's delete guest assignment if auth already has same assignment.
@@ -121,7 +140,7 @@ def merge_guest_data(request: MergeRequest, auth_user_id: str = Depends(get_curr
             else:
                 g_assign.user_id = auth_id
 
-        # 4. Deduplicate Collections (Fix for Race Condition)
+        # 5. Deduplicate Collections (Fix for Race Condition)
         # If get_collections created defaults while we were merging, we might have duplicates now.
         # Strategy: Group by Title. Keep one, merge items from others, delete others.
         
@@ -184,6 +203,10 @@ def delete_user(user_id: str = Depends(get_current_user_id)):
     from database import SessionLocal
     db = SessionLocal()
     try:
+        db.query(MapTriviaUnlock).filter(
+            MapTriviaUnlock.user_id == user_id
+        ).delete(synchronize_session=False)
+
         # 1. Delete DailyAssignments
         db.query(DailyAssignment).filter(DailyAssignment.user_id == user_id).delete()
 

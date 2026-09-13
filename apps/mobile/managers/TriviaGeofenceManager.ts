@@ -70,7 +70,7 @@ const supportsBackgroundGeofencing = () => {
 const getRegions = async (spots: TriviaSpot[], location: Coordinates): Promise<Location.LocationRegion[]> => {
     const records = await TriviaUnlockManager.getUnlockedRecords();
     const lockedByDistance = spots
-        .filter((spot) => !records[spot.id])
+        .filter((spot) => !spot.isArchived && !records[spot.id])
         .sort((a, b) => boundaryDistance(a, location) - boundaryDistance(b, location));
     const monitoredSpots = lockedByDistance.slice(0, MAX_SPOT_REGIONS);
     const firstExcludedSpot = lockedByDistance[MAX_SPOT_REGIONS];

@@ -3,6 +3,16 @@ from sqlalchemy.orm import Session
 from models import MapTrivia, TriviaCandidate
 
 
+def archive_map_trivia(db: Session, map_trivia_id: int) -> MapTrivia:
+    item = db.query(MapTrivia).filter(MapTrivia.id == map_trivia_id).first()
+    if not item:
+        raise ValueError("公開済み雑学が見つかりません。")
+    item.is_active = False
+    db.commit()
+    db.refresh(item)
+    return item
+
+
 def create_map_trivia(
     db: Session,
     *,

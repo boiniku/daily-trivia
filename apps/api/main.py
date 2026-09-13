@@ -157,6 +157,7 @@ class TriviaMapSpotSchema(BaseModel):
     isUnlocked: bool = False
     unlockedAt: Optional[datetime.datetime] = None
     unlockCount: int = 0
+    isArchived: bool = False
     prefecture: Optional[str] = None
     address: Optional[str] = None
     category: Optional[str] = None
@@ -195,12 +196,32 @@ def get_app_version():
     response_model=List[TriviaMapSpotSchema],
     response_model_exclude_unset=True,
 )
-def get_map_trivia(db: Session = Depends(get_db), request: Request = None):
+def get_map_trivia(
+    db: Session = Depends(get_db),
+    request: Request = None,
+    user_id: Optional[str] = Depends(get_optional_user_id),
+):
+    resolved_user_id = user_id if isinstance(user_id, str) and user_id else None
+    visibility_filter = MapTrivia.is_active.is_(True)
+    if resolved_user_id:
+        unlocked_spot_ids = db.query(MapTriviaUnlock.map_trivia_id).filter(
+            MapTriviaUnlock.user_id == resolved_user_id
+        )
+        visibility_filter = or_(
+            visibility_filter,
+            MapTrivia.id.in_(unlocked_spot_ids),
+        )
+
     # 1.1.0 predates aggregate unlock counts. Keep its read path byte-for-byte
     # compatible with the pre-count endpoint while the recovery build rolls out.
     # Unlock state in that release is local and keyed by the IDs returned here.
     if request is not None and request.headers.get("X-Daily-Trivia-App-Version") == "1.1.0":
-        items = db.query(MapTrivia).order_by(MapTrivia.id.desc()).all()
+        items = (
+            db.query(MapTrivia)
+            .filter(visibility_filter)
+            .order_by(MapTrivia.id.desc())
+            .all()
+        )
         return [
             {
                 "id": f"map_{item.id}",
@@ -227,6 +248,7 @@ def get_map_trivia(db: Session = Depends(get_db), request: Request = None):
     items = (
         db.query(MapTrivia, func.coalesce(unlock_counts.c.unlock_count, 0))
         .outerjoin(unlock_counts, MapTrivia.id == unlock_counts.c.map_trivia_id)
+        .filter(visibility_filter)
         .order_by(MapTrivia.id.desc())
         .all()
     )
@@ -242,6 +264,7 @@ def get_map_trivia(db: Session = Depends(get_db), request: Request = None):
             "isUnlocked": False,
             "unlockedAt": None,
             "unlockCount": int(unlock_count or 0),
+            "isArchived": not bool(item.is_active),
             "prefecture": item.map_prefecture,
             "address": item.map_address,
             "category": item.category,

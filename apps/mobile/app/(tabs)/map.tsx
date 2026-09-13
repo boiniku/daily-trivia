@@ -19,6 +19,7 @@ import {
 } from '../../constants/Layout';
 import { Config } from '../../constants/Config';
 import { useRevenueCat } from '../../contexts/RevenueCatContext';
+import { useAuth } from '../../contexts/AuthContext';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { AdEventType, BannerAd, BannerAdSize, InterstitialAd, TestIds } from 'react-native-google-mobile-ads';
 
@@ -87,6 +88,7 @@ export default function TriviaMapScreen() {
     const pendingCollectionSpotRef = useRef<TriviaSpot | null>(null);
     const isHandlingCollectionPressRef = useRef(false);
     const { isPro } = useRevenueCat();
+    const { userId } = useAuth();
     const [spots, setSpots] = useState<TriviaSpot[]>([]);
     const [selectedSpotId, setSelectedSpotId] = useState<string | null>(null);
     const [userLocation, setUserLocation] = useState<Coordinates | null>(null);
@@ -108,10 +110,14 @@ export default function TriviaMapScreen() {
         [selectedSpotId, spots]
     );
 
-    const unlockedCount = spots.filter((spot) => spot.isUnlocked).length;
+    const activeSpots = useMemo(
+        () => spots.filter((spot) => !spot.isArchived),
+        [spots]
+    );
+    const unlockedCount = activeSpots.filter((spot) => spot.isUnlocked).length;
     const availablePrefectures = useMemo(() => {
-        return new Set(spots.flatMap((spot) => getPrefecturesFromLabel(spot.prefecture)));
-    }, [spots]);
+        return new Set(activeSpots.flatMap((spot) => getPrefecturesFromLabel(spot.prefecture)));
+    }, [activeSpots]);
 
     const activeRegion = useMemo(
         () => JAPAN_REGIONS.find((region) => region.id === selectedRegion) ?? null,
@@ -124,7 +130,7 @@ export default function TriviaMapScreen() {
     );
 
     const filteredSpots = useMemo(() => {
-        return spots.filter((spot) => {
+        return activeSpots.filter((spot) => {
             const spotPrefectures = getPrefecturesFromLabel(spot.prefecture);
             if (selectedPrefecture !== 'すべて') {
                 if (!spotPrefectures.includes(selectedPrefecture)) return false;
@@ -137,7 +143,7 @@ export default function TriviaMapScreen() {
             }
             return true;
         });
-    }, [activeRegion, nearbyOnly, selectedPrefecture, spots, userLocation]);
+    }, [activeRegion, activeSpots, nearbyOnly, selectedPrefecture, userLocation]);
 
     const visibleSpotIds = useMemo(
         () => new Set(filteredSpots.map((spot) => spot.id)),
@@ -146,7 +152,7 @@ export default function TriviaMapScreen() {
 
     const prefectureSummaries = useMemo<PrefectureSummary[]>(() => {
         const grouped = new Map<string, TriviaSpot[]>();
-        spots.forEach((spot) => {
+        activeSpots.forEach((spot) => {
             getPrefecturesFromLabel(spot.prefecture).forEach((prefecture) => {
                 const prefectureSpots = grouped.get(prefecture) ?? [];
                 prefectureSpots.push(spot);
@@ -160,7 +166,7 @@ export default function TriviaMapScreen() {
             longitude: prefectureSpots.reduce((sum, spot) => sum + spot.longitude, 0) / prefectureSpots.length,
             spots: prefectureSpots,
         }));
-    }, [spots]);
+    }, [activeSpots]);
 
     const showPrefecturePins = mapLatitudeDelta >= PREFECTURE_CLUSTER_LATITUDE_DELTA;
 
@@ -172,10 +178,23 @@ export default function TriviaMapScreen() {
     const selectedCircleRadius = selectedSpot ? Math.max(1, selectedSpot.unlockRadiusMeters) : 1;
 
     const collectionSpots = useMemo(
-        () => filteredSpots
-            .filter((spot) => spot.isUnlocked)
+        () => spots
+            .filter((spot) => {
+                if (!spot.isUnlocked) return false;
+                const spotPrefectures = getPrefecturesFromLabel(spot.prefecture);
+                if (selectedPrefecture !== 'すべて') {
+                    if (!spotPrefectures.includes(selectedPrefecture)) return false;
+                } else if (activeRegion && !spotPrefectures.some((prefecture) => activeRegion.prefectures.includes(prefecture))) {
+                    return false;
+                }
+                if (nearbyOnly) {
+                    const distance = getSpotDistance(spot, userLocation);
+                    return distance != null && distance <= 5000;
+                }
+                return true;
+            })
             .sort((a, b) => (b.unlockedAt?.getTime() ?? 0) - (a.unlockedAt?.getTime() ?? 0)),
-        [filteredSpots]
+        [activeRegion, nearbyOnly, selectedPrefecture, spots, userLocation]
     );
     const isCollectionFiltered = selectedRegion !== 'all' || selectedPrefecture !== 'すべて' || nearbyOnly;
 
@@ -267,6 +286,29 @@ export default function TriviaMapScreen() {
             subscription?.remove();
         };
     }, []);
+
+    useEffect(() => {
+        if (!userId) return;
+        let cancelled = false;
+
+        const restoreForAuthenticatedUser = async () => {
+            try {
+                // Refetch after an Apple sign-in so archived collectibles owned
+                // by this account are included, then merge both ledgers.
+                const baseSpots = await getTriviaSpots();
+                await TriviaUnlockManager.syncUnlockedRecords();
+                const hydrated = await TriviaUnlockManager.hydrateSpots(baseSpots);
+                if (!cancelled) setTriviaSpots(hydrated);
+            } catch (error) {
+                console.error('Authenticated map unlock recovery failed:', error);
+            }
+        };
+
+        restoreForAuthenticatedUser();
+        return () => {
+            cancelled = true;
+        };
+    }, [userId]);
 
     useEffect(() => {
         if (!isMapReady || !userLocation || hasCenteredOnUserRef.current) return;
@@ -648,7 +690,7 @@ export default function TriviaMapScreen() {
             <View style={styles.header}>
                 <View>
                     <Text style={styles.headerTitle}>雑学MAP</Text>
-                    <Text style={styles.headerSubTitle}>{unlockedCount}/{spots.length} 解放済み</Text>
+                    <Text style={styles.headerSubTitle}>{unlockedCount}/{activeSpots.length} 解放済み</Text>
                 </View>
                 <View style={styles.segmentedControl}>
                     <Pressable
@@ -858,7 +900,7 @@ export default function TriviaMapScreen() {
                                 <View style={styles.collectionTextBlock}>
                                     <Text style={styles.collectionTitle}>{spot.title}</Text>
                                     <Text style={styles.collectionMeta}>
-                                        {`${spot.prefecture ?? ''} / ${formatUnlockedDate(spot.unlockedAt)} 解放 / ${formatUnlockCount(spot.unlockCount)}`}
+                                        {`${spot.prefecture ?? ''} / ${formatUnlockedDate(spot.unlockedAt)} 解放 / ${formatUnlockCount(spot.unlockCount)}${spot.isArchived ? ' / 配信終了' : ''}`}
                                     </Text>
                                     <Text style={styles.collectionSnippet} numberOfLines={2}>{spot.description}</Text>
                                 </View>
