@@ -36,6 +36,23 @@ class MapTrivia(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
+
+class MapTriviaUnlock(Base):
+    __tablename__ = "map_trivia_unlocks"
+    __table_args__ = (
+        UniqueConstraint("user_id", "map_trivia_id", name="uq_map_trivia_unlock_user_spot"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(String, nullable=False, index=True)
+    map_trivia_id = Column(
+        Integer,
+        ForeignKey("map_trivia.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    unlocked_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
 class Collection(Base):
     __tablename__ = "collections"
 

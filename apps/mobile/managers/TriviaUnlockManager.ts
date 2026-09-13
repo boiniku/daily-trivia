@@ -1,8 +1,11 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Coordinates, TriviaSpot, UnlockedTriviaRecord } from '../models/TriviaSpot';
+import { getBackendUrl } from '../constants/Config';
+import { fetchWithToken } from '../utils/apiClient';
 
 const STORAGE_KEY = 'triviaMapUnlockedRecords';
 let unlockQueue: Promise<unknown> = Promise.resolve();
+const syncedUnlockCounts: Record<string, number> = {};
 
 const runWithUnlockLock = async <T>(operation: () => Promise<T>): Promise<T> => {
     const previous = unlockQueue;
@@ -52,9 +55,32 @@ const writeRecords = async (records: Record<string, UnlockedTriviaRecord>) => {
     await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(records));
 };
 
+const syncRecords = async (records: UnlockedTriviaRecord[]) => {
+    if (records.length === 0) return;
+    try {
+        const response = await fetchWithToken(`${getBackendUrl()}/trivia/map/unlocks`, {
+            method: 'POST',
+            body: JSON.stringify({ spot_ids: records.map((record) => record.id) }),
+        });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const payload = await response.json() as { unlockCounts?: Record<string, number> };
+        Object.entries(payload.unlockCounts ?? {}).forEach(([spotId, count]) => {
+            if (Number.isFinite(count)) syncedUnlockCounts[spotId] = count;
+        });
+    } catch (error) {
+        // The local unlock remains authoritative and is retried on the next map load.
+        console.warn('Map trivia unlock sync failed:', error);
+    }
+};
+
 export const TriviaUnlockManager = {
     async getUnlockedRecords() {
         return readRecords();
+    },
+
+    async syncUnlockedRecords() {
+        const records = Object.values(await readRecords());
+        await syncRecords(records);
     },
 
     async hydrateSpots(spots: TriviaSpot[]) {
@@ -64,6 +90,7 @@ export const TriviaUnlockManager = {
             const record = records[spot.id];
             return {
                 ...spot,
+                unlockCount: syncedUnlockCounts[spot.id] ?? spot.unlockCount ?? 0,
                 isUnlocked: Boolean(record),
                 unlockedAt: record ? new Date(record.unlockedAt) : null,
             };
@@ -81,6 +108,7 @@ export const TriviaUnlockManager = {
             };
             records[spot.id] = record;
             await writeRecords(records);
+            await syncRecords([record]);
 
             return record;
         });
@@ -111,6 +139,7 @@ export const TriviaUnlockManager = {
 
             if (newlyUnlocked.length > 0) {
                 await writeRecords(records);
+                await syncRecords(newlyUnlocked);
             }
 
             return newlyUnlocked;

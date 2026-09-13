@@ -8,6 +8,7 @@ export type TriviaSpot = {
     unlockRadiusMeters: number;
     isUnlocked: boolean;
     unlockedAt: Date | null;
+    unlockCount: number;
     prefecture?: string;
     address?: string;
     category?: string;

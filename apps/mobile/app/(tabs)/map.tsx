@@ -61,6 +61,8 @@ const formatUnlockedDate = (date: Date | null) => {
     return `${date.getFullYear()}/${date.getMonth() + 1}/${date.getDate()}`;
 };
 
+const formatUnlockCount = (count: number) => `解放した人：${count.toLocaleString('ja-JP')}人`;
+
 const getSpotDistance = (spot: TriviaSpot, userLocation: Coordinates | null) => {
     if (!userLocation) return undefined;
     return calculateDistanceMeters(userLocation, {
@@ -218,6 +220,7 @@ export default function TriviaMapScreen() {
         const initialize = async () => {
             try {
                 const baseSpots = await getTriviaSpots();
+                await TriviaUnlockManager.syncUnlockedRecords();
                 const hydrated = await TriviaUnlockManager.hydrateSpots(baseSpots);
                 if (!isMounted) return;
 
@@ -536,6 +539,7 @@ export default function TriviaMapScreen() {
                         </View>
                     </View>
                     <Text style={styles.distanceText}>{formatDistance(distance)}</Text>
+                    <Text style={styles.unlockCountText}>{formatUnlockCount(selectedSpot.unlockCount)}</Text>
                     <Text style={canRead ? styles.previewDescription : styles.previewLockedText} numberOfLines={3}>
                         {bodyText}
                     </Text>
@@ -590,6 +594,11 @@ export default function TriviaMapScreen() {
                             <Text style={styles.unlockRadiusText}>
                                 {`解放範囲: 半径${Math.round(selectedSpot.unlockRadiusMeters)}m`}
                             </Text>
+                        </View>
+
+                        <View style={styles.unlockCountBox}>
+                            <Ionicons name="people" size={18} color={Colors.light.primary} />
+                            <Text style={styles.unlockCountBoxText}>{formatUnlockCount(selectedSpot.unlockCount)}</Text>
                         </View>
 
                         {canRead ? (
@@ -849,7 +858,7 @@ export default function TriviaMapScreen() {
                                 <View style={styles.collectionTextBlock}>
                                     <Text style={styles.collectionTitle}>{spot.title}</Text>
                                     <Text style={styles.collectionMeta}>
-                                        {`${spot.prefecture ?? ''} / ${formatUnlockedDate(spot.unlockedAt)} 解放`}
+                                        {`${spot.prefecture ?? ''} / ${formatUnlockedDate(spot.unlockedAt)} 解放 / ${formatUnlockCount(spot.unlockCount)}`}
                                     </Text>
                                     <Text style={styles.collectionSnippet} numberOfLines={2}>{spot.description}</Text>
                                 </View>
@@ -1187,6 +1196,12 @@ const styles = StyleSheet.create({
         fontWeight: '800',
         color: Colors.light.secondary,
     },
+    unlockCountText: {
+        marginTop: 6,
+        fontSize: 13,
+        fontWeight: '800',
+        color: Colors.light.subtext,
+    },
     previewDescription: {
         marginTop: 10,
         fontSize: 14,
@@ -1232,6 +1247,21 @@ const styles = StyleSheet.create({
         fontSize: 13,
         fontWeight: '800',
         color: Colors.light.text,
+    },
+    unlockCountBox: {
+        marginTop: 10,
+        paddingHorizontal: 12,
+        paddingVertical: 10,
+        borderRadius: 18,
+        backgroundColor: '#FFF1F2',
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 8,
+    },
+    unlockCountBoxText: {
+        fontSize: 14,
+        fontWeight: '900',
+        color: Colors.light.primary,
     },
     description: {
         marginTop: 8,

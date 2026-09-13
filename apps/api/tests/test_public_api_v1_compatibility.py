@@ -5,8 +5,8 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from main import get_app_version, get_map_trivia, get_todays_trivia, health_check
-from models import Base, MapTrivia, Trivia
+from main import MapTriviaUnlockRequest, get_app_version, get_map_trivia, get_todays_trivia, health_check, record_map_trivia_unlocks
+from models import Base, MapTrivia, MapTriviaUnlock, Trivia
 
 
 class PublicApiV1CompatibilityTests(unittest.TestCase):
@@ -82,6 +82,24 @@ class PublicApiV1CompatibilityTests(unittest.TestCase):
             }.issubset(payload)
         )
         self.assertTrue(payload["id"].startswith("map_"))
+        self.assertEqual(payload["unlockCount"], 0)
+
+    def test_map_unlock_count_is_idempotent_per_user(self):
+        db = self.session_factory()
+        try:
+            spot_id = f"map_{db.query(MapTrivia.id).scalar()}"
+            request = MapTriviaUnlockRequest(spot_ids=[spot_id, spot_id])
+            first = record_map_trivia_unlocks(request, user_id="user-a", db=db)
+            second = record_map_trivia_unlocks(request, user_id="user-a", db=db)
+            third = record_map_trivia_unlocks(request, user_id="user-b", db=db)
+
+            self.assertEqual(first["unlockCounts"][spot_id], 1)
+            self.assertEqual(second["unlockCounts"][spot_id], 1)
+            self.assertEqual(third["unlockCounts"][spot_id], 2)
+            self.assertEqual(db.query(MapTriviaUnlock).count(), 2)
+            self.assertEqual(get_map_trivia(db=db)[0]["unlockCount"], 2)
+        finally:
+            db.close()
 
     def test_today_contract_still_accepts_anonymous_legacy_request(self):
         with patch("main.AppSessionLocal", self.session_factory):

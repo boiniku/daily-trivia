@@ -3,8 +3,9 @@ from fastapi import FastAPI, Depends, HTTPException, status, Request, Query
 from typing import List, Optional
 from sqlalchemy.orm import Session
 from sqlalchemy import text, and_, case, func, or_
+from sqlalchemy.exc import IntegrityError
 from database import get_db, AppSessionLocal
-from models import Trivia, MapTrivia, Collection, CollectionItem, DailyAssignment, TriviaHee
+from models import Trivia, MapTrivia, MapTriviaUnlock, Collection, CollectionItem, DailyAssignment, TriviaHee
 import random
 import datetime
 import os
@@ -46,6 +47,8 @@ def ensure_admin_schema():
     migrate()
     from scripts.migrations.migrate_social_content_lanes import migrate as migrate_social_lanes
     migrate_social_lanes()
+    from scripts.migrations.migrate_map_trivia_unlocks import migrate as migrate_map_unlocks
+    migrate_map_unlocks()
 
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -153,6 +156,7 @@ class TriviaMapSpotSchema(BaseModel):
     unlockRadiusMeters: int
     isUnlocked: bool = False
     unlockedAt: Optional[datetime.datetime] = None
+    unlockCount: int = 0
     prefecture: Optional[str] = None
     address: Optional[str] = None
     category: Optional[str] = None
@@ -188,8 +192,13 @@ def get_app_version():
 
 @app.get("/trivia/map", response_model=List[TriviaMapSpotSchema])
 def get_map_trivia(db: Session = Depends(get_db)):
+    unlock_counts = db.query(
+        MapTriviaUnlock.map_trivia_id.label("map_trivia_id"),
+        func.count(MapTriviaUnlock.id).label("unlock_count"),
+    ).group_by(MapTriviaUnlock.map_trivia_id).subquery()
     items = (
-        db.query(MapTrivia)
+        db.query(MapTrivia, func.coalesce(unlock_counts.c.unlock_count, 0))
+        .outerjoin(unlock_counts, MapTrivia.id == unlock_counts.c.map_trivia_id)
         .order_by(MapTrivia.id.desc())
         .all()
     )
@@ -204,13 +213,73 @@ def get_map_trivia(db: Session = Depends(get_db)):
             "unlockRadiusMeters": int(item.map_radius or 1200),
             "isUnlocked": False,
             "unlockedAt": None,
+            "unlockCount": int(unlock_count or 0),
             "prefecture": item.map_prefecture,
             "address": item.map_address,
             "category": item.category,
             "hint": item.map_hint or "",
         }
-        for item in items
+        for item, unlock_count in items
     ]
+
+
+class MapTriviaUnlockRequest(BaseModel):
+    spot_ids: List[str]
+
+
+class MapTriviaUnlockResponse(BaseModel):
+    unlockCounts: dict[str, int]
+
+
+@app.post("/trivia/map/unlocks", response_model=MapTriviaUnlockResponse)
+def record_map_trivia_unlocks(
+    request: MapTriviaUnlockRequest,
+    user_id: str = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    """Idempotently record this user's locally verified map unlocks."""
+    numeric_ids = {
+        int(spot_id[4:])
+        for spot_id in request.spot_ids[:1000]
+        if spot_id.startswith("map_") and spot_id[4:].isdigit()
+    }
+    if not numeric_ids:
+        return {"unlockCounts": {}}
+
+    existing_ids = {
+        row[0]
+        for row in db.query(MapTriviaUnlock.map_trivia_id).filter(
+            MapTriviaUnlock.user_id == user_id,
+            MapTriviaUnlock.map_trivia_id.in_(numeric_ids),
+        ).all()
+    }
+    valid_ids = {
+        row[0]
+        for row in db.query(MapTrivia.id).filter(MapTrivia.id.in_(numeric_ids)).all()
+    }
+    for map_trivia_id in valid_ids - existing_ids:
+        try:
+            with db.begin_nested():
+                db.add(MapTriviaUnlock(user_id=user_id, map_trivia_id=map_trivia_id))
+                db.flush()
+        except IntegrityError:
+            # Foreground and geofence callbacks can report the same first unlock
+            # concurrently. The unique constraint makes that safe and idempotent.
+            pass
+    db.commit()
+
+    counts = dict(db.query(
+        MapTriviaUnlock.map_trivia_id,
+        func.count(MapTriviaUnlock.id),
+    ).filter(
+        MapTriviaUnlock.map_trivia_id.in_(valid_ids),
+    ).group_by(MapTriviaUnlock.map_trivia_id).all())
+    return {
+        "unlockCounts": {
+            f"map_{map_trivia_id}": int(counts.get(map_trivia_id, 0))
+            for map_trivia_id in valid_ids
+        }
+    }
 
 @app.get("/trivia/today", response_model=List[TriviaSchema])
 def get_todays_trivia(
