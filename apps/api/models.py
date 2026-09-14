@@ -3,6 +3,15 @@ from sqlalchemy.orm import relationship
 from datetime import datetime
 from database import Base
 
+class AccountLifecycle(Base):
+    __tablename__ = "account_lifecycle"
+
+    user_id = Column(String, primary_key=True)
+    status = Column(String, nullable=False, default="active")
+    merge_apple_subject = Column(String, nullable=True, index=True)
+    merged_into = Column(String, nullable=True)
+
+
 class Trivia(Base):
     __tablename__ = "trivia"
 

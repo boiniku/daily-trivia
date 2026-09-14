@@ -9,7 +9,7 @@ from models import Trivia, MapTrivia, MapTriviaUnlock, Collection, CollectionIte
 import random
 import datetime
 import os
-from auth import get_current_user_id, get_optional_user_id  # Added for token verification
+from auth import get_current_user_id, get_optional_user_id, require_admin
 from fastapi.responses import JSONResponse
 import firebase_admin
 
@@ -49,6 +49,8 @@ def ensure_admin_schema():
     migrate_social_lanes()
     from scripts.migrations.migrate_map_trivia_unlocks import migrate as migrate_map_unlocks
     migrate_map_unlocks()
+    from scripts.migrations.migrate_account_lifecycle import migrate as migrate_accounts
+    migrate_accounts()
 
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -176,6 +178,8 @@ def health_check():
         "api_version": API_VERSION,
         "capabilities": [
             "map_unlock_backup_v2",
+            "durable_apple_merge_v1",
+            "account_deletion_barrier_v1",
             "verified_guest_merge",
             "archived_map_collectibles",
         ],
@@ -303,6 +307,8 @@ def record_map_trivia_unlocks(
     db: Session = Depends(get_db),
 ):
     """Idempotently record this user's locally verified map unlocks."""
+    from services.account_lifecycle import require_active_account
+    require_active_account(db, user_id)
     requested_records = request.records[:1000]
     requested_spot_ids = list(dict.fromkeys([
         *request.spot_ids,
@@ -367,6 +373,10 @@ def record_map_trivia_unlocks(
             for item in candidate_maps:
                 maps_by_identity.setdefault((item.title, item.content), []).append(item.id)
             for identity, trivia_id in legacy_by_identity.items():
+                # A durable ID is authoritative even after text edits. Never
+                # redirect an existing collectible to a later same-text spot.
+                if f"trivia_{trivia_id}" in spot_id_aliases:
+                    continue
                 matches = maps_by_identity.get(identity, [])
                 if len(matches) == 1:
                     map_trivia_id = matches[0]
@@ -897,6 +907,9 @@ def get_collections(user_id: str = Depends(get_current_user_id)):
                             item.collection_id = master.id
                         else:
                             db.delete(item)
+                    # Persist item moves before SQLAlchemy cleans up the old
+                    # folder relationship; autoflush is disabled in production.
+                    db.flush()
                     db.delete(dup)
         
         if has_duplicates:
@@ -1271,7 +1284,8 @@ def get_hee_status(trivia_id: int, user_id: str = Depends(get_current_user_id)):
 # --- Cleanup Endpoint ---
 @app.delete("/admin/cleanup-assignments")
 def cleanup_old_assignments(
-    days: int = 30,
+    days: int = Query(default=30, ge=1, le=36500),
+    admin_id: str = Depends(require_admin),
 ):
     """
     Delete DailyAssignments older than N days to prevent table bloat.

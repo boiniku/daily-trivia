@@ -62,7 +62,7 @@ def verify_token(credentials: HTTPAuthorizationCredentials = Depends(security)):
     try:
         if not token:
             logger.warning("Empty token provided.")
-        decoded_token = auth.verify_id_token(token)
+        decoded_token = auth.verify_id_token(token, check_revoked=True)
         return decoded_token
     except Exception as e:
         logger.error(f"Token verification failed: {e}")
@@ -84,6 +84,35 @@ def get_current_user_id(decoded_token: dict = Depends(verify_token)) -> str:
         )
     return uid
 
+
+def require_admin(decoded_token: dict = Depends(verify_token)) -> str:
+    if decoded_token.get("admin") is not True:
+        raise HTTPException(status_code=403, detail="Administrator access required")
+    return get_current_user_id(decoded_token)
+
+
+def get_deletion_user_id(credentials: HTTPAuthorizationCredentials = Depends(security)) -> str:
+    """Allow an idempotent deletion retry after Firebase deleted the identity.
+
+    A revoked token can ONLY finish a deletion already recorded in our database;
+    it cannot start a new deletion or access any other endpoint.
+    """
+    try:
+        return get_current_user_id(verify_token(credentials))
+    except HTTPException as original:
+        try:
+            claims = auth.verify_id_token(credentials.credentials, check_revoked=False)
+            uid = claims.get('uid')
+            from database import SessionLocal
+            from models import AccountLifecycle
+            with SessionLocal() as db:
+                state = db.get(AccountLifecycle, uid) if uid else None
+                if state and state.status == 'deleted':
+                    return uid
+        except Exception:
+            pass
+        raise original
+
 from fastapi import Request
 from typing import Optional as OptionalType
 
@@ -99,7 +128,7 @@ def get_optional_user_id(request: Request) -> OptionalType[str]:
     if not token:
         return None
     try:
-        decoded_token = auth.verify_id_token(token)
+        decoded_token = auth.verify_id_token(token, check_revoked=True)
         return decoded_token.get("uid")
     except Exception:
         return None

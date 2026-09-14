@@ -1,7 +1,7 @@
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 import sys
 import os
 import datetime
@@ -13,8 +13,9 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from database import AppSessionLocal
 from sqlalchemy import text
-from models import TriviaHee, MapTriviaUnlock, Collection, CollectionItem, DailyAssignment
-from auth import get_current_user_id
+from models import AccountLifecycle, TriviaHee, MapTriviaUnlock, Collection, CollectionItem, DailyAssignment
+from auth import get_current_user_id, get_deletion_user_id, verify_token
+from services.account_lifecycle import lock_accounts, require_active_account
 
 router = APIRouter()
 
@@ -25,13 +26,59 @@ class LegacyMergeRequest(BaseModel):
     guest_user_id: str
 
 
+class PrepareMergeRequest(BaseModel):
+    apple_subject: str = Field(min_length=1, max_length=255)
+
+
+def apple_subject_for(user_id):
+    try:
+        account = firebase_auth.get_user(user_id)
+    except Exception:
+        raise HTTPException(status_code=503, detail="Unable to verify Apple account")
+    for provider in account.provider_data:
+        if provider.provider_id == "apple.com":
+            return provider.uid
+    raise HTTPException(status_code=403, detail="An Apple-linked destination is required")
+
+
+@router.post("/auth/merge/prepare")
+def prepare_guest_merge(request: PrepareMergeRequest, claims: dict = Depends(verify_token)):
+    """Persist source consent before auth switches; no saved bearer credentials."""
+    guest_id = claims.get("uid")
+    if not guest_id or (claims.get("firebase") or {}).get("sign_in_provider") != "anonymous":
+        raise HTTPException(status_code=403, detail="Anonymous source authentication required")
+    from database import SessionLocal
+    with SessionLocal() as db:
+        state = require_active_account(db, guest_id)
+        if state is None:
+            state = AccountLifecycle(user_id=guest_id, status="active")
+            db.add(state)
+        state.merge_apple_subject = request.apple_subject
+        db.commit()
+    return {"prepared": True}
+
+
+@router.post("/auth/merge/pending")
+def finish_pending_merges(auth_user_id: str = Depends(get_current_user_id)):
+    subject = apple_subject_for(auth_user_id)
+    from database import SessionLocal
+    with SessionLocal() as db:
+        source_ids = [row.user_id for row in db.query(AccountLifecycle).filter(
+            AccountLifecycle.merge_apple_subject == subject,
+            AccountLifecycle.status.in_(["active", "merged"]),
+        ).all() if row.user_id != auth_user_id and row.merged_into in (None, auth_user_id)]
+    for guest_id in source_ids:
+        _merge_guest_data(guest_id, auth_user_id, expected_apple_subject=subject)
+    return {"merged_guest_ids": source_ids}
+
+
 @router.post("/auth/merge/verified")
 def merge_verified_guest_data(request: MergeRequest, auth_user_id: str = Depends(get_current_user_id)):
     """
     Merge guest data into authenticated user account.
     """
     try:
-        guest_claims = firebase_auth.verify_id_token(request.guest_id_token)
+        guest_claims = firebase_auth.verify_id_token(request.guest_id_token, check_revoked=True)
     except Exception:
         raise HTTPException(status_code=401, detail="Invalid guest authentication token")
 
@@ -42,6 +89,7 @@ def merge_verified_guest_data(request: MergeRequest, auth_user_id: str = Depends
             status_code=400,
             detail="The merge token must belong to an anonymous Firebase user",
         )
+    apple_subject_for(auth_user_id)
     return _merge_guest_data(guest_id, auth_user_id)
 
 
@@ -50,23 +98,11 @@ def merge_legacy_guest_data(
     request: LegacyMergeRequest,
     auth_user_id: str = Depends(get_current_user_id),
 ):
-    """Temporary compatibility path for 1.1.0; automatically expires."""
-    deadline_text = os.getenv(
-        "LEGACY_GUEST_MERGE_DEADLINE",
-        "2026-10-31T00:00:00+00:00",
-    )
-    try:
-        deadline = datetime.datetime.fromisoformat(deadline_text)
-        if deadline.tzinfo is None:
-            deadline = deadline.replace(tzinfo=datetime.timezone.utc)
-    except ValueError:
-        raise HTTPException(status_code=500, detail="Invalid legacy merge deadline")
-    if datetime.datetime.now(datetime.timezone.utc) >= deadline:
-        raise HTTPException(status_code=410, detail="Legacy guest merge has expired; update the app")
-    return _merge_guest_data(request.guest_user_id, auth_user_id)
+    # A UID is not proof of ownership. Leave all source records intact.
+    raise HTTPException(status_code=410, detail="Verified migration required; update the app")
 
 
-def _merge_guest_data(guest_id: str, auth_id: str):
+def _merge_guest_data(guest_id: str, auth_id: str, expected_apple_subject=None):
     
     if not guest_id or not auth_id:
         raise HTTPException(status_code=400, detail="Both guest and authenticated user IDs are required")
@@ -78,6 +114,18 @@ def _merge_guest_data(guest_id: str, auth_id: str):
     from database import SessionLocal
     db = SessionLocal()
     try:
+        lock_accounts(db, guest_id, auth_id)
+        require_active_account(db, auth_id)
+        state = db.get(AccountLifecycle, guest_id)
+        if expected_apple_subject and (not state or state.merge_apple_subject != expected_apple_subject):
+            raise HTTPException(status_code=403, detail="Migration destination does not match")
+        if state and state.status != "active":
+            if state.status == "merged" and state.merged_into == auth_id:
+                return {"message": "Merge successful"}
+            raise HTTPException(status_code=409, detail="Source account is no longer transferable")
+        if state is None:
+            state = AccountLifecycle(user_id=guest_id, status="active")
+            db.add(state)
         # 1. Merge TriviaHee (Hees)
         # Get all guest hees
         guest_hees = db.query(TriviaHee).filter(TriviaHee.user_id == guest_id).all()
@@ -155,6 +203,8 @@ def _merge_guest_data(guest_id: str, auth_id: str):
                         # Duplicate, delete guest item
                         db.delete(g_item)
                 
+                # Flush moves before relationship cleanup (production autoflush=False).
+                db.flush()
                 # Delete guest collection after merging items
                 db.delete(g_col)
             else:
@@ -219,21 +269,27 @@ def _merge_guest_data(guest_id: str, auth_id: str):
                         else:
                             db.delete(item)
                     
+                    db.flush()
                     # Delete duplicate collection
                     db.delete(dup)
 
+        db.flush()
+        state.status = "merged"
+        state.merged_into = auth_id
         db.commit()
         return {"message": "Merge successful"}
 
     except Exception as e:
         db.rollback()
+        if isinstance(e, HTTPException):
+            raise
         print(f"Merge error: {e}")
         raise HTTPException(status_code=500, detail=f"Merge failed: {str(e)}")
     finally:
         db.close()
 
 @router.delete("/auth/user")
-def delete_user(user_id: str = Depends(get_current_user_id)):
+def delete_user(user_id: str = Depends(get_deletion_user_id)):
     """
     Delete all data associated with a user.
     """
@@ -244,6 +300,14 @@ def delete_user(user_id: str = Depends(get_current_user_id)):
     from database import SessionLocal
     db = SessionLocal()
     try:
+        lock_accounts(db, user_id)
+        state = db.get(AccountLifecycle, user_id)
+        if state is None:
+            state = AccountLifecycle(user_id=user_id, status="deleted")
+            db.add(state)
+        state.status = "deleted"
+        state.merge_apple_subject = None
+        db.flush()
         db.query(MapTriviaUnlock).filter(
             MapTriviaUnlock.user_id == user_id
         ).delete(synchronize_session=False)
@@ -261,6 +325,11 @@ def delete_user(user_id: str = Depends(get_current_user_id)):
             db.delete(col)
 
         db.commit()
+        # Tombstone blocks late writes even if Firebase is temporarily unavailable.
+        try:
+            firebase_auth.delete_user(user_id)
+        except firebase_auth.UserNotFoundError:
+            pass
         return {"message": "User data deleted successfully"}
 
     except Exception as e:
