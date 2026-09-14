@@ -1,6 +1,8 @@
 const API = 'https://daily-trivia-e7ge.onrender.com';
 const REQUIRED_CAPABILITIES = [
   'map_unlock_backup_v2',
+  'durable_apple_merge_v1',
+  'account_deletion_barrier_v1',
   'verified_guest_merge',
   'archived_map_collectibles',
 ];

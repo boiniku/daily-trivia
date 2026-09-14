@@ -4,7 +4,6 @@ import {
     AppleAuthProvider,
     FirebaseAuthTypes,
     getAuth,
-    getIdToken,
     onAuthStateChanged,
     signInAnonymously,
     signInWithCredential,
@@ -13,11 +12,12 @@ import {
 import * as AppleAuthentication from 'expo-apple-authentication';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Crypto from 'expo-crypto';
-import { Alert } from 'react-native';
+import { Alert, AppState } from 'react-native';
 import { Config } from '../constants/Config';
-import { useRevenueCat } from './RevenueCatContext';
 import { fetchWithToken } from '../utils/apiClient';
 import { TriviaUnlockManager } from '../managers/TriviaUnlockManager';
+import { prepareAppleMigration, finishAppleMigration } from '../managers/AccountMigration';
+import { authorizeAppleDeletion } from '../managers/appleAccountDeletion';
 
 interface AuthContextType {
     user: FirebaseAuthTypes.User | null;
@@ -49,7 +49,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const [user, setUser] = useState<FirebaseAuthTypes.User | null>(null);
     const [userId, setUserId] = useState<string | null>(null);
     const [loading, setLoading] = useState(true);
-    const { logIn, logOut: rcLogOut } = useRevenueCat(); // Destructure logIn/logOut
 
     // Handle user state changes
     function handleAuthStateChanged(user: FirebaseAuthTypes.User | null) {
@@ -70,9 +69,23 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     // Effect to update detailed user ID when auth state changes
     useEffect(() => {
         if (!loading) {
-            updateEffectiveUserId();
+            void updateEffectiveUserId().catch((error) => console.error('Auth initialization failed:', error));
         }
     }, [user, loading]);
+
+    useEffect(() => {
+        if (!user || user.isAnonymous) return;
+        let disposed = false;
+        const retry = () => {
+            if (!disposed && firebaseAuth.currentUser?.uid === user.uid) {
+                void finishAppleMigration(user.uid).catch((error) => console.warn('Migration pending:', error));
+            }
+        };
+        retry();
+        const subscription = AppState.addEventListener('change', (state) => { if (state === 'active') retry(); });
+        const timer = setInterval(() => { if (AppState.currentState === 'active') retry(); }, 60000);
+        return () => { disposed = true; clearInterval(timer); subscription.remove(); };
+    }, [user]);
 
     const initializeUser = async () => {
         try {
@@ -88,8 +101,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         if (user) {
             // Logged in
             if (firebaseAuth.currentUser?.uid !== user.uid) return;
-            setUserId(user.uid);
             await syncUserIdToStorage(user.uid);
+            if (firebaseAuth.currentUser?.uid === user.uid) setUserId(user.uid);
         } else {
             // Guest mode: We need a Firebase Token for the backend, so use Anonymous Auth
             if (!firebaseAuth.currentUser) {
@@ -137,12 +150,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             }
         } catch (e) {
             console.error('Failed to save user_id to AsyncStorage:', e);
+            throw e;
         }
         // Widget sync is handled by syncTriviaToWidget() in index.tsx (after trivia fetch)
         // and by backgroundFetch.ts — no direct DefaultPreference calls here to avoid crash
     };
 
     const signInWithApple = async (): Promise<boolean> => {
+        let preparedGuestId: string | null = null;
         try {
             const rawNonce = Crypto.randomUUID();
             const state = Crypto.randomUUID();
@@ -163,6 +178,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
             const { identityToken } = credential;
 
+            if (credential.state !== state) throw new Error('Apple Sign-In state mismatch');
+
             if (!identityToken) {
                 throw new Error('Apple Sign-In failed - no identify token returned');
             }
@@ -172,11 +189,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             const firebaseCredential = AppleAuthProvider.credential(identityToken, rawNonce);
 
             // Save guest ID before signing in
-            const guestUserId = await AsyncStorage.getItem('user_id');
             const guestUser = firebaseAuth.currentUser;
-            const guestIdToken = guestUser?.isAnonymous
-                ? await getIdToken(guestUser, true)
-                : null;
+            if (guestUser?.isAnonymous) {
+                await prepareAppleMigration(guestUser.uid, credential.user);
+                preparedGuestId = guestUser.uid;
+            }
 
             // sign the node in with the credential
             const userCredential = await signInWithCredential(firebaseAuth, firebaseCredential);
@@ -184,25 +201,22 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
             console.log("Apple Sign-In success:", authUser.uid);
 
-            // Merge Data if coming from a valid guest session
-            // Relaxed check: Allow any non-empty guest ID
-            if (guestUserId && guestUserId !== authUser.uid) {
-                // Copy the on-device ledger first. Even if the network merge is
-                // unavailable, Apple ownership and an immediate sync preserve it.
-                await TriviaUnlockManager.transferUserRecords(guestUserId, authUser.uid);
-                if (guestIdToken) await mergeData(guestIdToken);
-            }
+            // The server verifies the destination's Apple subject. A failed
+            // response is retried on startup/resume without the expired guest token.
+            try { await finishAppleMigration(authUser.uid); }
+            catch (error: any) { Alert.alert('データ連携待ち', error.message); }
 
             // Force update user ID immediately
             setUserId(authUser.uid);
             await syncUserIdToStorage(authUser.uid);
             await TriviaUnlockManager.syncUnlockedRecords(authUser.uid);
 
-            // Sync with RevenueCat (Transfer subscription)
-            await logIn(authUser.uid);
 
             return true;
         } catch (error: any) {
+            if (preparedGuestId && firebaseAuth.currentUser?.uid === preparedGuestId) {
+                TriviaUnlockManager.resumeUser(preparedGuestId);
+            }
             // Note: If linking fails because the Apple account is already tied to another Firebase
             // account, you might want to handle `auth/credential-already-in-use` specifically.
             if (error.code === 'ERR_CANCELED') {
@@ -215,31 +229,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
     };
 
-    const mergeData = async (guestIdToken: string) => {
-        try {
-            console.log('Merging verified guest data into Apple account...');
-            const response = await fetchWithToken(`${Config.BACKEND_URL}/auth/merge/verified`, {
-                method: 'POST',
-                body: JSON.stringify({
-                    guest_id_token: guestIdToken,
-                })
-            });
-
-            if (response.ok) {
-                console.log("Merge successful");
-                // Optional: Alert success for debugging, or kept silent for smooth UX
-                // Alert.alert("データ連携", "過去のデータを引き継ぎました。");
-            } else {
-                const text = await response.text();
-                console.error("Merge failed", text);
-                Alert.alert("データ連携エラー", "過去のデータの引き継ぎに失敗しました。\n開発者に連絡してください。");
-            }
-        } catch (e) {
-            console.error("Merge network error", e);
-            Alert.alert("データ連携エラー", "通信エラーが発生しました。");
-        }
-    };
-
     const signOut = async () => {
         try {
             // Prevent background work from writing the outgoing account's local
@@ -248,7 +237,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             await AsyncStorage.removeItem('user_id_is_local_fallback');
             await AsyncStorage.removeItem('triviaState');
             await firebaseSignOut(firebaseAuth);
-            await rcLogOut(); // Sync RevenueCat logout
             // User state becomes null -> useEffect triggers updateEffectiveUserId -> Generates new Guest ID
         } catch (e) {
             console.error(e);
@@ -265,10 +253,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             }
 
             // 1. Delete user data on backend
+            if (!await TriviaUnlockManager.isAccountDeletionPending(userId)) {
+                await authorizeAppleDeletion(userId);
+            }
+            await TriviaUnlockManager.beginAccountDeletion(userId);
             console.log("Sending DELETE request to backend...");
             const response = await fetchWithToken(`${Config.BACKEND_URL}/auth/user`, {
                 method: 'DELETE'
-            });
+            }, userId);
 
             if (!response.ok) {
                 const text = await response.text();
@@ -304,6 +296,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             Alert.alert("完了", "アカウントを削除しました。初期状態に戻ります。");
 
         } catch (e: any) {
+            if (e.code === 'ERR_CANCELED') return;
             console.error("Delete account exception:", e);
             Alert.alert("エラー", "アカウントの削除に失敗しました。\n" + e.message);
         }

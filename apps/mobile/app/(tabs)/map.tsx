@@ -5,6 +5,7 @@ import { ActivityIndicator, AppState, Modal, Platform, Pressable, ScrollView, St
 import MapView, { Circle, Marker, PROVIDER_GOOGLE } from 'react-native-maps';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { getTriviaSpots } from '../../data/triviaSpots';
+import { TriviaSpotCache } from '../../managers/TriviaSpotCache';
 import { TriviaLocationManager, TriviaLocationStatus } from '../../managers/TriviaLocationManager';
 import { TriviaGeofenceManager } from '../../managers/TriviaGeofenceManager';
 import { TriviaUnlockManager, calculateDistanceMeters } from '../../managers/TriviaUnlockManager';
@@ -89,6 +90,8 @@ export default function TriviaMapScreen() {
     const isHandlingCollectionPressRef = useRef(false);
     const { isPro } = useRevenueCat();
     const { userId } = useAuth();
+    const currentUserIdRef = useRef(userId);
+    currentUserIdRef.current = userId;
     const [spots, setSpots] = useState<TriviaSpot[]>([]);
     const [selectedSpotId, setSelectedSpotId] = useState<string | null>(null);
     const [userLocation, setUserLocation] = useState<Coordinates | null>(null);
@@ -204,7 +207,9 @@ export default function TriviaMapScreen() {
     };
 
     const refreshUnlockedState = async (sourceSpots = spotsRef.current) => {
+        if (!userId || currentUserIdRef.current !== userId) return [];
         const hydrated = await TriviaUnlockManager.hydrateSpots(sourceSpots, userId);
+        if (currentUserIdRef.current !== userId) return [];
         setTriviaSpots(hydrated);
         return hydrated;
     };
@@ -224,6 +229,7 @@ export default function TriviaMapScreen() {
     };
 
     const checkUnlocks = async (location: Coordinates, sourceSpots = spotsRef.current) => {
+        if (!userId || currentUserIdRef.current !== userId) return [];
         const newlyUnlocked = await TriviaUnlockManager.unlockNearbySpots(sourceSpots, location, userId);
         await handleUnlockedRecords(newlyUnlocked, sourceSpots);
         if (newlyUnlocked.length > 0) {
@@ -244,6 +250,11 @@ export default function TriviaMapScreen() {
 
         const initialize = async () => {
             try {
+                // Show the saved map/history before waiting for any network I/O.
+                const cached = await TriviaSpotCache.read();
+                const local = await TriviaUnlockManager.hydrateSpots(cached, userId);
+                if (!isMounted) return;
+                if (local.length) { setTriviaSpots(local); setIsLoading(false); }
                 // Upload/restore first so archived collectibles owned by this
                 // identity are included in the following map response.
                 await TriviaUnlockManager.syncUnlockedRecords(userId);
@@ -268,6 +279,7 @@ export default function TriviaMapScreen() {
                     }
 
                     const nextSubscription = await TriviaLocationManager.watchLocation((location) => {
+                        if (!isMounted || currentUserIdRef.current !== userId) return;
                         setUserLocation(location);
                         checkUnlocks(location).catch((error) => {
                             console.error('Trivia map unlock check failed:', error);

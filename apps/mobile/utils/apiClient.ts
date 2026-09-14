@@ -36,6 +36,9 @@ export async function fetchWithToken(
 
     // 2. Try to get token from Firebase Auth
     let currentUser = firebaseAuth.currentUser;
+    if (expectedUserId && currentUser?.uid !== expectedUserId) {
+        throw new Error('Authenticated user changed before the request was sent');
+    }
 
     // If there's no current user, it might be a fresh install that hasn't finished anon auth
     // Let's force an anonymous sign-in here just in case, to ensure we have a token
@@ -62,6 +65,7 @@ export async function fetchWithToken(
                 console.warn("fetchWithToken: getIdToken returned empty.");
             }
         } catch (error) {
+            if (expectedUserId) throw error;
             console.error("fetchWithToken: Failed to fetch Firebase ID token:", error);
         }
     } else {
@@ -69,10 +73,29 @@ export async function fetchWithToken(
     }
 
     // 3. Execute fetch
-    const response = await fetch(url, {
-        ...options,
-        headers
-    });
-
-    return response;
+    if (expectedUserId && (!headers.Authorization || firebaseAuth.currentUser?.uid !== expectedUserId)) {
+        throw new Error('Authenticated user changed or token is unavailable');
+    }
+    const controller = new AbortController();
+    const abort = () => controller.abort();
+    if (options.signal?.aborted) abort();
+    options.signal?.addEventListener('abort', abort);
+    const timer = setTimeout(abort, 15000);
+    try {
+        // Also bound response-body reads (React Native fetch can resolve headers
+        // before the body). Buffer once so callers cannot hang outside the timeout.
+        return await withTimeout((async () => {
+            const response = await fetch(url, { ...options, headers, signal: controller.signal });
+            const body = await response.text();
+            return {
+                ok: response.ok, status: response.status, statusText: response.statusText, headers: response.headers,
+                text: async () => body,
+                json: async () => JSON.parse(body),
+            };
+        })(), 15000, 'API request');
+    } finally {
+        clearTimeout(timer);
+        options.signal?.removeEventListener('abort', abort);
+        controller.abort();
+    }
 }

@@ -12,11 +12,21 @@ export const getTriviaSpots = async (): Promise<TriviaSpot[]> => {
             throw new Error(`HTTP ${response.status}`);
         }
         const remoteSpots = await response.json() as TriviaSpot[];
+        const cachedSpots = await TriviaSpotCache.read();
+        const remoteIds = new Set(remoteSpots.map(spot => spot.id));
         const spots = remoteSpots.map((spot) => ({
             ...spot,
             isUnlocked: false,
             unlockedAt: null,
         }));
+        // A missing server entry must not erase collected content. Cache only
+        // public metadata; account-specific unlocks are applied by hydration.
+        spots.push(...cachedSpots.filter(spot => !remoteIds.has(spot.id)).map(spot => ({
+            ...spot,
+            isArchived: true,
+            isUnlocked: false,
+            unlockedAt: null,
+        })));
         await TriviaSpotCache.save(spots);
         return spots;
     } catch (error) {

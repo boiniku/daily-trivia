@@ -24,7 +24,8 @@ export const MapUnlockSyncBridge = () => {
         const subscription = AppState.addEventListener('change', (state) => {
             if (state === 'active') void sync();
         });
-        return () => subscription.remove();
+        const timer = setInterval(() => { if (AppState.currentState === 'active') void sync(); }, 60000);
+        return () => { clearInterval(timer); subscription.remove(); };
     }, [loading, userId]);
 
     return null;

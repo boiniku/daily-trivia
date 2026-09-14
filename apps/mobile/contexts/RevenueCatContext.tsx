@@ -1,11 +1,9 @@
-import React, { createContext, useContext, useEffect, useState } from 'react';
-import { Platform, Alert } from 'react-native';
+import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
+import { Platform, Alert, AppState } from 'react-native';
 import Purchases, { CustomerInfo, PurchasesOfferings, PurchasesPackage } from 'react-native-purchases';
-
-const API_KEYS = {
-    ios: process.env.EXPO_PUBLIC_REVENUECAT_IOS_API_KEY || '',
-    android: process.env.EXPO_PUBLIC_REVENUECAT_ANDROID_API_KEY || '',
-};
+import { getAuth, onAuthStateChanged } from '@react-native-firebase/auth';
+import { createRevenueCatIdentity } from '../managers/revenueCatIdentity';
+import { hasProEntitlement, purchaseRestoreNotice } from '../managers/purchaseRestoreResult';
 
 interface RevenueCatContextType {
     isPro: boolean;
@@ -17,150 +15,100 @@ interface RevenueCatContextType {
     logIn: (userId: string) => Promise<void>;
     logOut: () => Promise<void>;
 }
-
 const RevenueCatContext = createContext<RevenueCatContextType | undefined>(undefined);
 
 export const RevenueCatProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     const [isPro, setIsPro] = useState(false);
     const [currentOffering, setCurrentOffering] = useState<PurchasesOfferings | null>(null);
     const [loading, setLoading] = useState(true);
-
-    useEffect(() => {
-        let customerInfoUpdated: ((info: CustomerInfo) => void) | null = null;
-        let listenerRegistered = false;
-
-        const init = async () => {
-            try {
-                // Enable debug logs before setup
-                await Purchases.setLogLevel(Purchases.LOG_LEVEL.DEBUG);
-
-                let apiKey = '';
-                if (Platform.OS === 'ios') {
-                    apiKey = API_KEYS.ios;
-                } else if (Platform.OS === 'android') {
-                    apiKey = API_KEYS.android;
-                }
-
-                if (!apiKey) {
-                    console.warn('RevenueCat API key not found for platform:', Platform.OS);
-                    setLoading(false);
-                    return;
-                }
-
-                await Purchases.configure({ apiKey });
-
-                // Register listener AFTER configure() to avoid native crash
-                customerInfoUpdated = (info: CustomerInfo) => {
-                    updateCustomerStatus(info);
-                };
-                Purchases.addCustomerInfoUpdateListener(customerInfoUpdated);
-                listenerRegistered = true;
-
-                const customerInfo = await Purchases.getCustomerInfo();
-                updateCustomerStatus(customerInfo);
-
-                await loadOfferings();
-            } catch (e) {
-                console.error('RevenueCat init error:', e);
-            } finally {
-                setLoading(false);
-            }
-        };
-
-        // Delay initialization to prevent startup crash
-        setTimeout(() => {
-            init();
-        }, 1000);
-
-        return () => {
-            if (listenerRegistered && customerInfoUpdated) {
-                Purchases.removeCustomerInfoUpdateListener(customerInfoUpdated);
-            }
-        };
-    }, []);
-
-    const updateCustomerStatus = (customerInfo: CustomerInfo) => {
-        // "pro" is the entitlement identifier in RevenueCat
-        const isProActive = customerInfo.entitlements.active['pro'] !== undefined;
-        setIsPro(isProActive);
-    };
+    const identity = useMemo(() => createRevenueCatIdentity<CustomerInfo>(Purchases,
+        Platform.OS === 'ios' ? process.env.EXPO_PUBLIC_REVENUECAT_IOS_API_KEY || ''
+            : process.env.EXPO_PUBLIC_REVENUECAT_ANDROID_API_KEY || '',
+        (info) => {
+            setIsPro(hasProEntitlement(info));
+            setLoading(info === null);
+        }), []);
 
     const loadOfferings = async () => {
-        try {
-            setLoading(true);
-            const offerings = await Purchases.getOfferings();
-            console.log('Offerings loaded:', offerings);
-            if (offerings.current) {
-                if (offerings.current.availablePackages.length === 0) {
-                    console.warn('RevenueCat: Offering has no packages');
-                }
-                setCurrentOffering(offerings);
-            } else {
-                console.log('No current offering configured in RevenueCat console');
-                console.warn('RevenueCat: No current offering configured');
-            }
-        } catch (e: any) {
-            console.error('Error loading offerings:', e);
-        } finally {
-            setLoading(false);
-        }
+        const offerings = await identity.run(() => Purchases.getOfferings());
+        setCurrentOffering(offerings);
     };
 
-    // Expose loadOfferings for manual retry
-    const retryLoadOfferings = () => loadOfferings();
+    useEffect(() => {
+        let active = true;
+        let initialized = false;
+        let listenerAdded = false;
+        let generation = 0;
+        const auth = getAuth();
+        const listener = (_info: CustomerInfo) => {
+            // Notifications carry no request identity; read through the barrier.
+            void identity.run(() => Purchases.getCustomerInfo()).then((info) => {
+                if (active) identity.accept(info);
+            }).catch(() => undefined);
+        };
+        const synchronize = async (id: string | null) => {
+            const current = ++generation;
+            try {
+                await identity.setIdentity(id);
+                if (!active || current !== generation) return;
+                if (!listenerAdded) {
+                    Purchases.addCustomerInfoUpdateListener(listener);
+                    listenerAdded = true;
+                }
+                await loadOfferings();
+            } catch (error) {
+                console.warn('RevenueCat identity sync failed:', error);
+            } finally {
+                if (active && current === generation) setLoading(false);
+            }
+        };
+        // Includes the restored Firebase identity at startup.
+        const unsubscribe = onAuthStateChanged(auth, (user) => {
+            initialized = true;
+            void synchronize(user?.uid ?? null);
+        });
+        const subscription = AppState.addEventListener('change', (state) => {
+            if (state === 'active' && initialized) void synchronize(auth.currentUser?.uid ?? null);
+        });
+        return () => {
+            active = false;
+            unsubscribe();
+            subscription.remove();
+            if (listenerAdded) Purchases.removeCustomerInfoUpdateListener(listener);
+        };
+    }, [identity]);
 
     const purchasePackage = async (pack: PurchasesPackage) => {
         try {
-            const { customerInfo } = await Purchases.purchasePackage(pack);
-            updateCustomerStatus(customerInfo);
-        } catch (e: any) {
-            if (!e.userCancelled) {
-                Alert.alert('Error', e.message);
-            }
+            const { customerInfo } = await identity.run(() => Purchases.purchasePackage(pack));
+            identity.accept(customerInfo);
+        } catch (error: any) {
+            if (!error.userCancelled) Alert.alert('購入エラー', error.message);
         }
     };
-
     const restorePurchases = async () => {
         try {
-            const customerInfo = await Purchases.restorePurchases();
-            updateCustomerStatus(customerInfo);
-            Alert.alert('Success', 'Purchases restored successfully!');
-        } catch (e: any) {
-            Alert.alert('Error', e.message);
-        }
+            const info = await identity.run(() => Purchases.restorePurchases());
+            identity.accept(info);
+            const notice = purchaseRestoreNotice(info);
+            Alert.alert(notice.title, notice.message);
+        } catch (error: any) { Alert.alert('復元エラー', error.message); }
     };
-
-    const logIn = async (userId: string) => {
+    const retryLoadOfferings = async () => {
         try {
-            const { customerInfo } = await Purchases.logIn(userId);
-            updateCustomerStatus(customerInfo);
-            console.log("RevenueCat logged in as:", userId);
-        } catch (e: any) {
-            console.error("RevenueCat login error:", e);
-        }
+            await identity.setIdentity(getAuth().currentUser?.uid ?? null);
+            await loadOfferings();
+        } catch (error: any) { setLoading(false); Alert.alert('通信エラー', error.message); }
     };
 
-    const logOut = async () => {
-        try {
-            const customerInfo = await Purchases.logOut();
-            updateCustomerStatus(customerInfo);
-            console.log("RevenueCat logged out");
-        } catch (e: any) {
-            console.error("RevenueCat logout error:", e);
-        }
-    };
-
-    return (
-        <RevenueCatContext.Provider value={{ isPro, currentOffering, purchasePackage, restorePurchases, loading, retryLoadOfferings, logIn, logOut }}>
-            {children}
-        </RevenueCatContext.Provider>
-    );
+    return <RevenueCatContext.Provider value={{
+        isPro, currentOffering, loading, purchasePackage, restorePurchases, retryLoadOfferings,
+        logIn: (id) => identity.setIdentity(id), logOut: () => identity.setIdentity(null),
+    }}>{children}</RevenueCatContext.Provider>;
 };
 
 export const useRevenueCat = () => {
     const context = useContext(RevenueCatContext);
-    if (!context) {
-        throw new Error('useRevenueCat must be used within a RevenueCatProvider');
-    }
+    if (!context) throw new Error('useRevenueCat must be used within a RevenueCatProvider');
     return context;
 };
