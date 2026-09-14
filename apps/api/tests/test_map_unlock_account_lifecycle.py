@@ -118,21 +118,57 @@ class MapUnlockAccountLifecycleTests(unittest.TestCase):
                     auth_user_id="apple",
                 )
 
-    def test_legacy_merge_never_accepts_an_unverified_source_uid(self):
+    def test_legacy_merge_is_limited_to_1_1_0_anonymous_source_and_apple_target(self):
+        apple = SimpleNamespace(
+            provider_data=[SimpleNamespace(provider_id='apple.com', uid='apple-subject')],
+            disabled=False, email='apple@example.test', phone_number=None,
+        )
+        anonymous = SimpleNamespace(
+            provider_data=[], disabled=False, email=None, phone_number=None,
+        )
+        linked_source = SimpleNamespace(
+            provider_data=[SimpleNamespace(provider_id='apple.com', uid='victim')],
+            disabled=False, email=None, phone_number=None,
+        )
         with (
             patch("database.SessionLocal", self.session_factory),
+            patch("routers.user.firebase_auth.get_user", side_effect=lambda uid: {
+                'apple': apple, 'guest': anonymous, 'victim-apple': linked_source,
+            }[uid]),
             patch.dict("os.environ", {"LEGACY_GUEST_MERGE_DEADLINE": "2099-01-01T00:00:00+00:00"}),
         ):
-            with self.assertRaises(HTTPException) as error:
-                merge_legacy_guest_data(LegacyMergeRequest(guest_user_id="victim-apple"), auth_user_id="attacker")
-            self.assertEqual(error.exception.status_code, 410)
+            result = merge_legacy_guest_data(
+                LegacyMergeRequest(guest_user_id="guest"),
+                auth_user_id="apple",
+                app_version="1.1.0",
+            )
+            self.assertEqual(result, {"message": "Merge successful"})
 
-        with patch.dict("os.environ", {"LEGACY_GUEST_MERGE_DEADLINE": "2020-01-01T00:00:00+00:00"}):
-            with self.assertRaisesRegex(Exception, "Verified migration required"):
+            with self.assertRaises(HTTPException) as linked_error:
+                merge_legacy_guest_data(
+                    LegacyMergeRequest(guest_user_id="victim-apple"),
+                    auth_user_id="apple",
+                    app_version="1.1.0",
+                )
+            self.assertEqual(linked_error.exception.status_code, 403)
+
+            with self.assertRaises(HTTPException) as version_error:
                 merge_legacy_guest_data(
                     LegacyMergeRequest(guest_user_id="guest"),
                     auth_user_id="apple",
+                    app_version="1.1.1",
                 )
+            self.assertEqual(version_error.exception.status_code, 410)
+
+    def test_legacy_merge_expires_even_for_1_1_0(self):
+        with patch.dict("os.environ", {"LEGACY_GUEST_MERGE_DEADLINE": "2020-01-01T00:00:00+00:00"}):
+            with self.assertRaises(HTTPException) as error:
+                merge_legacy_guest_data(
+                    LegacyMergeRequest(guest_user_id="guest"),
+                    auth_user_id="apple",
+                    app_version="1.1.0",
+                )
+            self.assertEqual(error.exception.status_code, 410)
 
     def test_explicit_account_deletion_removes_unlock_ledger(self):
         db = self.session_factory()

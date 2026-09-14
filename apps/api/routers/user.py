@@ -1,5 +1,5 @@
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, Header, HTTPException, status
 from sqlalchemy.orm import Session
 from pydantic import BaseModel, Field
 import sys
@@ -97,9 +97,49 @@ def merge_verified_guest_data(request: MergeRequest, auth_user_id: str = Depends
 def merge_legacy_guest_data(
     request: LegacyMergeRequest,
     auth_user_id: str = Depends(get_current_user_id),
+    app_version: str | None = Header(default=None, alias="X-Daily-Trivia-App-Version"),
 ):
-    # A UID is not proof of ownership. Leave all source records intact.
-    raise HTTPException(status_code=410, detail="Verified migration required; update the app")
+    """Temporary, constrained bridge for the already-distributed 1.1.0 app.
+
+    That client cannot present its former anonymous token after Apple sign-in.
+    Keep compatibility only for the exact old release and only until the
+    configured deadline. New clients use the proof-bearing prepare flow.
+    """
+    if app_version != "1.1.0":
+        raise HTTPException(status_code=410, detail="Verified migration required; update the app")
+    if os.getenv("LEGACY_GUEST_MERGE_ENABLED", "true").lower() != "true":
+        raise HTTPException(status_code=410, detail="Legacy migration is disabled; update the app")
+
+    deadline_text = os.getenv(
+        "LEGACY_GUEST_MERGE_DEADLINE",
+        "2026-10-31T00:00:00+00:00",
+    )
+    try:
+        deadline = datetime.datetime.fromisoformat(deadline_text)
+        if deadline.tzinfo is None:
+            deadline = deadline.replace(tzinfo=datetime.timezone.utc)
+    except ValueError:
+        raise HTTPException(status_code=500, detail="Invalid legacy merge deadline")
+    if datetime.datetime.now(datetime.timezone.utc) >= deadline:
+        raise HTTPException(status_code=410, detail="Legacy migration has expired; update the app")
+
+    # The destination token is already authenticated; additionally require it
+    # to be linked to Apple and require the source still to be a pure anonymous
+    # Firebase identity. This cannot add proof absent from 1.1.0, but prevents
+    # moving registered accounts and keeps the compatibility window bounded.
+    apple_subject_for(auth_user_id)
+    try:
+        source = firebase_auth.get_user(request.guest_user_id)
+    except Exception:
+        raise HTTPException(status_code=403, detail="Anonymous source account could not be verified")
+    if (
+        getattr(source, "disabled", False)
+        or list(getattr(source, "provider_data", []) or [])
+        or getattr(source, "email", None)
+        or getattr(source, "phone_number", None)
+    ):
+        raise HTTPException(status_code=403, detail="Legacy source must be an anonymous account")
+    return _merge_guest_data(request.guest_user_id, auth_user_id)
 
 
 def _merge_guest_data(guest_id: str, auth_id: str, expected_apple_subject=None):
