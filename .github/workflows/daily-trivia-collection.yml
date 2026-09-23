@@ -1,9 +1,8 @@
 name: Daily trivia collection
 
 on:
-  schedule:
-    # GitHub Actions uses UTC. 00:53 UTC is 09:53 JST.
-    - cron: "53 0 * * *"
+  # Automatic collection is intentionally paused. Keep the manual trigger so
+  # an administrator can run a one-off collection when needed.
   workflow_dispatch:
 
 concurrency:
