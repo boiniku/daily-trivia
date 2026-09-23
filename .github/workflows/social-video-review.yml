@@ -22,6 +22,9 @@ jobs:
     timeout-minutes: 20
     steps:
       - name: Create and publish the daily X post
+        # Automatic X publishing is paused. A text-only manual dispatch can
+        # still be used when an administrator explicitly wants to publish.
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.text_only }}
         env:
           SOCIAL_AUTOMATION_URL: ${{ vars.SOCIAL_AUTOMATION_URL }}
           SOCIAL_AUTOMATION_SECRET: ${{ secrets.DAILY_COLLECTION_SECRET }}
