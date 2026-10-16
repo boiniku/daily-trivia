@@ -6,6 +6,7 @@ from sqlalchemy import text, and_, case, func, or_
 from sqlalchemy.exc import IntegrityError
 from database import get_db, AppSessionLocal
 from models import Trivia, MapTrivia, MapTriviaUnlock, Collection, CollectionItem, DailyAssignment, TriviaHee
+from services.trivia_images import normalize_trivia_image_sources, read_trivia_images
 import random
 import datetime
 import os
@@ -75,13 +76,13 @@ app.include_router(social_automation.router)
 # Pydantic Schemas
 from pydantic import BaseModel, Field
 try:
-    from pydantic import field_validator
+    from pydantic import model_validator
 except ImportError:
-    field_validator = None
+    model_validator = None
 try:
-    from pydantic import validator
+    from pydantic import root_validator
 except ImportError:
-    validator = None
+    root_validator = None
 
 TRIVIA_IMAGE_R2_BASE_URL = os.getenv("TRIVIA_IMAGE_R2_BASE_URL", "").strip().rstrip("/")
 MINIMUM_SUPPORTED_APP_VERSION = os.getenv("MINIMUM_SUPPORTED_APP_VERSION", "1.0.5").strip()
@@ -95,11 +96,28 @@ def build_trivia_image_url(raw_value: Optional[str]) -> Optional[str]:
     value = (raw_value or "").strip()
     if not value:
         return None
-    if value.startswith(("http://", "https://", "data:")):
+    if value.lower().startswith(("http://", "https://", "data:")):
         return value
     if not TRIVIA_IMAGE_R2_BASE_URL:
         return value
     return f"{TRIVIA_IMAGE_R2_BASE_URL}/{value.lstrip('/')}"
+
+
+def public_trivia_image_values(image_urls=None, image_url=None, image_sources=None) -> dict:
+    images = read_trivia_images(image_urls, image_url)
+    sources = normalize_trivia_image_sources(image_sources, images, strict=False)
+    sources = {build_trivia_image_url(image): source for image, source in sources.items()}
+    images = [build_trivia_image_url(image) for image in images]
+    return {"image_urls": images, "image_url": images[0] if images else None, "image_sources": sources}
+
+
+def _trivia_schema_values(value, field_names):
+    if isinstance(value, dict):
+        values = dict(value)
+    else:
+        values = {name: getattr(value, name) for name in field_names if hasattr(value, name)}
+    values.update(public_trivia_image_values(values.get("image_urls"), values.get("image_url"), values.get("image_sources")))
+    return values
 
 class TriviaSchema(BaseModel):
     id: int
@@ -109,18 +127,20 @@ class TriviaSchema(BaseModel):
     source: str
     category: str
     image_url: Optional[str] = None
+    image_urls: List[str] = Field(default_factory=list)
+    image_sources: dict[str, str] = Field(default_factory=dict)
     hee_count: int = 0
     date: Optional[datetime.date] = None
 
-    if field_validator:
-        @field_validator("image_url", mode="before")
+    if model_validator:
+        @model_validator(mode="before")
         @classmethod
-        def normalize_image_url(cls, value):
-            return build_trivia_image_url(value)
-    elif validator:
-        @validator("image_url", pre=True, always=True)
-        def normalize_image_url(cls, value):
-            return build_trivia_image_url(value)
+        def normalize_images(cls, value):
+            return _trivia_schema_values(value, cls.model_fields)
+    elif root_validator:
+        @root_validator(pre=True)
+        def normalize_images(cls, value):
+            return _trivia_schema_values(value, cls.__fields__)
     
     class Config:
         from_attributes = True
@@ -153,6 +173,10 @@ class TriviaMapSpotSchema(BaseModel):
     title: str
     description: str
     explanation: str
+    source: Optional[str] = None
+    image_url: Optional[str] = None
+    image_urls: List[str] = Field(default_factory=list)
+    image_sources: dict[str, str] = Field(default_factory=dict)
     latitude: float
     longitude: float
     unlockRadiusMeters: int
@@ -267,6 +291,8 @@ def get_map_trivia(
             "title": item.title,
             "description": item.content,
             "explanation": item.explanation or "",
+            "source": item.source or "",
+            **public_trivia_image_values(item.image_urls, item.image_url, item.image_sources),
             "latitude": float(item.map_latitude),
             "longitude": float(item.map_longitude),
             "unlockRadiusMeters": int(item.map_radius or 1200),
