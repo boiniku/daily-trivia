@@ -1,0 +1,34 @@
+name: Staging Render maintenance
+
+on:
+  push:
+    branches: [develop]
+    paths:
+      - .github/workflows/staging-render.yml
+      - .github/scripts/staging_render.py
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: staging-render
+  cancel-in-progress: false
+
+jobs:
+  staging:
+    runs-on: ubuntu-latest
+    # The existing Render account key is stored in this environment. The helper
+    # rejects its production service ID and requires the exact staging URL.
+    environment: production-render
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+      - name: Inspect staging service and deployment errors
+        env:
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+          PRODUCTION_SERVICE_ID: ${{ secrets.RENDER_PRODUCTION_SERVICE_ID }}
+        run: python .github/scripts/staging_render.py
