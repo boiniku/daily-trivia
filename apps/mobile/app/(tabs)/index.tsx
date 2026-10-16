@@ -39,6 +39,8 @@ interface TriviaItem {
     explanation: string;
     source: string;
     category: string;
+    image_urls?: string[];
+    image_sources?: Record<string, string>;
     image_url?: string | null;
 }
 
@@ -214,6 +216,8 @@ export default function HomeScreen() {
                 title: getParamString(params.title) ?? '',
                 content: getParamString(params.content) ?? '',
                 explanation: getParamString(params.explanation) ?? '解説データがありません',
+                ...(getParamString(params.image_urls) !== undefined ? { image_urls: getParamString(params.image_urls) } : {}),
+                ...(getParamString(params.image_sources) !== undefined ? { image_sources: getParamString(params.image_sources) } : {}),
                 source: getParamString(params.source) ?? '',
                 category: getParamString(params.category) ?? '未分類',
                 image_url: getParamString(params.image_url) ?? '',
@@ -599,7 +603,9 @@ export default function HomeScreen() {
                 source: item.source,
                 category: item.category,
                 content: item.content,
-                image_url: item.image_url ?? ''
+                image_url: item.image_url ?? '',
+                ...(Array.isArray(item.image_urls) ? { image_urls: JSON.stringify(item.image_urls) } : {}),
+                ...(item.image_sources ? { image_sources: JSON.stringify(item.image_sources) } : {})
             }
         });
     };

@@ -12,10 +12,6 @@ const productionBackendUrl = 'https://daily-trivia-e7ge.onrender.com';
 const localBackendUrl = 'http://127.0.0.1:8000';
 const configuredBackendUrl = process.env.EXPO_PUBLIC_BACKEND_URL?.trim().replace(/\/+$/, '');
 
-if (appEnvironment !== 'production' && configuredBackendUrl === productionBackendUrl) {
-    throw new Error('Safety check: a non-production build cannot use the production backend.');
-}
-
 if (appEnvironment === 'production' && configuredBackendUrl && configuredBackendUrl !== productionBackendUrl) {
     throw new Error('Safety check: a production build cannot use a non-production backend.');
 }
@@ -23,9 +19,8 @@ if (appEnvironment === 'production' && configuredBackendUrl && configuredBackend
 export const Config = {
     APP_ENV: appEnvironment,
     IS_PRODUCTION: appEnvironment === 'production',
-    // Production is the only environment allowed to fall back to the production API.
-    // Development intentionally falls back to localhost so an incomplete test setup
-    // cannot accidentally write to production.
+    // Development and preview builds explicitly select the shared production API.
+    // Keep localhost as the development fallback when no endpoint was configured.
     BACKEND_URL: configuredBackendUrl || (appEnvironment === 'production' ? productionBackendUrl : localBackendUrl),
     API_VERSION: process.env.EXPO_PUBLIC_API_VERSION || '1',
     TRIVIA_IMAGE_R2_BASE_URL: process.env.EXPO_PUBLIC_TRIVIA_IMAGE_R2_BASE_URL || '',

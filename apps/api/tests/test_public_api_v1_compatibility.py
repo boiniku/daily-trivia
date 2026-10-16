@@ -7,7 +7,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 from starlette.requests import Request
 
-from main import MapTriviaUnlockRequest, get_app_version, get_map_trivia, get_todays_trivia, health_check, record_map_trivia_unlocks
+from main import MapTriviaUnlockRequest, TriviaMapSpotSchema, get_app_version, get_map_trivia, get_todays_trivia, health_check, record_map_trivia_unlocks
 from models import Base, MapTrivia, MapTriviaUnlock, Trivia
 
 
@@ -91,6 +91,30 @@ class PublicApiV1CompatibilityTests(unittest.TestCase):
         self.assertTrue(payload["id"].startswith("map_"))
         self.assertEqual(payload["unlockCount"], 0)
 
+    def test_map_source_survives_response_serialization_without_unlocking_spot(self):
+        db = self.session_factory()
+        try:
+            payload = get_map_trivia(db=db)[0]
+            response = TriviaMapSpotSchema(**payload).model_dump(mode="json", exclude_unset=True)
+        finally:
+            db.close()
+
+        self.assertEqual(response["source"], "https://example.com/map-source")
+        self.assertFalse(response["isUnlocked"])
+        self.assertIsNone(response["unlockedAt"])
+
+    def test_map_source_can_be_missing_for_older_content(self):
+        db = self.session_factory()
+        try:
+            db.query(MapTrivia).one().source = None
+            db.commit()
+            payload = get_map_trivia(db=db)[0]
+            response = TriviaMapSpotSchema(**payload).model_dump(mode="json", exclude_unset=True)
+        finally:
+            db.close()
+
+        self.assertEqual(response["source"], "")
+
     def test_distributed_1_1_0_uses_pre_count_map_read_path(self):
         request = Request({
             "type": "http",
@@ -104,6 +128,7 @@ class PublicApiV1CompatibilityTests(unittest.TestCase):
 
         self.assertTrue(payload["id"].startswith("map_"))
         self.assertNotIn("unlockCount", payload)
+        self.assertNotIn("source", payload)
 
     def test_map_unlock_count_is_idempotent_per_user(self):
         db = self.session_factory()

@@ -3,6 +3,10 @@ export type TriviaSpot = {
     title: string;
     description: string;
     explanation?: string;
+    source?: string;
+    image_url?: string | null;
+    image_urls?: string[];
+    image_sources?: Record<string, string>;
     latitude: number;
     longitude: number;
     unlockRadiusMeters: number;

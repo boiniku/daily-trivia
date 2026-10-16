@@ -21,10 +21,10 @@ def migrate(bind=None):
                 connection.execute(text(f"ALTER TABLE {name} ADD COLUMN {guard}image_urls JSON"))
             if "image_sources" not in columns:
                 connection.execute(text(f"ALTER TABLE {name} ADD COLUMN {guard}image_sources JSON"))
-            if name == "trivia":
+            if name in {"trivia", "map_trivia"}:
                 for column, kind in (("image_credit", "TEXT"), ("image_credit_metadata", "JSON")):
                     if column not in columns:
-                        connection.execute(text(f"ALTER TABLE trivia ADD COLUMN {guard}{column} {kind}"))
+                        connection.execute(text(f"ALTER TABLE {name} ADD COLUMN {guard}{column} {kind}"))
             if "image_url" not in columns:
                 continue
             table = Table(name, MetaData(), autoload_with=connection)

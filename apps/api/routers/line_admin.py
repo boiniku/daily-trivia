@@ -40,10 +40,9 @@ from services.trivia_candidates import (
     create_candidate,
     create_candidates,
     reject_candidate,
-    update_candidate,
 )
 from services.image_storage import upload_trivia_image
-from services.map_trivia import create_map_trivia, create_map_trivia_from_candidate
+from services.admin_workflow import create_manual_trivia, publish_candidate
 from services.trivia_collection import TriviaCollectionDiagnostics, collect_trivia_candidates
 from services.trivia_generation import TRIVIA_CATEGORIES, generate_trivia
 from services.social_content import x_weighted_length
@@ -60,6 +59,8 @@ class CandidateUpdateRequest(BaseModel):
     source: str = ""
     category: str = "その他"
     image_url: str = ""
+    image_urls: list[str] | None = None
+    image_sources: dict[str, str] | None = None
     publish: bool = False
     add_to_normal: bool = True
     add_to_map: bool = False
@@ -70,6 +71,18 @@ class CandidateUpdateRequest(BaseModel):
     map_longitude: float = 139.7671
     map_radius: int = 1200
     map_hint: str = ""
+
+
+def _request_image_values(request: CandidateUpdateRequest) -> dict:
+    """Omitted image fields must not replace an existing candidate's gallery."""
+    values = {}
+    if request.image_sources is not None:
+        values["image_sources"] = request.image_sources
+    if request.image_urls is not None:
+        values["image_urls"] = request.image_urls
+    elif "image_url" in request.model_fields_set:
+        values["image_url"] = request.image_url
+    return values
 
 
 class SocialTextUpdateRequest(BaseModel):
@@ -95,9 +108,17 @@ def _approve_candidate_from_line(db, candidate_id: int, user_id: str) -> str:
     if not candidate:
         raise CandidateError("Candidate not found")
     if _candidate_has_complete_map(candidate):
-        create_map_trivia_from_candidate(db, candidate)
-        reject_candidate(db, candidate_id, f"line:{user_id}:map-published")
-        return f"MAPに公開しました: {candidate.title}"
+        try:
+            result = publish_candidate(
+                db, candidate_id, add_to_normal=False, add_to_map=True,
+                reviewed_by=f"line:{user_id}",
+            )
+        except CandidateError:
+            raise
+        except ValueError as exc:
+            # The webhook reports CandidateError to the reviewer in LINE.
+            raise CandidateError(str(exc)) from exc
+        return f"MAPに公開しました: {result.map_trivia.title}"
     trivia = approve_candidate(db, candidate_id, f"line:{user_id}")
     return f"公開しました: #{trivia.id} {trivia.title}"
 
@@ -114,30 +135,6 @@ def _validate_map_request(request: CandidateUpdateRequest) -> None:
 def _validate_publish_target(request: CandidateUpdateRequest) -> None:
     if not request.add_to_normal and not request.add_to_map:
         raise HTTPException(status_code=400, detail="通常の雑学、雑学MAPのどちらかは選択してください。")
-
-
-def _create_normal_trivia(
-    db,
-    *,
-    title: str,
-    content: str,
-    explanation: str,
-    source: str,
-    category: str,
-    image_url: str,
-):
-    trivia = Trivia(
-        title=title.strip(),
-        content=content.strip(),
-        explanation=(explanation or "").strip(),
-        source=(source or "").strip(),
-        category=(category or "その他").strip(),
-        image_url=(image_url or "").strip() or None,
-    )
-    db.add(trivia)
-    db.commit()
-    db.refresh(trivia)
-    return trivia
 
 
 def _parse_generate_command(text: str) -> tuple[str, int] | None:
@@ -578,6 +575,7 @@ def new_candidate_editor(token: str, map: str = ""):
         source="",
         category="その他",
         image_url="",
+        image_urls=[],
         map_address="",
         map_prefecture="",
         map_latitude=None,
@@ -595,38 +593,27 @@ def save_new_candidate(request: CandidateUpdateRequest):
     _validate_map_request(request)
     db = SessionLocal()
     try:
-        trivia_id = None
-        if request.add_to_normal:
-            trivia = _create_normal_trivia(
-                db,
-                title=request.title,
-                content=request.content,
-                explanation=request.explanation,
-                source=request.source,
-                category=request.category,
-                image_url=request.image_url,
-            )
-            trivia_id = trivia.id
-        if request.add_to_map:
-            create_map_trivia(
-                db,
-                title=request.title,
-                content=request.content,
-                explanation=request.explanation,
-                source=request.source,
-                category=request.category,
-                image_url=request.image_url,
-                map_address=request.map_address,
-                map_prefecture=request.map_prefecture,
-                map_latitude=request.map_latitude,
-                map_longitude=request.map_longitude,
-                map_radius=request.map_radius,
-                map_hint=request.map_hint,
-            )
+        result = create_manual_trivia(
+            db,
+            add_to_normal=request.add_to_normal,
+            add_to_map=request.add_to_map,
+            title=request.title,
+            content=request.content,
+            explanation=request.explanation,
+            source=request.source,
+            category=request.category,
+            **_request_image_values(request),
+            map_address=request.map_address,
+            map_prefecture=request.map_prefecture,
+            map_latitude=request.map_latitude,
+            map_longitude=request.map_longitude,
+            map_radius=request.map_radius,
+            map_hint=request.map_hint,
+        )
         return {
             "ok": True,
             "status": "approved",
-            "trivia_id": trivia_id,
+            "trivia_id": result.trivia.id if result.trivia else None,
             "map_spot_id": None,
         }
     except CandidateError as exc:
@@ -666,15 +653,18 @@ def save_candidate(candidate_id: int, request: CandidateUpdateRequest):
     _validate_map_request(request)
     db = SessionLocal()
     try:
-        candidate = update_candidate(
+        result = publish_candidate(
             db,
             candidate_id,
+            add_to_normal=request.add_to_normal,
+            add_to_map=request.add_to_map,
+            reviewed_by="mobile-editor",
             title=request.title,
             content=request.content,
             explanation=request.explanation,
             source=request.source,
             category=request.category,
-            image_url=request.image_url,
+            **_request_image_values(request),
             map_address=request.map_address,
             map_prefecture=request.map_prefecture,
             map_latitude=request.map_latitude if request.add_to_map else None,
@@ -682,15 +672,12 @@ def save_candidate(candidate_id: int, request: CandidateUpdateRequest):
             map_radius=request.map_radius if request.add_to_map else None,
             map_hint=request.map_hint,
         )
-        trivia_id = None
-        if request.add_to_normal:
-            trivia = approve_candidate(db, candidate_id, "mobile-editor")
-            trivia_id = trivia.id
-        if request.add_to_map:
-            create_map_trivia_from_candidate(db, candidate)
-            if not request.add_to_normal:
-                reject_candidate(db, candidate_id, "mobile-editor:map-published")
-        return {"ok": True, "status": "approved", "trivia_id": trivia_id, "map_spot_id": None}
+        return {
+            "ok": True,
+            "status": "approved",
+            "trivia_id": result.trivia.id if result.trivia else None,
+            "map_spot_id": None,
+        }
     except CandidateError as exc:
         raise HTTPException(status_code=409, detail=str(exc))
     except ValueError as exc:
@@ -768,6 +755,12 @@ def _editor_html(candidate: TriviaCandidate, token: str, is_new: bool, map_mode:
         for category in TRIVIA_CATEGORIES
     )
     value = lambda raw: html.escape(raw or "")
+    image_urls = getattr(candidate, "image_urls", None)
+    if image_urls is None:
+        image_urls = [candidate.image_url] if candidate.image_url else []
+    image_urls_value = value("\n".join(image_urls))
+    image_sources_value = html.escape(json.dumps(getattr(candidate, "image_sources", None) or {}, ensure_ascii=False))
+    image_base_url = os.getenv("TRIVIA_IMAGE_R2_BASE_URL", "").strip().rstrip("/")
     heading = "新しい地図用雑学を登録" if is_new and map_mode else ("新しい雑学を登録" if is_new else f"雑学候補 #{candidate.id}")
     method = "POST" if is_new else "PUT"
     map_address_value = value(getattr(candidate, "map_address", "") or "")
@@ -797,7 +790,7 @@ def _editor_html(candidate: TriviaCandidate, token: str, is_new: bool, map_mode:
         if getattr(candidate, "map_hint", None):
             map_summary_parts.append(f"現地ポイント: {getattr(candidate, 'map_hint')}")
         map_summary = html.escape(" / ".join(str(part) for part in map_summary_parts if part))
-    return f"""<!doctype html>
+    return rf"""<!doctype html>
 <html lang="ja"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>雑学を編集</title>
@@ -811,6 +804,11 @@ button{{border:0;border-radius:11px;padding:14px;font-size:16px;font-weight:700}
 .check{{display:flex;gap:10px;align-items:center;margin-top:18px}}.check input{{width:auto;margin:0}}
 .mapbox{{display:{map_display};margin-top:12px;padding:14px;border:1px solid #d7dee5;border-radius:12px;background:#fbfcfd}}
 .grid2{{display:grid;grid-template-columns:1fr 1fr;gap:10px}}.smallbtn{{margin-top:10px;background:#e8edf1;width:100%}}
+.help{{color:#667085;font-size:13px;line-height:1.6;margin-top:6px}}.gallery{{display:grid;gap:12px;margin-top:12px}}
+.photo{{margin:0;padding:12px;border:1px solid #d7dee5;border-radius:12px;overflow:hidden}}
+.photo img{{display:block;max-height:260px;width:100%;object-fit:contain;border-radius:8px;background:#f4f6f8}}
+.photo figcaption{{margin-top:8px;font-size:14px;overflow-wrap:anywhere}}.photo-actions{{display:flex;gap:8px;margin-top:8px}}
+.photo-actions button{{flex:1;padding:10px;background:#e8edf1;font-size:14px}}button:disabled{{opacity:.45}}#image_urls{{min-height:100px}}
 #message{{margin-top:14px;min-height:24px;font-weight:700}}
 </style></head><body><main><div class="card">
 <h1>{heading}</h1>
@@ -819,9 +817,12 @@ button{{border:0;border-radius:11px;padding:14px;font-size:16px;font-weight:700}
 <label>解説<textarea id="explanation">{value(candidate.explanation)}</textarea></label>
 <label>カテゴリ<select id="category">{options}</select></label>
 <label>出典URL<input id="source" type="url" value="{value(candidate.source)}"></label>
-<label>画像URL / R2キー<input id="image_url" value="{value(candidate.image_url)}"></label>
-<label>スマホから画像を選択<input id="image_file" type="file" accept="image/*"></label>
-<img id="image_preview" alt="" style="display:none;width:100%;margin-top:12px;border-radius:10px">
+<label>写真URL / R2キー（1行に1枚）<textarea id="image_urls">{image_urls_value}</textarea></label>
+<textarea id="image_sources" hidden>{image_sources_value}</textarea>
+<div class="help">写真は10枚まで登録できます。1枚目を表紙として、アプリにはこの順番で表示します。下のボタンで順番の変更・削除ができます。</div>
+<label>スマホから写真を追加<input id="image_file" type="file" accept="image/*" multiple></label>
+<div class="help">複数の写真を選択できます。1枚12MBまで。写真の削除はこの雑学から外す操作です。</div>
+<div id="image_count" class="help" aria-live="polite"></div><div id="image_gallery" class="gallery"></div>
 <label class="check"><input id="add_to_normal" type="checkbox"{normal_checked}>通常の雑学に追加</label>
 <label class="check"><input id="add_to_map" type="checkbox"{map_checked} onchange="toggleMap()">雑学MAPに追加</label>
 {f'<div class="mapbox" style="display:block"><strong>収集済みMAP情報</strong><br>{map_summary}</div>' if map_summary else ''}
@@ -840,6 +841,72 @@ button{{border:0;border-radius:11px;padding:14px;font-size:16px;font-weight:700}
 <div class="actions"><button class="publish" onclick="submitCandidate()">登録する</button></div><div id="message"></div>
 </div></main><script>
 const editorToken={json.dumps(token)};
+const imageBaseUrl={json.dumps(image_base_url)};
+const imageUrlInput=document.getElementById("image_urls"),imageFileInput=document.getElementById("image_file");
+const savedImageSources=JSON.parse(document.getElementById("image_sources").value);
+let gallery=[],submitting=false;
+function urlLines(){{return [...new Set(imageUrlInput.value.split(/\r?\n/).map(value=>value.trim()).filter(Boolean))];}}
+function syncImageUrls(){{imageUrlInput.value=gallery.filter(item=>item.url).map(item=>item.url).join("\n");}}
+function previewUrl(reference){{
+ if(/^https?:\/\//i.test(reference))return reference;
+ if(!imageBaseUrl||/^\w+:/.test(reference)||reference.startsWith("//"))return "";
+ return imageBaseUrl+"/"+reference.replace(/^\/+/,"").split("/").map(encodeURIComponent).join("/");
+}}
+function moveImage(index,direction){{
+ if(submitting)return;
+ const target=index+direction;
+ if(target<0||target>=gallery.length)return;
+ [gallery[index],gallery[target]]=[gallery[target],gallery[index]];syncImageUrls();renderGallery();
+}}
+function removeImage(index){{
+ if(submitting)return;
+ const item=gallery.splice(index,1)[0];if(item.preview)URL.revokeObjectURL(item.preview);
+ syncImageUrls();renderGallery();
+}}
+function renderGallery(){{
+ const container=document.getElementById("image_gallery");container.replaceChildren();
+ document.getElementById("image_count").textContent=`${{gallery.length}} / 10枚`;
+ gallery.forEach((item,index)=>{{
+  const figure=document.createElement("figure");figure.className="photo";
+  const preview=item.preview||previewUrl(item.url),caption=document.createElement("figcaption");
+  if(preview){{const image=document.createElement("img");image.src=preview;image.alt=`写真 ${{index+1}}`;figure.append(image);}}
+  caption.textContent=`${{index+1}}枚目${{index===0?"（表紙）":""}}・${{item.file?item.file.name+"（アップロード待ち）":item.url}}`;
+  figure.append(caption);
+  const sourceLabel=document.createElement("label"),sourceInput=document.createElement("input");
+  sourceLabel.textContent="写真の出典";sourceInput.type="text";sourceInput.value=item.source||"";
+  sourceInput.placeholder="出典URL または 撮影者・提供元";sourceInput.disabled=submitting;
+  sourceInput.oninput=()=>{{item.source=sourceInput.value;}};sourceLabel.append(sourceInput);figure.append(sourceLabel);
+  const actions=document.createElement("div");actions.className="photo-actions";
+  [["前へ",()=>moveImage(index,-1),index===0],["次へ",()=>moveImage(index,1),index===gallery.length-1],["削除",()=>removeImage(index),false]].forEach(([label,action,disabled])=>{{
+   const button=document.createElement("button");button.type="button";button.textContent=label;
+   button.setAttribute("aria-label",`写真${{index+1}}を${{label}}`);button.disabled=submitting||disabled;button.onclick=action;actions.append(button);
+  }});figure.append(actions);container.append(figure);
+ }});
+}}
+function readImageUrls(){{
+ const pending=gallery.filter(item=>item.file),previous=gallery;
+ gallery=urlLines().map(url=>previous.find(item=>item.url===url)||{{url,source:savedImageSources[url]||""}}).concat(pending);renderGallery();
+}}
+imageUrlInput.addEventListener("input",readImageUrls);readImageUrls();
+imageFileInput.addEventListener("change",event=>{{
+ const message=document.getElementById("message"),knownKeys=new Set(gallery.map(item=>item.fileKey));
+ const files=[...event.target.files].filter(file=>{{const key=[file.name,file.size,file.lastModified].join(":");if(knownKeys.has(key))return false;knownKeys.add(key);return true;}});
+ imageFileInput.value="";
+ if(gallery.length+files.length>10){{message.textContent="写真は合計10枚までです。枚数を減らして選び直してください。";return}}
+ if(files.some(file=>!file.type.startsWith("image/")||file.size===0||file.size>12*1024*1024)){{message.textContent="写真は1枚12MB以下の画像ファイルを選択してください。";return}}
+ files.forEach(file=>gallery.push({{file,preview:URL.createObjectURL(file),fileKey:[file.name,file.size,file.lastModified].join(":")}}));
+ message.textContent="";renderGallery();
+}});
+function validateImageReferences(){{
+ for(const item of gallery){{
+  if(!item.url)continue;
+  const reference=item.url;
+  if(/[\x00-\x1f\\]/.test(reference)||reference.startsWith("//"))return false;
+  if(/^[a-z][a-z0-9+.-]*:/i.test(reference)){{
+   try{{const parsed=new URL(reference);if(!["http:","https:"].includes(parsed.protocol)||!parsed.hostname||parsed.username||parsed.password)return false;}}catch{{return false;}}
+  }}else if(reference.split("/").some(part=>part==="."||part===".."))return false;
+ }}return true;
+}}
 function toggleMap(){{
  document.getElementById("map_section").style.display=document.getElementById("add_to_map").checked?"block":"none";
 }}
@@ -853,40 +920,48 @@ function fillCurrentLocation(){{
   message.textContent="現在地を入力しました。都道府県も確認してください。";
  }},()=>{{message.textContent="現在地を取得できませんでした。位置情報の許可を確認してください。";}},{{enableHighAccuracy:true,timeout:10000}});
 }}
-document.getElementById("image_file").addEventListener("change",event=>{{
- const file=event.target.files[0],preview=document.getElementById("image_preview");
- if(!file){{preview.style.display="none";return}}
- preview.src=URL.createObjectURL(file);preview.style.display="block";
-}});
 async function submitCandidate(){{
- const message=document.getElementById("message");message.textContent="保存中...";
- let imageUrl=document.getElementById("image_url").value;
- const imageFile=document.getElementById("image_file").files[0];
- if(imageFile){{
-  message.textContent="画像をアップロード中...";
-  const formData=new FormData();formData.append("token",editorToken);formData.append("image",imageFile);
-  const uploadResponse=await fetch("/admin/candidates/image",{{method:"POST",body:formData}});
-  const uploadData=await uploadResponse.json();
-  if(!uploadResponse.ok){{message.textContent=uploadData.detail||"画像をアップロードできませんでした。";return}}
-  imageUrl=uploadData.image_url;document.getElementById("image_url").value=imageUrl;
- }}
- message.textContent="保存中...";
+ if(submitting)return;
+ const message=document.getElementById("message");
  const addToMap=document.getElementById("add_to_map").checked;
  const addToNormal=document.getElementById("add_to_normal").checked;
+ if(!document.getElementById("title").value.trim()||!document.getElementById("content").value.trim()){{message.textContent="タイトルと本文は必須です。";return}}
  if(!addToNormal&&!addToMap){{message.textContent="通常の雑学、雑学MAPのどちらかは選択してください。";return}}
  if(addToMap&&!document.getElementById("map_prefecture").value.trim()){{message.textContent="雑学MAPには都道府県が必要です。";return}}
  if(addToMap&&!document.getElementById("map_address").value.trim()){{message.textContent="雑学MAPには住所・施設名が必要です。";return}}
+ if(gallery.length>10){{message.textContent="写真は合計10枚までです。";return}}
+ if(!validateImageReferences()){{message.textContent="写真URL / R2キーの形式を確認してください。";return}}
+ const latitude=Number(document.getElementById("map_latitude").value),longitude=Number(document.getElementById("map_longitude").value),radius=Number(document.getElementById("map_radius").value);
+ if(addToMap&&(!Number.isFinite(latitude)||Math.abs(latitude)>90||!Number.isFinite(longitude)||Math.abs(longitude)>180||!Number.isInteger(radius)||radius<10||radius>5000)){{message.textContent="緯度・経度・解放半径（10〜5000m）を確認してください。";return}}
+ submitting=true;document.querySelectorAll("input,textarea,select,button").forEach(element=>element.disabled=true);renderGallery();
+ try{{
+ for(const item of gallery){{
+  if(!item.file)continue;
+  message.textContent="写真をアップロード中...";
+  const formData=new FormData();formData.append("token",editorToken);formData.append("image",item.file);
+  const uploadResponse=await fetch("/admin/candidates/image",{{method:"POST",body:formData}});
+  const uploadData=await uploadResponse.json();
+  if(!uploadResponse.ok||!uploadData.image_url)throw new Error(uploadData.detail||"写真をアップロードできませんでした。");
+  item.url=uploadData.image_url;delete item.file;URL.revokeObjectURL(item.preview);delete item.preview;
+  syncImageUrls();renderGallery();
+ }}
+ const imageUrls=gallery.map(item=>item.url);syncImageUrls();message.textContent="保存中...";
  const response=await fetch(window.location.pathname,{{method:"{method}",headers:{{"Content-Type":"application/json"}},body:JSON.stringify({{
  token:editorToken,title:document.getElementById("title").value,content:document.getElementById("content").value,
  explanation:document.getElementById("explanation").value,category:document.getElementById("category").value,add_to_normal:addToNormal,
- source:document.getElementById("source").value,image_url:imageUrl,publish:true,add_to_map:addToMap,
+ source:document.getElementById("source").value,image_urls:imageUrls,
+ image_sources:Object.fromEntries(gallery.filter(item=>item.source?.trim()).map(item=>[item.url,item.source.trim()])),publish:true,add_to_map:addToMap,
  map_spot_id:document.getElementById("map_spot_id").value,
  map_address:document.getElementById("map_address").value,
  map_prefecture:document.getElementById("map_prefecture").value,
- map_latitude:Number(document.getElementById("map_latitude").value),
- map_longitude:Number(document.getElementById("map_longitude").value),
- map_radius:Number(document.getElementById("map_radius").value),
+ map_latitude:latitude,
+ map_longitude:longitude,
+ map_radius:radius,
  map_hint:document.getElementById("map_hint").value}})}});
- const data=await response.json();message.textContent=response.ok?"登録しました。LINEへ戻ってください。":(data.detail||"保存できませんでした。");
+ const data=await response.json();
+ if(!response.ok)throw new Error(typeof data.detail==="string"?data.detail:"入力内容を確認してください。");
+ message.textContent="登録しました。LINEへ戻ってください。";
+ }}catch(error){{message.textContent=(error.message||"保存できませんでした。")+" 入力内容とアップロード済みの写真は残っています。確認して再試行してください。";}}
+ finally{{submitting=false;document.querySelectorAll("input,textarea,select,button").forEach(element=>element.disabled=false);renderGallery();}}
 }}
 </script></body></html>"""

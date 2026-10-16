@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "trivia-photo-harness"
+version = "0.2.0"
+description = "Codex-curated trivia photographs with R2 review state"
+requires-python = ">=3.10"
+dynamic = ["dependencies"]
+
+[project.optional-dependencies]
+admin = ["streamlit>=1.49,<2"]
+
+[tool.setuptools]
+packages = ["trivia_photo"]
+
+[tool.setuptools.dynamic]
+dependencies = {file = ["requirements.txt"]}
