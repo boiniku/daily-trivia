@@ -10,6 +10,7 @@ import test_approval as fixtures
 @unittest.skipUnless(importlib.util.find_spec("streamlit"), "Streamlit is an optional admin dependency")
 class AdminUiTests(unittest.TestCase):
     def setUp(self):
+        import streamlit as st
         from streamlit.testing.v1 import AppTest
         self.fixture = fixtures.ApprovalTests("test_adoption_still_waits_for_credit_display")
         self.fixture.setUp()
@@ -17,7 +18,11 @@ class AdminUiTests(unittest.TestCase):
         self.mock = patch("trivia_photo.admin_ui.create_workflow", return_value=self.workflow)
         self.mock.start()
         self.app = AppTest.from_string("from trivia_photo.admin_ui import render_photo_review\nrender_photo_review()", default_timeout=15)
-        self.app.run()
+        # AppTest's image element name differs across Streamlit releases.
+        # Exercise the real image renderer and observe the supplied images.
+        with patch("streamlit.image", wraps=st.image) as images:
+            self.app.run()
+        self.rendered_images = images.call_args_list
 
     def tearDown(self):
         self.mock.stop()
@@ -31,7 +36,9 @@ class AdminUiTests(unittest.TestCase):
 
     def test_compare_hold_filter_and_reselection_reason(self):
         self.assertEqual(len(self.app.exception), 0)
-        self.assertEqual(len(self.app.get("imgs")), 3)
+        self.assertEqual(len(self.rendered_images), 3)
+        self.assertTrue(all(isinstance(call.args[0], bytes) and call.args[0] for call in self.rendered_images))
+        self.assertFalse(any("写真を表示できません" in warning.value for warning in self.app.warning))
         self.click("保留")
         self.assertEqual(self.workflow.state.get(self.fixture.batch, 1)["status"], "held")
         self.app.selectbox(key="photo_status").set_value("保留").run()

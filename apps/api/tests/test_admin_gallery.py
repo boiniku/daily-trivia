@@ -117,7 +117,8 @@ class AdminGalleryTests(unittest.TestCase):
 
     def test_r2_batch_selection_across_pages_registers_all_selected_photos(self):
         self.r2.list_objects_v2.side_effect = [
-            {"Contents": [{"Key": "trivia/a.webp", "Size": 100}, {"Key": "trivia/b.webp", "Size": 100}],
+            {"Contents": [{"Key": "trivia/a.webp", "Size": 100}, {"Key": "trivia/b.webp", "Size": 100},
+                          *[{"Key": f"trivia/other-{i}.webp", "Size": 100} for i in range(10)]],
              "IsTruncated": True, "NextContinuationToken": "next-photos"},
             {"Contents": [{"Key": "trivia/c.webp", "Size": 100}], "IsTruncated": False},
         ]
@@ -129,6 +130,7 @@ class AdminGalleryTests(unittest.TestCase):
             checkbox_key = "new_r2:r2_browser:select:" + sha256(image.encode()).hexdigest()[:16]
             self.app.checkbox(key=checkbox_key).check()
             self.run_app()
+        self.assertFalse(self.app.button(key="new_r2:r2_browser:next").disabled)
         self.app.button(key="new_r2:r2_browser:next").click()
         self.run_app()
         image = "https://images.example.test/trivia/c.webp"
