@@ -22,6 +22,8 @@ class Trivia(Base):
     source = Column(String)
     category = Column(String)
     image_url = Column(String, nullable=True)
+    image_urls = Column(JSON, nullable=True)
+    image_sources = Column(JSON, nullable=True)
     hee_count = Column(Integer, default=0) # Added for "Hee" button
     embedding = Column(JSON, nullable=True) # Vector for similarity check
 
@@ -36,6 +38,8 @@ class MapTrivia(Base):
     source = Column(String)
     category = Column(String)
     image_url = Column(String, nullable=True)
+    image_urls = Column(JSON, nullable=True)
+    image_sources = Column(JSON, nullable=True)
     map_address = Column(String, nullable=False)
     map_prefecture = Column(String, nullable=False)
     map_latitude = Column(Float, nullable=False)
@@ -112,6 +116,8 @@ class TriviaCandidate(Base):
     source = Column(String)
     category = Column(String)
     image_url = Column(String, nullable=True)
+    image_urls = Column(JSON, nullable=True)
+    image_sources = Column(JSON, nullable=True)
     map_address = Column(String, nullable=True)
     map_prefecture = Column(String, nullable=True)
     map_latitude = Column(Float, nullable=True)

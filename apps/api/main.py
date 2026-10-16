@@ -6,6 +6,7 @@ from sqlalchemy import text, and_, case, func, or_
 from sqlalchemy.exc import IntegrityError
 from database import get_db, AppSessionLocal
 from models import Trivia, MapTrivia, MapTriviaUnlock, Collection, CollectionItem, DailyAssignment, TriviaHee
+from services.trivia_images import normalize_trivia_image_sources, read_trivia_images
 import random
 import datetime
 import os
@@ -21,7 +22,7 @@ def get_rls_db(user_id: str):
     db = AppSessionLocal()
     try:
         if user_id:
-            db.execute(text("SET LOCAL app.current_user_id = :uid"), {"uid": user_id})
+            db.execute(text("SELECT set_config('app.current_user_id', :uid, true)"), {"uid": user_id})
         yield db
     finally:
         db.close()
@@ -30,7 +31,7 @@ def get_rls_db_for_auth_user(user_id: str = Depends(get_current_user_id)):
     """RLS DB session for authenticated endpoints."""
     db = AppSessionLocal()
     try:
-        db.execute(text("SET LOCAL app.current_user_id = :uid"), {"uid": user_id})
+        db.execute(text("SELECT set_config('app.current_user_id', :uid, true)"), {"uid": user_id})
         yield db
     finally:
         db.close()
@@ -75,13 +76,13 @@ app.include_router(social_automation.router)
 # Pydantic Schemas
 from pydantic import BaseModel, Field
 try:
-    from pydantic import field_validator
+    from pydantic import model_validator
 except ImportError:
-    field_validator = None
+    model_validator = None
 try:
-    from pydantic import validator
+    from pydantic import root_validator
 except ImportError:
-    validator = None
+    root_validator = None
 
 TRIVIA_IMAGE_R2_BASE_URL = os.getenv("TRIVIA_IMAGE_R2_BASE_URL", "").strip().rstrip("/")
 MINIMUM_SUPPORTED_APP_VERSION = os.getenv("MINIMUM_SUPPORTED_APP_VERSION", "1.0.5").strip()
@@ -95,11 +96,28 @@ def build_trivia_image_url(raw_value: Optional[str]) -> Optional[str]:
     value = (raw_value or "").strip()
     if not value:
         return None
-    if value.startswith(("http://", "https://", "data:")):
+    if value.lower().startswith(("http://", "https://", "data:")):
         return value
     if not TRIVIA_IMAGE_R2_BASE_URL:
         return value
     return f"{TRIVIA_IMAGE_R2_BASE_URL}/{value.lstrip('/')}"
+
+
+def public_trivia_image_values(image_urls=None, image_url=None, image_sources=None) -> dict:
+    images = read_trivia_images(image_urls, image_url)
+    sources = normalize_trivia_image_sources(image_sources, images, strict=False)
+    sources = {build_trivia_image_url(image): source for image, source in sources.items()}
+    images = [build_trivia_image_url(image) for image in images]
+    return {"image_urls": images, "image_url": images[0] if images else None, "image_sources": sources}
+
+
+def _trivia_schema_values(value, field_names):
+    if isinstance(value, dict):
+        values = dict(value)
+    else:
+        values = {name: getattr(value, name) for name in field_names if hasattr(value, name)}
+    values.update(public_trivia_image_values(values.get("image_urls"), values.get("image_url"), values.get("image_sources")))
+    return values
 
 class TriviaSchema(BaseModel):
     id: int
@@ -109,18 +127,20 @@ class TriviaSchema(BaseModel):
     source: str
     category: str
     image_url: Optional[str] = None
+    image_urls: List[str] = Field(default_factory=list)
+    image_sources: dict[str, str] = Field(default_factory=dict)
     hee_count: int = 0
     date: Optional[datetime.date] = None
 
-    if field_validator:
-        @field_validator("image_url", mode="before")
+    if model_validator:
+        @model_validator(mode="before")
         @classmethod
-        def normalize_image_url(cls, value):
-            return build_trivia_image_url(value)
-    elif validator:
-        @validator("image_url", pre=True, always=True)
-        def normalize_image_url(cls, value):
-            return build_trivia_image_url(value)
+        def normalize_images(cls, value):
+            return _trivia_schema_values(value, cls.model_fields)
+    elif root_validator:
+        @root_validator(pre=True)
+        def normalize_images(cls, value):
+            return _trivia_schema_values(value, cls.__fields__)
     
     class Config:
         from_attributes = True
@@ -153,6 +173,10 @@ class TriviaMapSpotSchema(BaseModel):
     title: str
     description: str
     explanation: str
+    source: Optional[str] = None
+    image_url: Optional[str] = None
+    image_urls: List[str] = Field(default_factory=list)
+    image_sources: dict[str, str] = Field(default_factory=dict)
     latitude: float
     longitude: float
     unlockRadiusMeters: int
@@ -267,6 +291,8 @@ def get_map_trivia(
             "title": item.title,
             "description": item.content,
             "explanation": item.explanation or "",
+            "source": item.source or "",
+            **public_trivia_image_values(item.image_urls, item.image_url, item.image_sources),
             "latitude": float(item.map_latitude),
             "longitude": float(item.map_longitude),
             "unlockRadiusMeters": int(item.map_radius or 1200),
@@ -481,7 +507,7 @@ def get_todays_trivia(
 
     try:
         if user_id:
-            db.execute(text("SET LOCAL app.current_user_id = :uid"), {"uid": user_id})
+            db.execute(text("SELECT set_config('app.current_user_id', :uid, true)"), {"uid": user_id})
 
         # Default to Server's Effective Date if no date provided
         JST = datetime.timezone(datetime.timedelta(hours=9))
@@ -649,7 +675,7 @@ def get_widget_trivia(
     db = AppSessionLocal()
     try:
         if user_id:
-            db.execute(text("SET LOCAL app.current_user_id = :uid"), {"uid": user_id})
+            db.execute(text("SELECT set_config('app.current_user_id', :uid, true)"), {"uid": user_id})
 
         # Default to Server's Effective Date if no date provided
         JST = datetime.timezone(datetime.timedelta(hours=9))
@@ -784,7 +810,7 @@ def get_trivia_by_id(trivia_id: int):
 @app.post("/history")
 def add_to_history(request: HistoryRequest, user_id: str = Depends(get_current_user_id)):
     db = AppSessionLocal()
-    db.execute(text("SET LOCAL app.current_user_id = :uid"), {"uid": user_id})
+    db.execute(text("SELECT set_config('app.current_user_id', :uid, true)"), {"uid": user_id})
     try:
         # Find "History" collection for this user
         history_collection = db.query(Collection).filter(
@@ -851,7 +877,7 @@ def add_to_history(request: HistoryRequest, user_id: str = Depends(get_current_u
 @app.get("/collections", response_model=List[CollectionSchema])
 def get_collections(user_id: str = Depends(get_current_user_id)):
     db = AppSessionLocal()
-    db.execute(text("SET LOCAL app.current_user_id = :uid"), {"uid": user_id})
+    db.execute(text("SELECT set_config('app.current_user_id', :uid, true)"), {"uid": user_id})
     try:
         # Fetch collections for this user
         collections = db.query(Collection).filter(Collection.user_id == user_id).all()
@@ -953,7 +979,7 @@ def get_collections(user_id: str = Depends(get_current_user_id)):
 @app.delete("/collections/{collection_id}")
 def delete_collection(collection_id: int, user_id: str = Depends(get_current_user_id)):
     db = AppSessionLocal()
-    db.execute(text("SET LOCAL app.current_user_id = :uid"), {"uid": user_id})
+    db.execute(text("SELECT set_config('app.current_user_id', :uid, true)"), {"uid": user_id})
     # Verify ownership
     col = db.query(Collection).filter(Collection.id == collection_id, Collection.user_id == user_id).first()
     if not col:
@@ -984,7 +1010,7 @@ class CreateCollectionRequest(BaseModel):
 @app.post("/collections", response_model=CollectionSchema)
 def create_collection(request: CreateCollectionRequest, user_id: str = Depends(get_current_user_id)):
     db = AppSessionLocal()
-    db.execute(text("SET LOCAL app.current_user_id = :uid"), {"uid": user_id})
+    db.execute(text("SELECT set_config('app.current_user_id', :uid, true)"), {"uid": user_id})
     try:
         new_collection = Collection(
             user_id=user_id,
@@ -1032,7 +1058,7 @@ def search_collection_items(
     """Search one user's collection without loading its entire history."""
     db = AppSessionLocal()
     try:
-        db.execute(text("SET LOCAL app.current_user_id = :uid"), {"uid": user_id})
+        db.execute(text("SELECT set_config('app.current_user_id', :uid, true)"), {"uid": user_id})
         collection = db.query(Collection).filter(
             Collection.id == collection_id,
             Collection.user_id == user_id,
@@ -1130,7 +1156,7 @@ def search_collection_items(
 def get_collection_items(collection_id: int, user_id: str = Depends(get_current_user_id)):
     from sqlalchemy import func, and_
     db = AppSessionLocal()
-    db.execute(text("SET LOCAL app.current_user_id = :uid"), {"uid": user_id})
+    db.execute(text("SELECT set_config('app.current_user_id', :uid, true)"), {"uid": user_id})
     # Join Trivia and CollectionItem to get trivias in the collection
     # Also verify collection belongs to user
     col = db.query(Collection).filter(Collection.id == collection_id, Collection.user_id == user_id).first()
@@ -1163,7 +1189,7 @@ class AddCollectionItemRequest(BaseModel):
 @app.post("/collections/{collection_id}/items")
 def add_collection_item(collection_id: int, request: AddCollectionItemRequest, user_id: str = Depends(get_current_user_id)):
     db = AppSessionLocal()
-    db.execute(text("SET LOCAL app.current_user_id = :uid"), {"uid": user_id})
+    db.execute(text("SELECT set_config('app.current_user_id', :uid, true)"), {"uid": user_id})
     try:
         # Check if collection exists and belongs to user
         collection = db.query(Collection).filter(Collection.id == collection_id, Collection.user_id == user_id).first()
@@ -1203,7 +1229,7 @@ class HeeRequest(BaseModel):
 @app.post("/trivia/{trivia_id}/hee")
 def add_hee(trivia_id: int, request: HeeRequest, user_id: str = Depends(get_current_user_id)):
     db = AppSessionLocal()
-    db.execute(text("SET LOCAL app.current_user_id = :uid"), {"uid": user_id})
+    db.execute(text("SELECT set_config('app.current_user_id', :uid, true)"), {"uid": user_id})
     try:
         # 1. Check if user has already hit limit for this trivia
         existing_hee = db.query(TriviaHee).filter(
@@ -1258,7 +1284,7 @@ def add_hee(trivia_id: int, request: HeeRequest, user_id: str = Depends(get_curr
 @app.get("/trivia/{trivia_id}/hee")
 def get_hee_status(trivia_id: int, user_id: str = Depends(get_current_user_id)):
     db = AppSessionLocal()
-    db.execute(text("SET LOCAL app.current_user_id = :uid"), {"uid": user_id})
+    db.execute(text("SELECT set_config('app.current_user_id', :uid, true)"), {"uid": user_id})
     try:
         # Get total count
         trivia = db.query(Trivia).filter(Trivia.id == trivia_id).first()

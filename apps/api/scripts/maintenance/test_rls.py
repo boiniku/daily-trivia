@@ -72,14 +72,14 @@ def test_rls():
         
         # Get user A's collections via app_user with user_id set
         with app_engine.connect() as conn:
-            conn.execute(text("SET LOCAL app.current_user_id = :uid"), {"uid": user_a})
+            conn.execute(text("SELECT set_config('app.current_user_id', :uid, true)"), {"uid": user_a})
             result = conn.execute(text("SELECT COUNT(*) FROM collections"))
             rls_count_a = result.scalar()
             check(f"User A sees only own collections (admin={admin_count_a}, RLS={rls_count_a})", rls_count_a == admin_count_a)
         
         # User A should NOT see user B's collections
         with app_engine.connect() as conn:
-            conn.execute(text("SET LOCAL app.current_user_id = :uid"), {"uid": user_a})
+            conn.execute(text("SELECT set_config('app.current_user_id', :uid, true)"), {"uid": user_a})
             result = conn.execute(text("SELECT COUNT(*) FROM collections WHERE user_id = :uid"), {"uid": user_b})
             cross_count = result.scalar()
             check(f"User A cannot see User B's collections (count={cross_count})", cross_count == 0)

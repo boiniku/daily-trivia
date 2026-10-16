@@ -15,7 +15,7 @@ from routers.user import _merge_guest_data
 
 class LocalSession(Session):
     def execute(self, statement, *args, **kwargs):
-        if str(statement).startswith('SET LOCAL app.current_user_id'):
+        if str(statement).startswith("SELECT set_config('app.current_user_id'"):
             return None
         return super().execute(statement, *args, **kwargs)
 

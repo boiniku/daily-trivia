@@ -37,6 +37,58 @@ jobs:
       - name: Test API, including the public 1.0.5 contract
         run: python -m unittest discover -s tests -v
 
+  postgres-startup:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: test-only
+          POSTGRES_DB: trivia_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd pg_isready --health-interval 5s
+          --health-timeout 5s --health-retries 10
+    defaults:
+      run:
+        working-directory: apps/api
+    env:
+      DATABASE_URL: postgresql+psycopg://postgres:test-only@localhost:5432/trivia_test
+      APP_DATABASE_URL: postgresql+psycopg://postgres:test-only@localhost:5432/trivia_test
+      TEST_POSTGRES_DATABASE_URL: postgresql+psycopg://postgres:test-only@localhost:5432/trivia_test
+      APP_ENV: staging
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+      - run: pip install -r requirements.txt
+      - name: Verify real PostgreSQL migrations with both drivers
+        run: python -m unittest discover -s tests -p 'test_postgres_*.py' -v
+      - name: Verify the full API starts repeatedly on PostgreSQL
+        run: |
+          python - <<'PY'
+          from fastapi.testclient import TestClient
+          from main import app
+          from database import AppSessionLocal
+          from models import Trivia
+          for attempt in range(2):
+              with TestClient(app) as client:
+                  assert client.get('/health').json()['environment'] == 'staging'
+                  with AppSessionLocal() as db:
+                      item = Trivia(title='Startup test', content='Body', explanation='Explanation',
+                          source='', category='Test', image_url='https://images.test/one.webp',
+                          image_urls=['https://images.test/one.webp', 'https://images.test/two.webp'],
+                          image_sources={'https://images.test/two.webp': 'Photographer'})
+                      db.add(item)
+                      db.commit()
+                      trivia_id = item.id
+                  response = client.get(f'/trivia/{trivia_id}')
+                  assert response.status_code == 200, response.text
+                  assert len(response.json()['image_urls']) == 2
+                  assert response.json()['image_sources']['https://images.test/two.webp'] == 'Photographer'
+          PY
+
   mobile:
     runs-on: ubuntu-latest
     defaults:
@@ -53,5 +105,5 @@ jobs:
       - run: npm run typecheck
       - run: npm run verify:release
         env:
-          RELEASE_VERSION: "1.1.0"
+          RELEASE_VERSION: "1.1.1"
       - run: npx expo config --type public

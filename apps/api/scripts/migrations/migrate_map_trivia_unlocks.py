@@ -80,9 +80,10 @@ def migrate() -> None:
                 )
                 SELECT :title, :content, :explanation, '', '地域',
                        :address, :prefecture, :latitude, :longitude,
-                       :radius, '', FALSE, :legacy_spot_id
+                       :radius, '', FALSE, CAST(:legacy_spot_id AS VARCHAR)
                 WHERE NOT EXISTS (
-                    SELECT 1 FROM map_trivia WHERE legacy_spot_id = :legacy_spot_id
+                    SELECT 1 FROM map_trivia
+                    WHERE legacy_spot_id = CAST(:legacy_spot_id AS VARCHAR)
                 )
             """), spot)
 

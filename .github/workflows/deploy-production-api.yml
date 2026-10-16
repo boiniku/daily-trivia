@@ -1,0 +1,33 @@
+name: Deploy production API
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production-release
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: production-render
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+      - name: Deploy this exact main commit and verify production health
+        env:
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+          RENDER_SERVICE_ID: ${{ secrets.RENDER_PRODUCTION_SERVICE_ID }}
+        run: |
+          python .github/scripts/render_release.py deploy \
+            --service-id "$RENDER_SERVICE_ID" \
+            --token "$RENDER_API_KEY" \
+            --commit "$GITHUB_SHA" \
+            --health-url https://daily-trivia-e7ge.onrender.com/health

@@ -62,7 +62,7 @@ def get_app_db(user_id: str = None):
     db = AppSessionLocal()
     try:
         if user_id:
-            db.execute(text(f"SET LOCAL app.current_user_id = '{user_id}'"))
+            db.execute(text("SELECT set_config('app.current_user_id', :uid, true)"), {"uid": user_id})
         yield db
     finally:
         db.close()

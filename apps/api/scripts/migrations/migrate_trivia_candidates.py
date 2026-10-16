@@ -94,6 +94,11 @@ def migrate():
             # Search remains correct without these optional performance indexes.
             print(f"Warning: could not create trivia search indexes: {exc}")
 
+    # Run after historical map copies above so they also receive their cover
+    # gallery. This entrypoint is used by both API startup and Render deploys.
+    from scripts.migrations.migrate_trivia_images import migrate as migrate_images
+    migrate_images(engine)
+
 
 if __name__ == "__main__":
     migrate()

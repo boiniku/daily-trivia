@@ -20,7 +20,7 @@ class CollectionSearchTests(unittest.TestCase):
 
         @event.listens_for(self.engine, "before_cursor_execute", retval=True)
         def replace_postgres_rls_statement(conn, cursor, statement, parameters, context, executemany):
-            if statement.startswith("SET LOCAL app.current_user_id"):
+            if statement.startswith("SELECT set_config('app.current_user_id'"):
                 return "SELECT 1", ()
             return statement, parameters
 
