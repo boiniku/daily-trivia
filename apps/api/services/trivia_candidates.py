@@ -7,6 +7,7 @@ from typing import Iterable, Optional
 from sqlalchemy.orm import Session
 
 from models import Trivia, TriviaCandidate
+from services.trivia_images import UNSET, merge_trivia_image_values, trivia_image_values
 
 
 VALID_CANDIDATE_STATUSES = {"pending", "approved", "rejected"}
@@ -240,7 +241,7 @@ def _add_candidate(db: Session, item: dict) -> TriviaCandidate:
         explanation=(item.get("explanation") or "").strip(),
         source=(item.get("source") or "").strip(),
         category=(item.get("category") or "その他").strip(),
-        image_url=(item.get("image_url") or "").strip() or None,
+        **trivia_image_values(item.get("image_urls"), item.get("image_url"), item.get("image_sources")),
         map_address=(item.get("map_address") or "").strip() or None,
         map_prefecture=(item.get("map_prefecture") or "").strip() or None,
         map_latitude=_optional_float(item.get("map_latitude")),
@@ -263,7 +264,9 @@ def update_candidate(
     explanation: str,
     source: str,
     category: str,
-    image_url: Optional[str] = None,
+    image_url=UNSET,
+    image_urls: Optional[list[str]] = None,
+    image_sources=UNSET,
     map_address: Optional[str] = None,
     map_prefecture: Optional[str] = None,
     map_latitude: Optional[float] = None,
@@ -289,12 +292,21 @@ def update_candidate(
     if duplicate:
         raise DuplicateCandidateError(duplicate)
 
+    image_updates = {"image_urls": image_urls}
+    if image_url is not UNSET:
+        image_updates["image_url"] = image_url
+    if image_sources is not UNSET:
+        image_updates["image_sources"] = image_sources
+    images = merge_trivia_image_values(candidate, image_updates)
+
     candidate.title = title.strip()
     candidate.content = content.strip()
     candidate.explanation = explanation.strip()
     candidate.source = source.strip()
     candidate.category = category.strip() or "その他"
-    candidate.image_url = (image_url or "").strip() or None
+    candidate.image_url = images["image_url"]
+    candidate.image_urls = images["image_urls"]
+    candidate.image_sources = images["image_sources"]
     candidate.map_address = (map_address or "").strip() or None
     candidate.map_prefecture = (map_prefecture or "").strip() or None
     candidate.map_latitude = _optional_float(map_latitude)
@@ -333,13 +345,17 @@ def approve_candidate(db: Session, candidate_id: int, reviewed_by: str) -> Trivi
     if duplicate:
         raise DuplicateCandidateError(duplicate)
 
+    images = trivia_image_values(candidate.image_urls, candidate.image_url, candidate.image_sources)
+    candidate.image_url = images["image_url"]
+    candidate.image_urls = images["image_urls"]
+    candidate.image_sources = images["image_sources"]
     trivia = Trivia(
         title=candidate.title,
         content=candidate.content,
         explanation=candidate.explanation,
         source=candidate.source,
         category=candidate.category,
-        image_url=candidate.image_url,
+        **images,
         embedding=candidate.embedding,
     )
     db.add(trivia)

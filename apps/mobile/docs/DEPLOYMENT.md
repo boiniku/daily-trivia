@@ -4,25 +4,27 @@
 
 | 用途 | Gitブランチ | EASプロファイル | API | DB |
 |---|---|---|---|---|
-| ローカル開発 | 任意 | `development` | ローカルまたはステージング | ローカルまたはステージング |
-| Development Build | `develop` | `development` | ステージング | ステージング専用 |
-| 内部配布 | `develop` | `preview` | ステージング | ステージング専用 |
-| TestFlight | `develop` | `testflight` | ステージング | ステージング専用 |
+| ローカル開発 | 任意 | `development` | 本番 | 本番 |
+| Development Build | `develop` | `development` | 本番 | 本番 |
+| 内部配布 | `develop` | `preview` | 本番 | 本番 |
+| TestFlight | `develop` | `testflight` | 本番 | 本番 |
 | App Store | `main` | `production` | 本番 | 本番 |
 
-TestFlight用ビルドをApp Store本番へ昇格させないこと。ステージングURLがバイナリに組み込まれているため、本番提出時は必ず`production`プロファイルで別のビルドを作る。
+2026-10-16のユーザー指定により、アプリの全ビルドは本番API経由で同じ本番DBを参照する。
+ビルド種別、広告・課金の開発フラグ、EASの更新チャンネルは引き続き分ける。
+App Store提出は`production`プロファイルで作成する。
 
-## 初回セットアップ
+## 接続と画像の承認
 
-1. Neonに本番とは別のステージングDB（または完全分離したNeonブランチ）を作成する。
-2. ステージング用にowner接続とRLS対象app_user接続を用意する。
-3. Render Blueprintを同期し、`daily-trivia-backend-staging`を作成する。
-4. ステージングサービスの`DATABASE_URL`と`APP_DATABASE_URL`へ、ステージングDBのURLだけを設定する。
-5. Firebase、OpenAI、R2等のステージング用環境変数を設定する。R2を共用する場合も`R2_TRIVIA_IMAGE_PREFIX=staging`を維持する。
-6. Renderが割り当てたURLが`https://daily-trivia-backend-staging.onrender.com`と違う場合、`eas.json`の3か所とRenderの`PUBLIC_BASE_URL`を実URLへ変更する。
-7. `/health`が`{"status":"ok","environment":"staging"}`を返すことを確認する。
+- `eas.json`のdevelopment・preview・testflight・productionは本番APIを明示指定する。
+- ローカルのExpoも`.env.development.local`の本番APIを使う。接続先を未設定にした開発環境だけlocalhostへフォールバックする。
+- 管理画面の「管理・編集 → 写真の確認」で採用すると、その管理画面の本番DBへ写真と出典を保存する。
+- `image_url`は先頭1枚、`image_urls`は全写真、`image_sources`は写真別の出典。旧版は1枚、新版は全写真を読む。
+- DB反映に失敗したら採用を保持し、画面の「採用済みの写真を本番へ反映」から再試行する。
+- 本番APIにも複数写真のレスポンス対応が必要。DBに列を作るだけでは旧APIから全写真を取得できない。
 
-本番DBのURLをステージングへコピーしてはいけない。バックエンドは起動時にマイグレーションを実行するため、誤接続すると本番スキーマや本番データへ影響する。
+RenderのステージングサービスとテストDBは、サーバー移行・互換性検証用として残す。
+開発アプリが本番データを使うために、ステージングサービスのDB接続設定を変更する必要はない。
 
 ## 通常のテスト
 
@@ -38,14 +40,14 @@ npm run build:testflight
 npm run submit:testflight
 ```
 
-TestFlight版は`EXPO_PUBLIC_APP_ENV=staging`で作られ、ステージングAPIを参照する。
+TestFlight版は`EXPO_PUBLIC_APP_ENV=staging`で作られるが、データは本番API経由で本番DBを参照する。
 
 ## 本番リリース
 
 安全な順序は「後方互換バックエンドを先に、本番アプリを後に」である。
 
-1. ステージングへバックエンドをデプロイする。
-2. Development BuildとTestFlightで旧機能・新機能を確認する。
+1. バックエンドの移行と旧版互換性をテストDBで検証する。
+2. 本番API更新後、Development BuildとTestFlightでも同じ本番データを使って確認する。
 3. DB変更が追加型であり、旧アプリからのリクエストでも動くことを確認する。
 4. 本番バックエンドを手動デプロイする。この時点でも旧アプリが動く必要がある。
 5. `production`プロファイルで本番API参照のアプリをビルドする。
@@ -105,3 +107,11 @@ EASはビルドをApp Store Connectへアップロードするところまでで
 - DBの破壊的変更を同じデプロイで行わない。アプリのロールバックよりDBの巻き戻しの方が難しい。
 - 本番API URLをTestFlight用に切り替えて回避しない。
 - ステージングビルドを本番へ提出しない。
+
+## APIだけの本番更新
+
+`deploy-production-api.yml`はmainのAPIをRenderへ手動反映し、同じコミットでのヘルスチェックまで確認する。アプリ版数に依存せず、App Storeビルドや提出は実行しない。
+
+```powershell
+gh workflow run deploy-production-api.yml --ref main
+```

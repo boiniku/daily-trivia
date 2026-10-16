@@ -1,6 +1,7 @@
 from sqlalchemy.orm import Session
 
 from models import MapTrivia, TriviaCandidate
+from services.trivia_images import trivia_image_values
 
 
 def archive_map_trivia(db: Session, map_trivia_id: int) -> MapTrivia:
@@ -21,7 +22,9 @@ def create_map_trivia(
     explanation: str,
     source: str,
     category: str,
-    image_url: str | None,
+    image_url: str | None = None,
+    image_urls: list[str] | None = None,
+    image_sources: dict[str, str] | None = None,
     map_address: str,
     map_prefecture: str,
     map_latitude: float,
@@ -35,7 +38,7 @@ def create_map_trivia(
         explanation=(explanation or "").strip(),
         source=(source or "").strip(),
         category=(category or "その他").strip(),
-        image_url=(image_url or "").strip() or None,
+        **trivia_image_values(image_urls, image_url, image_sources),
         map_address=map_address.strip(),
         map_prefecture=map_prefecture.strip(),
         map_latitude=float(map_latitude),
@@ -58,6 +61,8 @@ def create_map_trivia_from_candidate(db: Session, candidate: TriviaCandidate) ->
         source=candidate.source or "",
         category=candidate.category or "その他",
         image_url=candidate.image_url,
+        image_urls=candidate.image_urls,
+        image_sources=candidate.image_sources,
         map_address=candidate.map_address or "",
         map_prefecture=candidate.map_prefecture or "",
         map_latitude=float(candidate.map_latitude),

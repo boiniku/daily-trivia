@@ -1,5 +1,5 @@
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { View, Text, StyleSheet, ScrollView, Pressable, Modal, FlatList, ActivityIndicator, Alert, TouchableOpacity, Platform, Linking, Image } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, Pressable, Modal, FlatList, ActivityIndicator, Alert, TouchableOpacity, Platform, Linking } from 'react-native';
 import { BannerAd, BannerAdSize } from 'react-native-google-mobile-ads';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -9,6 +9,8 @@ import { useState, useEffect } from 'react';
 import { Config } from '../constants/Config';
 import { useAuth } from '../contexts/AuthContext';
 import HeeButton from '../components/HeeButton';
+import TriviaImageGallery from '../components/TriviaImageGallery';
+import { parseTriviaImageSourcesParam, parseTriviaImageUrlsParam, readTriviaImageSources, readTriviaImageUrls } from '../utils/triviaImages';
 import { fetchWithToken } from '../utils/apiClient';
 
 const getBackendUrl = () => {
@@ -44,10 +46,11 @@ export default function DetailsScreen() {
     const [fullData, setFullData] = useState({
         title: getSingleParam(params.title) || 'タイトルなし',
         explanation: getSingleParam(params.explanation) || '解説データがありません',
-        source: getSingleParam(params.source) || '',
         category: getSingleParam(params.category) || '未分類',
         content: getSingleParam(params.content) || '',
         image_url: getSingleParam(params.image_url) || '',
+        image_urls: parseTriviaImageUrlsParam(params.image_urls),
+        image_sources: parseTriviaImageSourcesParam(params.image_sources),
         user_hee_count: Number.isFinite(initialUserHeeCount) ? initialUserHeeCount : 0
     });
     const [loadingDetails, setLoadingDetails] = useState(false);
@@ -65,10 +68,12 @@ export default function DetailsScreen() {
                     setFullData(prev => ({
                         title: data.title || prev.title,
                         explanation: data.explanation || '解説データがありません',
-                        source: data.source || prev.source,
                         category: data.category || prev.category,
                         content: data.content || prev.content,
-                        image_url: data.image_url || prev.image_url,
+                        image_url: typeof data.image_url === 'string' ? data.image_url : data.image_url === null ? '' : prev.image_url,
+                        image_urls: readTriviaImageUrls(data.image_urls)
+                            ?? (Object.prototype.hasOwnProperty.call(data, 'image_url') ? undefined : prev.image_urls),
+                        image_sources: readTriviaImageSources(data.image_sources),
                         user_hee_count: data.user_hee_count !== undefined ? data.user_hee_count : prev.user_hee_count
                     }));
                 }
@@ -80,15 +85,6 @@ export default function DetailsScreen() {
         };
         fetchFullDetails();
     }, [hasValidTriviaId, triviaId]);
-
-    const triviaImageUrl = (() => {
-        const rawUrl = fullData.image_url.trim();
-        if (!rawUrl) return '';
-        if (/^https?:\/\//i.test(rawUrl) || rawUrl.startsWith('data:')) return rawUrl;
-        const baseUrl = Config.TRIVIA_IMAGE_R2_BASE_URL.trim().replace(/\/+$/, '');
-        const path = rawUrl.replace(/^\/+/, '');
-        return baseUrl ? `${baseUrl}/${path}` : '';
-    })();
 
     // Add to Folder State
     const [isModalVisible, setIsModalVisible] = useState(false);
@@ -187,17 +183,13 @@ export default function DetailsScreen() {
 
                     <Text style={styles.title}>{fullData.title}</Text>
 
-                    {triviaImageUrl ? (
-                        <View style={styles.heroImageBlock}>
-                            <Image
-                                source={{ uri: triviaImageUrl }}
-                                style={styles.heroImage}
-                                resizeMode="cover"
-                                accessibilityLabel={`${fullData.title}の写真`}
-                            />
-                            <Text style={styles.imageDisclaimer}>画像はイメージです</Text>
-                        </View>
-                    ) : null}
+                    <TriviaImageGallery
+                        itemKey={idParam}
+                        title={fullData.title}
+                        imageUrls={fullData.image_urls}
+                        imageUrl={fullData.image_url}
+                        imageSources={fullData.image_sources}
+                    />
 
                     <View style={styles.cardSection}>
                         <Text style={styles.mainContent}>{fullData.content}</Text>
@@ -245,15 +237,6 @@ export default function DetailsScreen() {
                         )}
                     </View>
 
-                    {/* source ? (
-                        <View style={[styles.section, { borderBottomWidth: 0 }]}>
-                            <View style={styles.sectionHeader}>
-                                <Ionicons name="book" size={20} color={Colors.light.subtext} style={{ marginRight: 8 }} />
-                                <Text style={styles.sourceTitle}>出典・参考</Text>
-                            </View>
-                            <Text style={styles.sourceText}>{source}</Text>
-                        </View>
-                    ) : null */}
                 </ScrollView>
 
                 {/* Banner Ad */}
@@ -388,22 +371,6 @@ const styles = StyleSheet.create({
         borderWidth: 2, // Thicker border
         borderColor: '#EFEFEF',
     },
-    heroImage: {
-        width: '100%',
-        aspectRatio: 16 / 9,
-        borderRadius: Theme.borderRadius.l,
-        backgroundColor: '#EFEFEF',
-    },
-    heroImageBlock: {
-        marginBottom: 24,
-    },
-    imageDisclaimer: {
-        marginTop: 6,
-        fontSize: 12,
-        color: Colors.light.subtext,
-        textAlign: 'right',
-        fontWeight: '500',
-    },
     mainContent: {
         fontSize: 18,
         color: '#111111', // Absolute black for contrast
@@ -432,16 +399,6 @@ const styles = StyleSheet.create({
         lineHeight: 28,
         color: '#222222', // Darker for readability
         textAlign: 'justify',
-    },
-    sourceTitle: {
-        fontSize: 14,
-        fontWeight: 'bold',
-        color: Colors.light.subtext,
-    },
-    sourceText: {
-        fontSize: 14,
-        color: Colors.light.subtext,
-        fontStyle: 'italic',
     },
     // Modal Styles
     modalOverlay: {

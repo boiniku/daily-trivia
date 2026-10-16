@@ -1,0 +1,34 @@
+/* details.tsx: width 100%, aspectRatio 16/9, cover, Theme.borderRadius.l = 36. */
+.photo {
+  height: auto;
+  padding: 20px 20px 0;
+  background: white;
+  display: block;
+}
+.photo img {
+  display: block;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 16 / 9;
+  object-fit: cover;
+  object-position: 50% 50%;
+  border-radius: 36px;
+  background: #efefef;
+}
+.photo .no-image {
+  aspect-ratio: 16 / 9;
+  display: grid;
+  place-items: center;
+  border-radius: 36px;
+  background: #efefef;
+}
+.format-note { font-size: 11px; color: var(--muted); margin: 8px 0 0; }
+.source-detail { margin-top: 12px; }
+.source-photo {
+  display: block;
+  margin-top: 12px;
+  width: 100%;
+  max-height: 420px;
+  object-fit: contain;
+  background: #f3f4ef;
+}

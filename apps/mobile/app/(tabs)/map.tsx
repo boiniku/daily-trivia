@@ -19,6 +19,7 @@ import {
     getTabScreenAdBottomMargin,
 } from '../../constants/Layout';
 import { Config } from '../../constants/Config';
+import TriviaImageGallery from '../../components/TriviaImageGallery';
 import { useRevenueCat } from '../../contexts/RevenueCatContext';
 import { useAuth } from '../../contexts/AuthContext';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -306,6 +307,22 @@ export default function TriviaMapScreen() {
             subscription?.remove();
         };
     }, [userId]);
+
+    useEffect(() => {
+        if (!isDetailVisible || !selectedSpotId || !userId) return;
+        let cancelled = false;
+        // Refresh photos approved since the map was opened. Preserve this
+        // device's unlock history when merging the latest public metadata.
+        getTriviaSpots().then((latest) => {
+            if (cancelled || currentUserIdRef.current !== userId) return;
+            const updated = latest.find(spot => spot.id === selectedSpotId);
+            if (!updated) return;
+            setTriviaSpots(spotsRef.current.map(spot => spot.id === selectedSpotId
+                ? { ...spot, ...updated, isUnlocked: spot.isUnlocked, unlockedAt: spot.unlockedAt }
+                : spot));
+        }).catch(error => console.warn('Map detail photo refresh failed:', error));
+        return () => { cancelled = true; };
+    }, [isDetailVisible, selectedSpotId, userId]);
 
     useEffect(() => {
         if (!isMapReady || !userLocation || hasCenteredOnUserRef.current) return;
@@ -642,6 +659,13 @@ export default function TriviaMapScreen() {
 
                         {canRead ? (
                             <View>
+                                <TriviaImageGallery
+                                    itemKey={selectedSpot.id}
+                                    title={selectedSpot.title}
+                                    imageUrls={selectedSpot.image_urls}
+                                    imageUrl={selectedSpot.image_url}
+                                    imageSources={selectedSpot.image_sources}
+                                />
                                 <Text style={styles.sectionLabel}>本文</Text>
                                 <Text style={styles.description}>{selectedSpot.description}</Text>
                                 {selectedSpot.explanation ? (
@@ -861,7 +885,6 @@ export default function TriviaMapScreen() {
                     </Pressable>
 
                     {isPreviewVisible && renderSpotPreview()}
-                    {renderSpotDetailModal()}
                 </View>
             ) : (
                 <ScrollView
@@ -907,6 +930,8 @@ export default function TriviaMapScreen() {
                     )}
                 </ScrollView>
             )}
+
+            {renderSpotDetailModal()}
 
             {!isPro ? (
                 <View style={[

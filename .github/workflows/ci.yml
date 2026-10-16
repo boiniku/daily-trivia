@@ -103,7 +103,24 @@ jobs:
           cache-dependency-path: apps/mobile/package-lock.json
       - run: npm ci
       - run: npm run typecheck
+      - run: node --test tests/*.test.cjs
       - run: npm run verify:release
         env:
-          RELEASE_VERSION: "1.1.1"
+          RELEASE_VERSION: "1.1.2"
       - run: npx expo config --type public
+
+  photo-harness:
+    runs-on: ubuntu-latest
+    env:
+      DATABASE_URL: 'sqlite:///:memory:'
+      APP_DATABASE_URL: 'sqlite:///:memory:'
+      DAILY_TRIVIA_API_ROOT: ${{ github.workspace }}/apps/api
+      PYTHONPATH: ${{ github.workspace }}/tools/trivia_photo:${{ github.workspace }}/tools/trivia_photo/tests:${{ github.workspace }}/apps/api
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+      - run: pip install -r apps/api/requirements.txt -r tools/trivia_photo/requirements.txt
+      - name: Test candidate approval, Map isolation and automatic publication
+        run: python -m unittest discover -s tools/trivia_photo/tests -v

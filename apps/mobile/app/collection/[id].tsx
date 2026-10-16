@@ -9,6 +9,7 @@ import { useRevenueCat } from '../../contexts/RevenueCatContext';
 import { InterstitialAd, AdEventType } from 'react-native-google-mobile-ads';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { fetchWithToken } from '../../utils/apiClient';
+import { readTriviaImageSources, readTriviaImageUrls } from '../../utils/triviaImages';
 
 const getBackendUrl = () => {
     return Config.BACKEND_URL;
@@ -24,6 +25,8 @@ interface TriviaItem {
     hee_count?: number;
     user_hee_count?: number;
     image_url?: string | null;
+    image_urls?: string[];
+    image_sources?: Record<string, string>;
 }
 
 const INTERSTITIAL_ID = Platform.OS === 'ios'
@@ -144,6 +147,8 @@ export default function CollectionDetailsScreen() {
                     hee_count?: unknown;
                     user_hee_count?: unknown;
                     image_url?: unknown;
+                    image_urls?: unknown;
+                    image_sources?: unknown;
                 };
 
                 const numericId = Number(rawItem.id);
@@ -157,6 +162,8 @@ export default function CollectionDetailsScreen() {
                     source: typeof rawItem.source === 'string' ? rawItem.source : '',
                     category: typeof rawItem.category === 'string' ? rawItem.category : 'その他',
                     image_url: typeof rawItem.image_url === 'string' ? rawItem.image_url : null,
+                    image_urls: readTriviaImageUrls(rawItem.image_urls),
+                    image_sources: readTriviaImageSources(rawItem.image_sources),
                     hee_count: Number.isFinite(Number(rawItem.hee_count)) ? Number(rawItem.hee_count) : 0,
                     user_hee_count: Number.isFinite(Number(rawItem.user_hee_count)) ? Number(rawItem.user_hee_count) : 0,
                 };
@@ -287,7 +294,10 @@ export default function CollectionDetailsScreen() {
             params: {
                 id: item.id,
                 user_hee_count: item.user_hee_count,
-                image_url: item.image_url ?? ''
+                source: item.source,
+                image_url: item.image_url ?? '',
+                ...(Array.isArray(item.image_urls) ? { image_urls: JSON.stringify(item.image_urls) } : {}),
+                ...(item.image_sources ? { image_sources: JSON.stringify(item.image_sources) } : {})
             }
         });
     }, [router]);
