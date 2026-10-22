@@ -53,6 +53,23 @@ public class WidgetControlModule: Module {
       }
     }
 
+    AsyncFunction("getIsWidgetInstalled") { (promise: Promise) in
+      if #available(iOS 14.0, *) {
+        WidgetCenter.shared.getCurrentConfigurations { result in
+          switch result {
+          case .success(let configurations):
+            // Include Home Screen and Lock Screen families alike.
+            promise.resolve(configurations.contains { $0.kind == "TriviaWidget" })
+          case .failure(let error):
+            print("WidgetControl: Could not read widget configurations: \(error)")
+            promise.resolve(false)
+          }
+        }
+      } else {
+        promise.resolve(false)
+      }
+    }
+
     AsyncFunction("getWidgetImageBase64") { (displayTheme: String, timeThemeString: String, promise: Promise) in
       Task { @MainActor in
         if #available(iOS 16.0, *) {

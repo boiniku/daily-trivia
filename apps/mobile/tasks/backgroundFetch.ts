@@ -1,9 +1,7 @@
 import * as BackgroundFetch from 'expo-background-fetch';
 import * as TaskManager from 'expo-task-manager';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { Config } from '../constants/Config';
-import { syncTriviaToWidget } from '../utils/widgetSync';
-import { fetchWithToken } from '../utils/apiClient';
+import { syncInstalledWidgetTrivia } from '../utils/widgetSync';
 
 const BACKGROUND_FETCH_TASK = 'BACKGROUND_TRIVIA_FETCH';
 
@@ -23,26 +21,13 @@ try {
                 return BackgroundFetch.BackgroundFetchResult.NoData;
             }
 
-            // 2. Fetch Today's Trivia
-            const limit = 3;
-            const apiUrl = `${Config.BACKEND_URL}/trivia/today?limit=${limit}&user_id=${encodeURIComponent(userId)}`;
-
-            console.log(`[BackgroundFetch] Fetching: ${apiUrl}`);
-            const response = await fetchWithToken(apiUrl);
-
-            if (!response.ok) {
-                console.error('[BackgroundFetch] API Error:', response.status);
-                return BackgroundFetch.BackgroundFetchResult.Failed;
-            }
-
-            const data = await response.json();
-            if (!Array.isArray(data) || data.length === 0) {
-                console.log('[BackgroundFetch] No data returned.');
+            // Only an installed widget can register the daily batch as read.
+            // The app's regular fetch prepares cards without adding history.
+            const synced = await syncInstalledWidgetTrivia(userId);
+            if (!synced) {
+                console.log('[BackgroundFetch] No installed widget or no new data.');
                 return BackgroundFetch.BackgroundFetchResult.NoData;
             }
-
-            // 3. Sync to Widget
-            await syncTriviaToWidget(data, userId);
             console.log('[BackgroundFetch] Widget synced successfully.');
 
             return BackgroundFetch.BackgroundFetchResult.NewData;

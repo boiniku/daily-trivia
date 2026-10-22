@@ -1,15 +1,13 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
-import { View, Text, StyleSheet, Pressable, ActivityIndicator, Alert, Platform, AppState, AppStateStatus, LayoutChangeEvent, useWindowDimensions } from 'react-native';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { View, Text, StyleSheet, Pressable, ActivityIndicator, Alert, Platform, AppState, LayoutChangeEvent, useWindowDimensions } from 'react-native';
 import * as Haptics from 'expo-haptics';
-import { Link, useRouter, useFocusEffect, useLocalSearchParams } from 'expo-router';
+import { useRouter, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import Constants from 'expo-constants';
 import TriviaCard from '../../components/TriviaCard';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import * as Crypto from 'expo-crypto';
-import { syncTriviaToWidget } from '../../utils/widgetSync';
-import { BannerAd, BannerAdSize, TestIds, useRewardedAd } from 'react-native-google-mobile-ads';
+import { syncInstalledWidgetTrivia, syncTriviaToWidget } from '../../utils/widgetSync';
+import { BannerAd, BannerAdSize, TestIds, InterstitialAd, AdEventType } from 'react-native-google-mobile-ads';
 import SwipeGuide from '../../components/SwipeGuide';
 import { useRevenueCat } from '../../contexts/RevenueCatContext';
 import { Config } from '../../constants/Config';
@@ -24,8 +22,9 @@ import {
 } from '../../constants/Tutorial';
 
 const DAILY_LIMIT = 3;
-const REWARDED_BONUS_LIMIT = 3;
-const REWARDED_BONUS_DATE_KEY = 'triviaRewardedBonusDate';
+const AD_BONUS_LIMIT = 3;
+// Keep the existing storage key so already unlocked bonuses survive updates.
+const AD_BONUS_DATE_KEY = 'triviaRewardedBonusDate';
 
 // Helper to determine backend URL
 const getBackendUrl = () => {
@@ -39,9 +38,9 @@ interface TriviaItem {
     explanation: string;
     source: string;
     category: string;
+    image_url?: string | null;
     image_urls?: string[];
     image_sources?: Record<string, string>;
-    image_url?: string | null;
 }
 
 import { useAuth } from '../../contexts/AuthContext';
@@ -59,19 +58,17 @@ export default function HomeScreen() {
     const { isPro, currentOffering, purchasePackage } = useRevenueCat();
     const { userId } = useAuth(); // Use AuthContext
     const insets = useSafeAreaInsets();
-    const rewardedAdUnitId = Config.IS_PRODUCTION
-        ? (Platform.OS === 'ios' ? Config.REWARDED_ID_IOS : Config.REWARDED_ID_ANDROID)
-        : TestIds.REWARDED;
-    const {
-        isLoaded: isRewardedAdLoaded,
-        isEarnedReward,
-        isClosed: isRewardedAdClosed,
-        error: rewardedAdError,
-        load: loadRewardedAd,
-        show: showRewardedAd,
-    } = useRewardedAd(rewardedAdUnitId, { requestNonPersonalizedAdsOnly: true });
+    const bonusAdUnitId = Config.IS_PRODUCTION
+        ? (Platform.OS === 'ios' ? Config.INTERSTITIAL_ID_IOS : Config.INTERSTITIAL_ID_ANDROID)
+        : TestIds.INTERSTITIAL;
+    const bonusAd = useMemo(() => InterstitialAd.createForAdRequest(bonusAdUnitId, {
+        requestNonPersonalizedAdsOnly: true,
+    }), [bonusAdUnitId]);
+    const [isBonusAdLoaded, setIsBonusAdLoaded] = useState(false);
+    const [isShowingBonusAd, setIsShowingBonusAd] = useState(false);
     const [bonusUnlocked, setBonusUnlocked] = useState(false);
-    const [isLoadingRewardedTrivia, setIsLoadingRewardedTrivia] = useState(false);
+    const [isLoadingBonusTrivia, setIsLoadingBonusTrivia] = useState(false);
+    const [cardInteractionRevision, setCardInteractionRevision] = useState(0);
 
     const appState = useRef(AppState.currentState);
     const isFetchingRef = useRef(false);
@@ -79,11 +76,30 @@ export default function HomeScreen() {
     const [errorFetchingMore, setErrorFetchingMore] = useState(false); // New state for fetchMoreTrivia errors
     const currentIndexRef = useRef(currentIndex); // Ensures saveState uses exact latest index during async fetch
     const shouldShowSwipeAfterTapGuideRef = useRef(true);
-    const rewardHandledRef = useRef(false);
-    const rewardRequestPendingRef = useRef(false);
-    const isSwipeTransitioningRef = useRef(false);
+    const bonusHandledRef = useRef(false);
+    const bonusAdRequestRef = useRef<{ date: string; userId: string } | null>(null);
+    const isHomeFocusedRef = useRef(false);
+    // Keep interaction locks scoped to the card that started the action. A
+    // stale lock from the previous card must never disable the newly revealed
+    // card (most visibly, the third/last free card).
+    const swipingTriviaIdRef = useRef<number | null>(null);
     const cardAdvanceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-    const isOpeningDetailsRef = useRef(false);
+    const openingDetailsTriviaIdRef = useRef<number | null>(null);
+    const cardInteractionRevisionRef = useRef(0);
+
+    const resetCardInteractions = useCallback(() => {
+        if (cardAdvanceTimerRef.current) clearTimeout(cardAdvanceTimerRef.current);
+        cardAdvanceTimerRef.current = null;
+        swipingTriviaIdRef.current = null;
+        openingDetailsTriviaIdRef.current = null;
+    }, []);
+
+    const resetCardAppearance = useCallback(() => {
+        // Every new card instance gets a fresh token, even when undo or a
+        // refresh brings the same trivia back to the same position.
+        cardInteractionRevisionRef.current += 1;
+        setCardInteractionRevision(cardInteractionRevisionRef.current);
+    }, []);
 
     const handleCardAreaLayout = useCallback((event: LayoutChangeEvent) => {
         const { width, height } = event.nativeEvent.layout;
@@ -113,26 +129,8 @@ export default function HomeScreen() {
 
     useEffect(() => {
         currentIndexRef.current = currentIndex;
+        swipingTriviaIdRef.current = null;
     }, [currentIndex]);
-
-    useEffect(() => {
-        if (!isPro && !bonusUnlocked) {
-            loadRewardedAd();
-        }
-    }, [bonusUnlocked, isPro, loadRewardedAd]);
-
-    useEffect(() => {
-        if (rewardedAdError && rewardRequestPendingRef.current) {
-            rewardRequestPendingRef.current = false;
-            Alert.alert('広告を読み込めませんでした', '通信状態を確認して、もう一度お試しください。');
-        }
-    }, [rewardedAdError]);
-
-    useEffect(() => {
-        if (isRewardedAdClosed && !isEarnedReward) {
-            rewardRequestPendingRef.current = false;
-        }
-    }, [isEarnedReward, isRewardedAdClosed]);
 
     const checkTutorial = async () => {
         try {
@@ -151,8 +149,9 @@ export default function HomeScreen() {
     const swipeTimerRef = useRef<NodeJS.Timeout | null>(null);
 
     useEffect(() => () => {
-        if (cardAdvanceTimerRef.current) clearTimeout(cardAdvanceTimerRef.current);
-    }, []);
+        resetCardInteractions();
+        if (swipeTimerRef.current) clearTimeout(swipeTimerRef.current);
+    }, [resetCardInteractions]);
 
     const showTapGuide = (shouldShowSwipeAfterTap: boolean) => {
         shouldShowSwipeAfterTapGuideRef.current = shouldShowSwipeAfterTap;
@@ -216,11 +215,11 @@ export default function HomeScreen() {
                 title: getParamString(params.title) ?? '',
                 content: getParamString(params.content) ?? '',
                 explanation: getParamString(params.explanation) ?? '解説データがありません',
-                ...(getParamString(params.image_urls) !== undefined ? { image_urls: getParamString(params.image_urls) } : {}),
-                ...(getParamString(params.image_sources) !== undefined ? { image_sources: getParamString(params.image_sources) } : {}),
                 source: getParamString(params.source) ?? '',
                 category: getParamString(params.category) ?? '未分類',
                 image_url: getParamString(params.image_url) ?? '',
+                ...(getParamString(params.image_urls) !== undefined ? { image_urls: getParamString(params.image_urls) } : {}),
+                ...(getParamString(params.image_sources) !== undefined ? { image_sources: getParamString(params.image_sources) } : {}),
                 from_widget: 'true'
             }
         });
@@ -324,12 +323,12 @@ export default function HomeScreen() {
             }
             console.log('User ID from Context:', userId);
             const today = getEffectiveDate();
-            const rewardedBonusDate = await AsyncStorage.getItem(REWARDED_BONUS_DATE_KEY);
-            const hasRewardedBonusToday = rewardedBonusDate === today;
-            setBonusUnlocked(hasRewardedBonusToday);
-            rewardHandledRef.current = hasRewardedBonusToday;
-            if (rewardedBonusDate && !hasRewardedBonusToday) {
-                await AsyncStorage.removeItem(REWARDED_BONUS_DATE_KEY);
+            const bonusDate = await AsyncStorage.getItem(AD_BONUS_DATE_KEY);
+            const hasBonusToday = bonusDate === today;
+            setBonusUnlocked(hasBonusToday);
+            bonusHandledRef.current = hasBonusToday;
+            if (bonusDate && !hasBonusToday) {
+                await AsyncStorage.removeItem(AD_BONUS_DATE_KEY);
             }
 
             // --- Resume Logic ---
@@ -340,10 +339,19 @@ export default function HomeScreen() {
                     console.log('Restoring state for date:', today);
                     // Set the dataDateRef to match the cached date we are restoring
                     dataDateRef.current = today;
+                    resetCardInteractions();
+                    resetCardAppearance();
                     setTriviaList(savedState.list);
-                    setCurrentIndex(savedState.currentIndex || 0);
+                    const restoredIndex = Number.isInteger(savedState.currentIndex)
+                        ? Math.max(0, Math.min(savedState.currentIndex, savedState.list.length))
+                        : 0;
+                    currentIndexRef.current = restoredIndex;
+                    setCurrentIndex(restoredIndex);
                     setLoading(false);
                     isFetchingRef.current = false;
+                    syncTriviaToWidget(savedState.list, userId, today)
+                        .then(() => syncInstalledWidgetTrivia(userId, today))
+                        .catch(err => console.error('Restored widget sync failed:', err));
                     return; // Skip fetching from server
                 } else {
                     console.log('Saved state expired or invalid. Clearing.');
@@ -387,6 +395,9 @@ export default function HomeScreen() {
             // Successfully fetched new data, lock the logical date for this batch
             dataDateRef.current = today;
 
+            resetCardInteractions();
+            resetCardAppearance();
+            currentIndexRef.current = 0;
             setTriviaList(data);
             setCurrentIndex(0); // FIX: Ensure swipe index is reset to 0 when loading a new batch
             setLoading(false);
@@ -394,7 +405,9 @@ export default function HomeScreen() {
             saveState(0, data); // FIX: Ensure date state is saved immediately to track day changes
 
             // Sync to widget in background (don't block UI)
-            syncTriviaToWidget(data, userId).catch(err => console.error('Background widget sync failed:', err));
+            syncTriviaToWidget(data, userId, today)
+                .then(() => syncInstalledWidgetTrivia(userId, today))
+                .catch(err => console.error('Background widget sync failed:', err));
         } catch (error) {
             console.error('Fetch error:', error);
             if (retryCount < 2) {
@@ -475,38 +488,78 @@ export default function HomeScreen() {
     };
 
     useEffect(() => {
-        if (!isEarnedReward || rewardHandledRef.current) return;
-
-        rewardHandledRef.current = true;
-        rewardRequestPendingRef.current = false;
-        const grantRewardedBonus = async () => {
-            setBonusUnlocked(true);
-            setIsLoadingRewardedTrivia(true);
-            await AsyncStorage.setItem(REWARDED_BONUS_DATE_KEY, dataDateRef.current);
-            const fetched = await fetchMoreTrivia(REWARDED_BONUS_LIMIT);
-            setIsLoadingRewardedTrivia(false);
-            if (!fetched) {
-                Alert.alert('追加の雑学を取得できませんでした', '「再試行」を押して、もう一度お試しください。');
+        setIsShowingBonusAd(false);
+        setIsBonusAdLoaded(false);
+        if (isPro || bonusUnlocked) return;
+        const loaded = bonusAd.addAdEventListener(AdEventType.LOADED, () => setIsBonusAdLoaded(true));
+        const opened = bonusAd.addAdEventListener(AdEventType.OPENED, () => {
+            AsyncStorage.setItem('last_interstitial_shown', String(Date.now())).catch(() => {});
+        });
+        const closed = bonusAd.addAdEventListener(AdEventType.CLOSED, () => {
+            setIsBonusAdLoaded(false);
+            setIsShowingBonusAd(false);
+            const request = bonusAdRequestRef.current;
+            bonusAdRequestRef.current = null;
+            if (!request || bonusHandledRef.current || request.userId !== userId) return;
+            if (request.date !== dataDateRef.current || request.date !== getEffectiveDate()) {
+                Alert.alert('日付が変わりました', '今日の雑学を読み込み直してから、もう一度お試しください。');
+                void checkDateAndRefresh();
+                return;
             }
+            bonusHandledRef.current = true;
+            setBonusUnlocked(true);
+            setIsLoadingBonusTrivia(true);
+            const grantBonus = async () => {
+                try {
+                    await AsyncStorage.setItem(AD_BONUS_DATE_KEY, request.date);
+                } catch (error) {
+                    console.error('Failed to save the additional trivia unlock:', error);
+                }
+                try {
+                    const fetched = await fetchMoreTrivia(AD_BONUS_LIMIT);
+                    if (!fetched) {
+                        Alert.alert('追加の雑学を取得できませんでした', '「再試行」を押して、もう一度お試しください。');
+                    }
+                } finally {
+                    setIsLoadingBonusTrivia(false);
+                }
+            };
+            void grantBonus();
+        });
+        const failed = bonusAd.addAdEventListener(AdEventType.ERROR, () => {
+            const wasRequested = bonusAdRequestRef.current !== null;
+            bonusAdRequestRef.current = null;
+            setIsBonusAdLoaded(false);
+            setIsShowingBonusAd(false);
+            if (wasRequested) {
+                Alert.alert('広告を表示できませんでした', '通信状態を確認して、もう一度お試しください。');
+            }
+        });
+        if (bonusAd.loaded) setIsBonusAdLoaded(true);
+        else bonusAd.load();
+        return () => {
+            loaded();
+            opened();
+            closed();
+            failed();
+            bonusAdRequestRef.current = null;
         };
-
-        void grantRewardedBonus();
-    }, [isEarnedReward]);
+    }, [bonusAd, bonusUnlocked, isPro, userId]);
 
     useEffect(() => {
-        const shouldResumeRewardedFetch =
+        const shouldResumeBonusFetch =
             !isPro &&
             bonusUnlocked &&
             !loading &&
-            !isLoadingRewardedTrivia &&
+            !isLoadingBonusTrivia &&
             !errorFetchingMore &&
             currentIndex >= triviaList.length &&
-            currentIndex < DAILY_LIMIT + REWARDED_BONUS_LIMIT;
+            currentIndex < DAILY_LIMIT + AD_BONUS_LIMIT;
 
-        if (!shouldResumeRewardedFetch) return;
-        setIsLoadingRewardedTrivia(true);
-        fetchMoreTrivia(REWARDED_BONUS_LIMIT).finally(() => setIsLoadingRewardedTrivia(false));
-    }, [bonusUnlocked, currentIndex, errorFetchingMore, isLoadingRewardedTrivia, isPro, loading, triviaList.length]);
+        if (!shouldResumeBonusFetch) return;
+        setIsLoadingBonusTrivia(true);
+        fetchMoreTrivia(AD_BONUS_LIMIT).finally(() => setIsLoadingBonusTrivia(false));
+    }, [bonusUnlocked, currentIndex, errorFetchingMore, isLoadingBonusTrivia, isPro, loading, triviaList.length]);
 
     const addToHistory = async (triviaId: number) => {
         try {
@@ -521,7 +574,7 @@ export default function HomeScreen() {
                 body: JSON.stringify({
                     trivia_id: triviaId
                 }),
-            });
+            }, userId);
             console.log('Added to history:', triviaId, 'for user:', userId);
         } catch (error: any) {
             // Silently fail history addition to avoid UX blocking spam when offline
@@ -529,9 +582,23 @@ export default function HomeScreen() {
         }
     };
 
-    const handleSwipe = async (direction: 'left' | 'right') => {
-        if (isSwipeTransitioningRef.current || isOpeningDetailsRef.current) return;
-        isSwipeTransitioningRef.current = true;
+    const isCurrentCardAction = (index: number, revision: number) => (
+        // UI-thread callbacks may arrive after their originating card unmounts.
+        isHomeFocusedRef.current &&
+        appState.current !== 'background' && appState.current !== 'inactive' &&
+        currentIndexRef.current === index && cardInteractionRevisionRef.current === revision
+    );
+
+    const handleSwipe = (direction: 'left' | 'right', swipedIndex: number, triviaId: number, revision: number) => {
+        if (!isCurrentCardAction(swipedIndex, revision)) return;
+        const swipedItem = triviaList[swipedIndex];
+        if (!swipedItem || swipedItem.id !== triviaId) return;
+        if (
+            swipingTriviaIdRef.current === swipedItem.id ||
+            openingDetailsTriviaIdRef.current === swipedItem.id
+        ) return;
+        swipingTriviaIdRef.current = swipedItem.id;
+        const swipedDate = dataDateRef.current;
         console.log(`Swiped ${direction}`);
 
         // Dismiss the swipe guide if it's currently showing
@@ -542,58 +609,79 @@ export default function HomeScreen() {
         }
 
         // Add current item to history when swiped
-        const currentItem = triviaList[currentIndex];
-        if (currentItem) {
-            addToHistory(currentItem.id);
-        }
+        addToHistory(swipedItem.id);
 
         // Wait a bit for animation to finish before updating state to remove card
         cardAdvanceTimerRef.current = setTimeout(() => {
-            const nextIndex = currentIndex + 1;
-            currentIndexRef.current = nextIndex;
-            setCurrentIndex(nextIndex);
+            try {
+                // Ignore an old timer if the user has already moved elsewhere.
+                if (!isCurrentCardAction(swipedIndex, revision) || dataDateRef.current !== swipedDate) return;
+                const nextIndex = swipedIndex + 1;
+                resetCardAppearance();
+                currentIndexRef.current = nextIndex;
+                setCurrentIndex(nextIndex);
 
-            // Save state
-            saveState(nextIndex, triviaList);
+                // Save state
+                saveState(nextIndex, triviaList);
 
-            // For Pro Users: Fetch more trivia if running low
-            // Check if we are close to the end (e.g., 7 items left)
-            if (isPro && currentIndex >= triviaList.length - 7) {
-                // detailed implementation: fetch more and append
-                fetchMoreTrivia();
+                // For Pro Users: Fetch more trivia if running low
+                // Check if we are close to the end (e.g., 7 items left)
+                if (isPro && swipedIndex >= triviaList.length - 7) {
+                    // detailed implementation: fetch more and append
+                    fetchMoreTrivia();
+                }
+
+                // Check for review prompt on swipe (threshold logic handled inside)
+                checkAndRequestReview();
+            } finally {
+                if (swipingTriviaIdRef.current === swipedItem.id) {
+                    swipingTriviaIdRef.current = null;
+                }
+                cardAdvanceTimerRef.current = null;
             }
-
-            // Check for review prompt on swipe (threshold logic handled inside)
-            checkAndRequestReview();
-            isSwipeTransitioningRef.current = false;
-            cardAdvanceTimerRef.current = null;
         }, 200);
     };
 
     const handleUndoSwipe = () => {
-        if (currentIndex <= 0) return;
-        const previousIndex = currentIndex - 1;
+        if (!isHomeFocusedRef.current || currentIndexRef.current <= 0 || openingDetailsTriviaIdRef.current !== null) return;
+        resetCardInteractions();
+        resetCardAppearance();
+        const previousIndex = currentIndexRef.current - 1;
         currentIndexRef.current = previousIndex;
         setCurrentIndex(previousIndex);
         saveState(previousIndex, triviaList);
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     };
 
-    const handleWatchRewardedAd = () => {
-        if (!isRewardedAdLoaded) {
-            loadRewardedAd();
+    const handleWatchBonusAd = async () => {
+        if (isPro || bonusUnlocked || bonusHandledRef.current || bonusAdRequestRef.current || !userId) return;
+        if (!isHomeFocusedRef.current || currentIndexRef.current < DAILY_LIMIT) return;
+        if (!isBonusAdLoaded || !bonusAd.loaded) {
+            bonusAd.load();
             Alert.alert('広告を準備しています', '少し待ってから、もう一度押してください。');
             return;
         }
-        rewardRequestPendingRef.current = true;
-        showRewardedAd();
+        bonusAdRequestRef.current = { date: dataDateRef.current, userId };
+        setIsShowingBonusAd(true);
+        try {
+            await bonusAd.show();
+        } catch (error) {
+            bonusAdRequestRef.current = null;
+            setIsBonusAdLoaded(false);
+            setIsShowingBonusAd(false);
+            Alert.alert('広告を表示できませんでした', '通信状態を確認して、もう一度お試しください。');
+        }
     };
 
-    const handlePressDetails = () => {
-        if (isOpeningDetailsRef.current || isSwipeTransitioningRef.current) return;
-        const item = triviaList[currentIndex];
-        if (!item) return;
-        isOpeningDetailsRef.current = true;
+    const handlePressDetails = (cardIndex: number, triviaId: number, revision: number) => {
+        if (!isCurrentCardAction(cardIndex, revision)) return;
+        const item = triviaList[cardIndex];
+        if (!item || item.id !== triviaId) return;
+        if (
+            openingDetailsTriviaIdRef.current === item.id ||
+            swipingTriviaIdRef.current === item.id
+        ) return;
+        openingDetailsTriviaIdRef.current = item.id;
         router.push({
             pathname: '/details',
             params: {
@@ -610,9 +698,10 @@ export default function HomeScreen() {
         });
     };
 
-    const handleDoubleTapHee = async () => {
-        const item = triviaList[currentIndex];
-        if (!item || !userId) return;
+    const handleDoubleTapHee = async (cardIndex: number, triviaId: number, revision: number) => {
+        if (!isCurrentCardAction(cardIndex, revision)) return;
+        const item = triviaList[cardIndex];
+        if (!item || item.id !== triviaId || !userId) return;
         if (showGuideMode === 'tap') {
             if (swipeTimerRef.current) clearTimeout(swipeTimerRef.current);
             if (shouldShowSwipeAfterTapGuideRef.current) {
@@ -633,9 +722,9 @@ export default function HomeScreen() {
         }
     };
 
-    const freeDailyLimit = DAILY_LIMIT + (bonusUnlocked ? REWARDED_BONUS_LIMIT : 0);
+    const freeDailyLimit = DAILY_LIMIT + (bonusUnlocked ? AD_BONUS_LIMIT : 0);
     const isLimitReached = !isPro && currentIndex >= freeDailyLimit;
-    const canUnlockRewardedBonus = !isPro && !bonusUnlocked && currentIndex >= DAILY_LIMIT;
+    const canUnlockAdBonus = !isPro && !bonusUnlocked && currentIndex >= DAILY_LIMIT;
     const currentItem = triviaList[currentIndex];
 
     // --- New Refresh Logic ---
@@ -659,6 +748,10 @@ export default function HomeScreen() {
             if (shouldRefresh) {
                 setLoading(true);
                 await initializeUserAndFetch();
+            } else if (userId) {
+                // Adding/removing a widget can happen while the app is away.
+                // Recheck the system even when today's cards are cached.
+                await syncInstalledWidgetTrivia(userId, today);
             }
         } catch (e) {
             console.error("Check date error:", e);
@@ -667,9 +760,15 @@ export default function HomeScreen() {
 
     useFocusEffect(
         useCallback(() => {
-            isOpeningDetailsRef.current = false;
+            isHomeFocusedRef.current = true;
+            resetCardInteractions();
+            resetCardAppearance();
             checkDateAndRefresh();
-        }, [userId])
+            return () => {
+                isHomeFocusedRef.current = false;
+                resetCardInteractions();
+            };
+        }, [userId, resetCardInteractions, resetCardAppearance])
     );
 
     useEffect(() => {
@@ -679,15 +778,18 @@ export default function HomeScreen() {
                 nextAppState === 'active'
             ) {
                 console.log('App has come to the foreground!');
+                resetCardInteractions();
+                resetCardAppearance();
                 checkDateAndRefresh();
             }
+            if (nextAppState !== 'active') resetCardInteractions();
             appState.current = nextAppState;
         });
 
         return () => {
             subscription.remove();
         };
-    }, [userId]);
+    }, [userId, resetCardInteractions, resetCardAppearance]);
     // -------------------------
 
     // --- Rescue Logic for Pro User Subscription Validation Race Condition ---
@@ -757,7 +859,7 @@ export default function HomeScreen() {
                         {/* Next Card (Background) */}
                         {canRenderCard && triviaList[currentIndex + 1] ? (
                             <TriviaCard
-                                key={`next-${triviaList[currentIndex + 1].id}`}
+                                key={`next-${currentIndex + 1}-${triviaList[currentIndex + 1].id}`}
                                 item={triviaList[currentIndex + 1]}
                                 onSwipe={undefined}
                                 onPressDetails={() => { }}
@@ -772,11 +874,11 @@ export default function HomeScreen() {
                         {currentItem ? (
                             canRenderCard ? (
                                 <TriviaCard
-                                    key={`current-${currentItem.id}`}
+                                    key={`current-${currentIndex}-${currentItem.id}-${cardInteractionRevision}`}
                                     item={currentItem}
-                                    onSwipe={handleSwipe}
-                                    onPressDetails={handlePressDetails}
-                                    onDoubleTap={handleDoubleTapHee}
+                                    onSwipe={(direction) => handleSwipe(direction, currentIndex, currentItem.id, cardInteractionRevision)}
+                                    onPressDetails={() => handlePressDetails(currentIndex, currentItem.id, cardInteractionRevision)}
+                                    onDoubleTap={() => handleDoubleTapHee(currentIndex, currentItem.id, cardInteractionRevision)}
                                     width={cardWidth}
                                     height={cardHeight}
                                     style={{ zIndex: 1 }}
@@ -790,7 +892,7 @@ export default function HomeScreen() {
                                         <Text style={[styles.subText, { marginTop: 16 }]}>読み込みに失敗しました。</Text>
                                         <Pressable
                                             style={styles.upgradeButton}
-                                            onPress={() => fetchMoreTrivia(isPro ? 7 : REWARDED_BONUS_LIMIT)}
+                                            onPress={() => fetchMoreTrivia(isPro ? 7 : AD_BONUS_LIMIT)}
                                         >
                                             <Text style={styles.upgradeText}>再試行</Text>
                                         </Pressable>
@@ -799,7 +901,7 @@ export default function HomeScreen() {
                                     <>
                                         <ActivityIndicator size="large" color={Colors.light.primary} />
                                         <Text style={[styles.subText, { marginTop: 16 }]}>
-                                            {isLoadingRewardedTrivia ? '広告特典の雑学を準備中...' : '新しい雑学を準備中...'}
+                                            {isLoadingBonusTrivia ? '広告特典の雑学を準備中...' : '新しい雑学を準備中...'}
                                         </Text>
                                     </>
                                 )}
@@ -813,15 +915,15 @@ export default function HomeScreen() {
                     </>
                 ) : (
                     <View style={[styles.finishedContainer, isShortScreen && styles.finishedContainerCompact]}>
-                        {canUnlockRewardedBonus ? (
+                        {canUnlockAdBonus ? (
                             <>
                                 <Ionicons name="play-circle" size={52} color={Colors.light.accent} />
                                 <Text style={styles.finishedText}>もう3つ見られます！</Text>
-                                <Text style={styles.subText}>広告を最後まで見ると、今日の雑学を3つ追加します。</Text>
-                                <Pressable style={styles.rewardedButton} onPress={handleWatchRewardedAd}>
+                                <Text style={styles.subText}>広告を見ると、今日の雑学を3つ追加できます。</Text>
+                                <Pressable style={styles.rewardedButton} onPress={handleWatchBonusAd} disabled={isShowingBonusAd || isLoadingBonusTrivia}>
                                     <Ionicons name="play" size={18} color="#FFFFFF" />
                                     <Text style={styles.rewardedButtonText}>
-                                        {isRewardedAdLoaded ? '広告を見て3つ追加' : '広告を準備する'}
+                                        {isShowingBonusAd ? '広告を表示中...' : isBonusAdLoaded ? '広告を見て3つ追加' : '広告を準備する'}
                                     </Text>
                                 </Pressable>
                             </>

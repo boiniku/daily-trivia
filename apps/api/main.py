@@ -7,6 +7,7 @@ from sqlalchemy.exc import IntegrityError
 from database import get_db, AppSessionLocal
 from models import Trivia, MapTrivia, MapTriviaUnlock, Collection, CollectionItem, DailyAssignment, TriviaHee
 from services.trivia_images import normalize_trivia_image_sources, read_trivia_images
+from services.trivia_history import lock_trivia_user, record_history_items
 import random
 import datetime
 import os
@@ -489,6 +490,7 @@ def get_todays_trivia(
     1. Returns a tailored list of trivia based on user_id to avoid repeats.
     2. Allows 'date' to dynamically override server time.
     3. include_assignments=False prevents prepending DailyAssignments during infinite scrolling.
+    Candidate retrieval creates daily assignments, but never seen-history items.
     """
     # Hybrid auth: prefer token-based uid, fallback to query param
     if token_user_id:
@@ -535,15 +537,17 @@ def get_todays_trivia(
         # 1. Check if daily assignment exists for this user and date
         assigned_trivias = []
         if not category and include_assignments:
+            lock_trivia_user(db, user_id)
             assignments = db.query(DailyAssignment).filter(
                 DailyAssignment.user_id == user_id,
                 DailyAssignment.date == effective_date
-            ).all()
+            ).order_by(DailyAssignment.id).all()
             
             if assignments:
                 log(f"DEBUG: Found {len(assignments)} assignments.")
                 trivia_ids = [a.trivia_id for a in assignments]
-                assigned_trivias = db.query(Trivia).filter(Trivia.id.in_(trivia_ids)).all()
+                trivia_by_id = {t.id: t for t in db.query(Trivia).filter(Trivia.id.in_(trivia_ids)).all()}
+                assigned_trivias = [trivia_by_id[trivia_id] for trivia_id in trivia_ids if trivia_id in trivia_by_id]
                 
                 if len(assigned_trivias) >= limit:
                     for t in assigned_trivias[:limit]:
@@ -558,7 +562,8 @@ def get_todays_trivia(
         ).subquery()
         
         assignments_subquery = db.query(DailyAssignment.trivia_id).filter(
-            DailyAssignment.user_id == user_id
+            DailyAssignment.user_id == user_id,
+            DailyAssignment.date == effective_date,
         ).subquery()
 
         # 3. Build Main Query
@@ -596,26 +601,9 @@ def get_todays_trivia(
 
         # 6. Save first 3 generic items as Daily Assignments for widget sync
         if not category and include_assignments:
-             history_collection = db.query(Collection).filter(
-                 Collection.user_id == user_id,
-                 Collection.title == "過去に見た雑学"
-             ).first()
-             if not history_collection:
-                 history_collection = Collection(
-                     user_id=user_id,
-                     title="過去に見た雑学",
-                     icon="time-outline",
-                     is_locked=False
-                 )
-                 db.add(history_collection)
-                 # Keep the RLS context and all related writes in one transaction.
-                 # SET LOCAL is cleared by commit, which made this collection
-                 # invisible to app_user during the following refresh/query.
-                 db.flush()
-
-             # We only create DailyAssignments for up to the first 3 items
-             assignable_trivias = final_trivias[:3]
-             for t in assignable_trivias:
+            # We only create DailyAssignments for up to the first 3 items
+            assignable_trivias = final_trivias[:3]
+            for t in assignable_trivias:
                 # Check if already assigned today (race condition check)
                 exists = db.query(DailyAssignment).filter(
                     DailyAssignment.user_id == user_id,
@@ -629,18 +617,8 @@ def get_todays_trivia(
                         trivia_id=t.id
                     )
                     db.add(new_assignment)
-
-                    # Also add to history since it's displayed on widget/today screen
-                    history_exists = db.query(CollectionItem).filter(
-                        CollectionItem.collection_id == history_collection.id,
-                        CollectionItem.trivia_id == t.id
-                    ).first()
-                    if not history_exists:
-                         db.add(CollectionItem(
-                             collection_id=history_collection.id,
-                             trivia_id=t.id
-                         ))
-             db.commit()
+            # Fetching or preloading candidates does not mean they were seen.
+            db.commit()
         
         # Inject date into response
         for t in final_trivias:
@@ -662,14 +640,19 @@ def get_widget_trivia(
     user_id: str = None,
     limit: int = 3,
     date: str = None,
+    widget_installed: bool = True,
 ):
     """
     Endpoint for iOS Widget.
     Uses user_id as query parameter instead of Firebase token.
     Accepts optional 'date' parameter to sync with widget's local time awareness.
     Same personalization logic as /trivia/today.
+    Installed widgets record up to three assigned items in history. The default
+    preserves older widget clients; new clients explicitly report installation.
+    Widget delivery is capped at three items, including for older large limits.
     """
     from sqlalchemy.sql import func
+    limit = max(0, min(limit, 3))
     
     # Create RLS-aware DB session
     db = AppSessionLocal()
@@ -699,14 +682,19 @@ def get_widget_trivia(
             return selected_trivias
         
         # 1. Check if daily assignment exists for this user and date
+        lock_trivia_user(db, user_id)
         assignments = db.query(DailyAssignment).filter(
             DailyAssignment.user_id == user_id,
             DailyAssignment.date == effective_date
-        ).all()
+        ).order_by(DailyAssignment.id).limit(limit).all()
         
         if assignments:
             trivia_ids = [a.trivia_id for a in assignments]
-            trivias = db.query(Trivia).filter(Trivia.id.in_(trivia_ids)).all()
+            trivia_by_id = {t.id: t for t in db.query(Trivia).filter(Trivia.id.in_(trivia_ids)).all()}
+            trivias = [trivia_by_id[trivia_id] for trivia_id in trivia_ids if trivia_id in trivia_by_id]
+            if widget_installed:
+                record_history_items(db, user_id, [t.id for t in trivias[:3]])
+                db.commit()
             for t in trivias:
                 t.date = effective_date
             return trivias
@@ -719,7 +707,8 @@ def get_widget_trivia(
         )
         
         assignments_subquery = db.query(DailyAssignment.trivia_id).filter(
-            DailyAssignment.user_id == user_id
+            DailyAssignment.user_id == user_id,
+            DailyAssignment.date == effective_date,
         )
 
         # 3. Query excluding seen trivia
@@ -739,23 +728,7 @@ def get_widget_trivia(
             fillers = fallback_query.order_by(func.random()).limit(needed).all()
             selected_trivias.extend(fillers)
 
-        # 5. Create daily assignments (same as /trivia/today)
-        history_collection = db.query(Collection).filter(
-            Collection.user_id == user_id,
-            Collection.title == "過去に見た雑学"
-        ).first()
-        if not history_collection:
-            history_collection = Collection(
-                user_id=user_id,
-                title="過去に見た雑学",
-                icon="time-outline",
-                is_locked=False
-            )
-            db.add(history_collection)
-            # Keep SET LOCAL app.current_user_id active until assignments and
-            # history items have been written in the same transaction.
-            db.flush()
-
+        # 5. Keep daily assignments separate from the installed-widget history.
         for t in selected_trivias:
             exists = db.query(DailyAssignment).filter(
                 DailyAssignment.user_id == user_id,
@@ -768,15 +741,8 @@ def get_widget_trivia(
                     date=effective_date,
                     trivia_id=t.id
                 ))
-                history_exists = db.query(CollectionItem).filter(
-                    CollectionItem.collection_id == history_collection.id,
-                    CollectionItem.trivia_id == t.id
-                ).first()
-                if not history_exists:
-                    db.add(CollectionItem(
-                        collection_id=history_collection.id,
-                        trivia_id=t.id
-                    ))
+        if widget_installed:
+            record_history_items(db, user_id, [t.id for t in selected_trivias[:3]])
         db.commit()
         
         for t in selected_trivias:
@@ -812,37 +778,9 @@ def add_to_history(request: HistoryRequest, user_id: str = Depends(get_current_u
     db = AppSessionLocal()
     db.execute(text("SELECT set_config('app.current_user_id', :uid, true)"), {"uid": user_id})
     try:
-        # Find "History" collection for this user
-        history_collection = db.query(Collection).filter(
-            Collection.user_id == user_id,
-            Collection.title == "過去に見た雑学"
-        ).first()
-
-        if not history_collection:
-            # Should exist from get_collections, but just in case
-            history_collection = Collection(
-                user_id=user_id, 
-                title="過去に見た雑学", 
-                icon="time-outline", 
-                is_locked=False
-            )
-            db.add(history_collection)
-            db.commit()
-            db.refresh(history_collection)
-
-        # Check if already exists in history
-        exists = db.query(CollectionItem).filter(
-            CollectionItem.collection_id == history_collection.id,
-            CollectionItem.trivia_id == request.trivia_id
-        ).first()
-
-        if not exists:
-            new_item = CollectionItem(
-                collection_id=history_collection.id,
-                trivia_id=request.trivia_id
-            )
-            db.add(new_item)
-            db.commit()
+        added = record_history_items(db, user_id, [request.trivia_id])
+        db.commit()
+        if added:
             try:
                 msg = f"{datetime.datetime.now()}: ADDED: User {user_id}, Trivia {request.trivia_id}"
                 print(msg)
@@ -862,6 +800,7 @@ def add_to_history(request: HistoryRequest, user_id: str = Depends(get_current_u
             return {"message": "Already in history"}
 
     except Exception as e:
+        db.rollback()
         import traceback
         error_msg = traceback.format_exc()
         try:

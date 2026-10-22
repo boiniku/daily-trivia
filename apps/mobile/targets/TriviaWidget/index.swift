@@ -19,7 +19,28 @@ struct Provider: TimelineProvider {
     }
 
     func getTimeline(in context: Context, completion: @escaping (Timeline<TriviaEntry>) -> ()) {
-        var entries: [TriviaEntry] = []
+        // The gallery and previews must never register viewed trivia.
+        if context.isPreview {
+            getSnapshot(in: context) { entry in
+                completion(Timeline(entries: [entry], policy: .never))
+            }
+            return
+        }
+
+        WidgetCenter.shared.getCurrentConfigurations { result in
+            let widgetInstalled: Bool
+            switch result {
+            case .success(let configurations):
+                widgetInstalled = configurations.contains { $0.kind == "TriviaWidget" }
+            case .failure(let error):
+                print("Widget: Could not read widget configurations: \(error)")
+                widgetInstalled = false
+            }
+            self.loadTimeline(widgetInstalled: widgetInstalled, completion: completion)
+        }
+    }
+
+    private func loadTimeline(widgetInstalled: Bool, completion: @escaping (Timeline<TriviaEntry>) -> ()) {
         let currentDate = Date()
         let calendar = Calendar.current
         
@@ -82,11 +103,48 @@ struct Provider: TimelineProvider {
         let userId = userDefaults?.string(forKey: "user_id")
         let firebaseToken = userDefaults?.string(forKey: "firebase_token")
         
-        if isValidData {
+        let finish: ([TriviaData], Bool) -> Void = { items, shouldRetryFetch in
+            // A network response can arrive after the app signs out or switches
+            // accounts. Do not render the captured account's cache in that case.
+            guard userDefaults?.string(forKey: "user_id") == userId else {
+                let retryDate = Date()
+                let loadingEntry = TriviaEntry(
+                    date: retryDate,
+                    id: 0,
+                    title: "読み込み中...",
+                    content: "アプリを開いてデータを更新してください。",
+                    theme: .morning,
+                    displayTheme: displayTheme,
+                    imageTimestamp: imageTimestamp
+                )
+                completion(Timeline(entries: [loadingEntry], policy: .after(retryDate.addingTimeInterval(300))))
+                return
+            }
+            self.buildTimeline(
+                triviaList: items,
+                staleFallbackList: staleFallbackList,
+                currentDate: currentDate,
+                todayStr: todayStr,
+                displayTheme: displayTheme,
+                imageTimestamp: imageTimestamp,
+                shouldRetryFetch: shouldRetryFetch,
+                completion: completion
+            )
+        }
+
+        // Installing a widget after the app populated today's cache must still
+        // register that day's assignment. Only an uninstalled widget can skip it.
+        if isValidData && !widgetInstalled {
             print("Widget: Using valid cached data for today, skipping fetch.")
-        } else {
-            // If no valid User ID and no stale data, show loading
-            if (userId == nil || userId == "" || userId == "widget_guest") && staleFallbackList.isEmpty {
+            // Configuration lookup can lag behind installation or fail briefly.
+            // Recheck soon so a newly added widget can register today's batch.
+            finish(triviaList, true)
+            return
+        }
+
+        // Never create history for an anonymous gallery/background refresh.
+        guard let userId = userId, !userId.isEmpty, userId != "widget_guest" else {
+            if staleFallbackList.isEmpty {
                  print("Widget: No valid User ID and no cached data. Waiting for App...")
                  
                  let loadingEntry = TriviaEntry(
@@ -102,78 +160,85 @@ struct Provider: TimelineProvider {
                  let nextUpdate = calendar.date(byAdding: .minute, value: 5, to: currentDate)!
                  let timeline = Timeline(entries: [loadingEntry], policy: .after(nextUpdate))
                  completion(timeline)
-                 return
+            } else {
+                finish(isValidData ? triviaList : [], true)
             }
-            
-            // Valid User ID exists, proceed to fetch
-            triviaList = [] // Clear old data
-            var urlString = "https://daily-trivia-e7ge.onrender.com/trivia/widget?date=\(todayStr)"
-            if let uid = userId, !uid.isEmpty, uid != "widget_guest" {
-                urlString += "&user_id=\(uid)"
-            }
-            
-            if let url = URL(string: urlString) {
-                print("Fetching widget data from: \(urlString)")
-                
-                var request = URLRequest(url: url)
-                request.httpMethod = "GET"
-                request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-                request.timeoutInterval = 10 // Reduced timeout
-                
-                if let token = firebaseToken, !token.isEmpty {
-                    request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-                } else {
-                    print("Widget: No Firebase token available, attempting request without auth.")
-                }
-                
-                let dispatchGroup = DispatchGroup()
-                dispatchGroup.enter()
-                
-                let task = URLSession.shared.dataTask(with: request) { data, response, error in
-                    defer { dispatchGroup.leave() }
-                    
-                    if let data = data {
-                        do {
-                            // Decode API response validation
-                            struct APITriviaItem: Codable {
-                                let id: Int
-                                let title: String
-                                let content: String
-                                let date: String?
-                            }
-                            
-                            let apiItems = try JSONDecoder().decode([APITriviaItem].self, from: data)
-                            
-                            // Map to Widget Data Format
-                            let newTriviaList = apiItems.prefix(3).map { item in
-                                TriviaData(id: item.id, title: item.title, content: item.content, date: todayStr)
-                            }
-                            
-                            if !newTriviaList.isEmpty {
-                                triviaList = newTriviaList
-                                
-                                // Save to UserDefaults for cache
-                                if let encoded = try? JSONEncoder().encode(newTriviaList) {
-                                    if let jsonString = String(data: encoded, encoding: .utf8) {
-                                        userDefaults?.set(jsonString, forKey: "daily_trivia")
-                                        print("Saved fetched data to UserDefaults")
-                                    }
-                                }
-                            }
-                        } catch {
-                            print("Widget fetch error: \(error)")
-                        }
-                    }
-                }
-                task.resume()
-                
-                // Wait for network
-                let result = dispatchGroup.wait(timeout: .now() + 10)
-                if result == .timedOut {
-                    print("Widget fetch timed out")
-                }
-            }
+            return
         }
+
+        var components = URLComponents(string: "https://daily-trivia-e7ge.onrender.com/trivia/widget")
+        components?.queryItems = [
+            URLQueryItem(name: "date", value: todayStr),
+            URLQueryItem(name: "user_id", value: userId),
+            URLQueryItem(name: "widget_installed", value: widgetInstalled ? "true" : "false")
+        ]
+        guard let url = components?.url else {
+            finish(isValidData ? triviaList : [], true)
+            return
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("no-cache", forHTTPHeaderField: "Cache-Control")
+        request.timeoutInterval = 10
+        // A cached HTTP response must not bypass the server-side history update
+        // when an installed widget is refreshing an existing daily assignment.
+        request.cachePolicy = .reloadIgnoringLocalCacheData
+        if let token = firebaseToken, !token.isEmpty {
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
+
+        let cachedTrivia = isValidData ? triviaList : []
+        URLSession.shared.dataTask(with: request) { data, response, error in
+            guard error == nil,
+                  let response = response as? HTTPURLResponse,
+                  (200...299).contains(response.statusCode),
+                  let data = data else {
+                print("Widget: Fetch failed; keeping cached trivia")
+                finish(cachedTrivia, true)
+                return
+            }
+            do {
+                let apiItems = try JSONDecoder().decode([TriviaData].self, from: data)
+                let newTriviaList = apiItems.prefix(3).map { item in
+                    TriviaData(id: item.id, title: item.title, content: item.content, date: todayStr)
+                }
+                guard !newTriviaList.isEmpty else {
+                    finish(cachedTrivia, true)
+                    return
+                }
+                // Recheck before writing, as JS may have updated the shared
+                // credentials while this request was in flight.
+                guard userDefaults?.string(forKey: "user_id") == userId else {
+                    finish([], true)
+                    return
+                }
+                if let encoded = try? JSONEncoder().encode(newTriviaList),
+                   let jsonString = String(data: encoded, encoding: .utf8) {
+                    userDefaults?.set(jsonString, forKey: "daily_trivia")
+                }
+                finish(newTriviaList, !widgetInstalled)
+            } catch {
+                print("Widget fetch error: \(error)")
+                finish(cachedTrivia, true)
+            }
+        }.resume()
+    }
+
+    private func buildTimeline(
+        triviaList initialTriviaList: [TriviaData],
+        staleFallbackList: [TriviaData],
+        currentDate: Date,
+        todayStr: String,
+        displayTheme: String,
+        imageTimestamp: Double,
+        shouldRetryFetch: Bool,
+        completion: @escaping (Timeline<TriviaEntry>) -> ()
+    ) {
+        var triviaList = initialTriviaList
+        var entries: [TriviaEntry] = []
+        let calendar = Calendar.current
         
         // 4. Fallback: use stale cached data if fetch failed
         var usedStaleData = false
@@ -326,9 +391,9 @@ struct Provider: TimelineProvider {
 
         // Next update
         let nextUpdate: Date
-        if usedStaleData {
+        if usedStaleData || shouldRetryFetch {
             nextUpdate = calendar.date(byAdding: .minute, value: 15, to: currentDate)!
-            print("Widget: Scheduled next update in 15 minutes because stale data is used")
+            print("Widget: Scheduled next update in 15 minutes to retry the fetch")
         } else {
             nextUpdate = calendar.date(byAdding: .day, value: 1, to: morningDate)!
             print("Widget: Scheduled next update for tomorrow at 2:00 AM")

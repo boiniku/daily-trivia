@@ -4,6 +4,18 @@ import { requireOptionalNativeModule } from 'expo-modules-core';
 // (e.g., on Android or when the native module fails to initialize)
 const WidgetControl = requireOptionalNativeModule('WidgetControl');
 
+export async function getIsWidgetInstalled(): Promise<boolean> {
+    if (!WidgetControl || typeof WidgetControl.getIsWidgetInstalled !== 'function') {
+        return false;
+    }
+    try {
+        return await WidgetControl.getIsWidgetInstalled() === true;
+    } catch (error) {
+        console.warn('WidgetControl: Could not read installed widgets', error);
+        return false;
+    }
+}
+
 export function reloadAllTimelines() {
     if (WidgetControl && WidgetControl.reloadAllTimelines) {
         WidgetControl.reloadAllTimelines();

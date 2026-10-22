@@ -67,6 +67,7 @@ export default function TriviaCard({
     const translationY = useSharedValue(0);
     const rotation = useSharedValue(0);
     const scale = useSharedValue(1);
+    const swipeCommitted = useSharedValue(false);
 
     // Double Tap Animation values
     const thumbOpacity = useSharedValue(0);
@@ -78,25 +79,40 @@ export default function TriviaCard({
     const [showThumb, setShowThumb] = useState(false);
 
     const pan = Gesture.Pan()
-        .enabled(enabled)
-        .onBegin(() => {
+        .enabled(enabled && !!onSwipe)
+        // Keep small vertical movements on the details button from activating
+        // the pan handler and canceling its press responder.
+        .activeOffsetX([-10, 10])
+        .onStart(() => {
+            if (swipeCommitted.value) return;
             scale.value = withSpring(1.05); // Pop up when touched
         })
         .onUpdate((event) => {
+            if (swipeCommitted.value) return;
             translationX.value = event.translationX;
             translationY.value = event.translationY * 0.1;
             rotation.value = event.translationX / 15;
         })
-        .onEnd((event) => {
+        .onEnd((event, success) => {
+            if (!success || swipeCommitted.value) return;
             scale.value = withSpring(1);
-            if (Math.abs(event.translationX) > 40) { // Changed from 60 to 40
+            if (Math.abs(event.translationX) > 40 && onSwipe) { // Changed from 60 to 40
+                swipeCommitted.value = true;
                 const direction = event.translationX > 0 ? 'right' : 'left';
                 translationX.value = withTiming(direction === 'right' ? 500 : -500, { duration: 300 });
-                if (onSwipe) {
-                    runOnJS(onSwipe)(direction);
-                }
+                runOnJS(onSwipe)(direction);
             } else {
                 translationX.value = withSpring(0, { damping: 12, stiffness: 120 }); // Bouncy result
+                translationY.value = withSpring(0);
+                rotation.value = withSpring(0);
+            }
+        })
+        .onFinalize(() => {
+            // Restore interrupted gestures, including those canceled before
+            // activation (which do not call onEnd).
+            scale.value = withSpring(1);
+            if (!swipeCommitted.value) {
+                translationX.value = withSpring(0, { damping: 12, stiffness: 120 });
                 translationY.value = withSpring(0);
                 rotation.value = withSpring(0);
             }
@@ -114,6 +130,7 @@ export default function TriviaCard({
         .numberOfTaps(2)
         .enabled(enabled)
         .onStart(() => {
+            if (swipeCommitted.value) return;
             // Trigger the "へぇ" animation
             const angleDirection = Math.random() > 0.5 ? 1 : -1;
             const randomAngle = angleDirection * (Math.random() * 10 + 10); // 10 to 20 degrees
@@ -160,7 +177,12 @@ export default function TriviaCard({
 
     return (
         <GestureDetector gesture={composedGesture}>
-            <Animated.View style={[styles.cardContainer, { width, height }, animatedStyle, style]}>
+            <Animated.View
+                style={[styles.cardContainer, { width, height }, animatedStyle, style]}
+                pointerEvents={enabled ? 'auto' : 'none'}
+                accessibilityElementsHidden={!enabled}
+                importantForAccessibility={enabled ? 'auto' : 'no-hide-descendants'}
+            >
                 
                 {/* Background Decorations inside card */}
                 <View style={[styles.card, isCompact && styles.cardCompact, isVeryCompact && styles.cardVeryCompact]}>
@@ -213,7 +235,13 @@ export default function TriviaCard({
                     </Animated.View>
 
                     {/* Footer Button */}
-                    <Pressable style={[styles.footerButton, isCompact && styles.footerButtonCompact]} onPress={onPressDetails}>
+                    <Pressable
+                        style={[styles.footerButton, isCompact && styles.footerButtonCompact]}
+                        onPress={() => {
+                            if (enabled && !swipeCommitted.value) onPressDetails();
+                        }}
+                        disabled={!enabled}
+                    >
                         <Text style={[styles.readMore, isVeryCompact && styles.readMoreVeryCompact]} maxFontSizeMultiplier={1.3}>くわしく見る！</Text>
                         <View style={styles.arrowCircle}>
                             <Ionicons name="arrow-forward" size={16} color={Colors.light.primary} />
