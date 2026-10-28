@@ -106,7 +106,7 @@ jobs:
       - run: node --test tests/*.test.cjs
       - run: npm run verify:release
         env:
-          RELEASE_VERSION: "1.1.4"
+          RELEASE_VERSION: "1.1.5"
       - run: npx expo config --type public
 
   photo-harness:

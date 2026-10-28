@@ -1,7 +1,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 
-const EXPECTED_VERSION = process.env.RELEASE_VERSION || '1.1.4';
+const EXPECTED_VERSION = process.env.RELEASE_VERSION || '1.1.5';
 const EXPECTED_PRODUCTION_API = 'https://daily-trivia-e7ge.onrender.com';
 
 const readJson = (relativePath) => JSON.parse(
@@ -33,6 +33,19 @@ expectEqual('production app environment', production?.env?.EXPO_PUBLIC_APP_ENV, 
 expectEqual('production API', production?.env?.EXPO_PUBLIC_BACKEND_URL, EXPECTED_PRODUCTION_API);
 expectEqual('production API version', production?.env?.EXPO_PUBLIC_API_VERSION, '1');
 expectEqual('production channel', production?.channel, 'production');
+for (const name of ['production', 'testflight']) {
+  const profile = easJson.build?.[name];
+  expectEqual(`${name} distribution`, profile?.distribution, 'store');
+  expectEqual(`${name} EAS environment`, profile?.environment, 'production');
+  expectEqual(`${name} app environment`, profile?.env?.EXPO_PUBLIC_APP_ENV, 'production');
+  expectEqual(`${name} update channel`, profile?.channel, 'production');
+  expectEqual(`${name} iOS configuration`, profile?.ios?.buildConfiguration, 'Release');
+}
+if (easJson.build?.preview?.channel === 'staging' || easJson.build?.development?.channel === 'staging') {
+  errors.push('staging is reserved for published legacy builds; use isolated preview/development channels');
+}
+expectEqual('AdMob iOS app ID', pluginOptions('react-native-google-mobile-ads').iosAppId, 'ca-app-pub-4541342273103383~2822165802');
+expectEqual('EAS advertisement validation hook', packageJson.scripts?.['eas-build-post-install'], 'node scripts/verify-build-ads.js');
 expectEqual('runtime version policy', app?.runtimeVersion?.policy, 'appVersion');
 
 const imagePicker = pluginOptions('expo-image-picker');

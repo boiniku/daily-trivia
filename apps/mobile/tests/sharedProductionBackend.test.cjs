@@ -29,7 +29,7 @@ test('development and preview builds share production data while retaining their
         assert.equal(profile.env.EXPO_PUBLIC_BACKEND_URL, production);
         const actual = config(profile.env.EXPO_PUBLIC_APP_ENV, profile.env.EXPO_PUBLIC_BACKEND_URL);
         assert.equal(actual.BACKEND_URL, production);
-        assert.equal(actual.IS_PRODUCTION, name === 'production');
+        assert.equal(actual.IS_PRODUCTION, name === 'production' || name === 'testflight');
     }
 });
 

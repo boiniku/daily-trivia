@@ -7,7 +7,7 @@
     "development": {
       "developmentClient": true,
       "distribution": "internal",
-      "channel": "staging",
+      "channel": "development",
       "environment": "development",
       "env": {
         "EXPO_PUBLIC_APP_ENV": "development",
@@ -17,7 +17,7 @@
     },
     "preview": {
       "distribution": "internal",
-      "channel": "staging",
+      "channel": "preview",
       "environment": "preview",
       "env": {
         "EXPO_PUBLIC_APP_ENV": "staging",
@@ -27,18 +27,7 @@
     },
     "testflight": {
       "distribution": "store",
-      "channel": "staging",
-      "environment": "preview",
-      "env": {
-        "EXPO_PUBLIC_APP_ENV": "staging",
-        "EXPO_PUBLIC_BACKEND_URL": "https://daily-trivia-e7ge.onrender.com",
-        "EXPO_PUBLIC_API_VERSION": "1"
-      },
-      "ios": {
-        "image": "macos-sequoia-15.6-xcode-26.2"
-      }
-    },
-    "production": {
+      "channel": "production",
       "environment": "production",
       "env": {
         "EXPO_PUBLIC_APP_ENV": "production",
@@ -46,7 +35,21 @@
         "EXPO_PUBLIC_API_VERSION": "1"
       },
       "ios": {
-        "image": "macos-sequoia-15.6-xcode-26.2"
+        "image": "macos-sequoia-15.6-xcode-26.2",
+        "buildConfiguration": "Release"
+      }
+    },
+    "production": {
+      "distribution": "store",
+      "environment": "production",
+      "env": {
+        "EXPO_PUBLIC_APP_ENV": "production",
+        "EXPO_PUBLIC_BACKEND_URL": "https://daily-trivia-e7ge.onrender.com",
+        "EXPO_PUBLIC_API_VERSION": "1"
+      },
+      "ios": {
+        "image": "macos-sequoia-15.6-xcode-26.2",
+        "buildConfiguration": "Release"
       },
       "channel": "production"
     }
