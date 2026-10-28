@@ -35,3 +35,24 @@ The OTA patch is applied after download and a subsequent app restart under the
 existing native update configuration. It does not replace the original bundle
 embedded in fresh installations; 1.1.5 includes production settings from its
 first launch.
+
+## Published repair and completed build
+
+- Legacy channel `staging` points to the dedicated `production-admob-repair`
+  branch. This is a production delivery route for existing store installations.
+- iOS 1.1.3 update group: `70bc1ff6-85fc-42be-8f66-6a1155bbe969`.
+  Source: `9d4626513f704c70eabf6ee6c8006b09b41b085e`.
+- iOS 1.1.4 update group: `4a337e95-bae5-4c7b-8786-3870ba1fc388`.
+  Source: `3fe366f4a2aafb5db9da7569338698168335e652`.
+- Both runtimes were requested through the actual Expo update protocol. The
+  served bundle matched the locally validated artifact hash and contained the
+  production banner/interstitial IDs.
+- Production build ID: `ba203365-ef55-4695-ba7f-a25df9adb960`.
+  Build source: `7f830f866459f795246cf63c944f27ae33e6be21`.
+- The completed 1.1.5 (157) IPA was downloaded and its native production channel,
+  runtime version, AdMob app ID, production ad unit IDs, and API URL verified.
+- TypeScript validation and all 126 mobile tests passed. The production
+  advertisement validation hook also passed on the EAS build server.
+- Scheduled App Store Connect upload ID:
+  `4784a4de-5f4c-438e-8dfd-b176b89edc90`. Upload completion and Apple review are
+  distinct steps; this identifier does not by itself imply review submission.
