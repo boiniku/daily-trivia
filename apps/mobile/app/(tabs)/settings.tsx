@@ -9,6 +9,8 @@ import { useAuth } from '../../contexts/AuthContext';
 import LoginModal from '../../components/LoginModal';
 import { TriviaGeofenceManager, TriviaGeofenceStatus } from '../../managers/TriviaGeofenceManager';
 import Constants from 'expo-constants';
+import * as Updates from 'expo-updates';
+import { syncInstalledWidgetTrivia, syncWidgetIdentity } from '../../utils/widgetSync';
 
 export default function SettingsScreen() {
     const router = useRouter();
@@ -17,6 +19,55 @@ export default function SettingsScreen() {
     const [loginVisible, setLoginVisible] = useState(false);
     const [notificationStatus, setNotificationStatus] = useState<TriviaGeofenceStatus>('off');
     const [isUpdatingNotifications, setIsUpdatingNotifications] = useState(false);
+    const [isCheckingUpdate, setIsCheckingUpdate] = useState(false);
+    const [isSyncingWidget, setIsSyncingWidget] = useState(false);
+
+    const checkForAppUpdate = async () => {
+        if (isCheckingUpdate) return;
+        if (!Updates.isEnabled) {
+            Alert.alert('アプリの更新', 'このアプリでは追加更新を利用できません。App Storeの更新をご確認ください。');
+            return;
+        }
+        setIsCheckingUpdate(true);
+        try {
+            const result = await Updates.checkForUpdateAsync();
+            if (!result.isAvailable) {
+                Alert.alert('アプリの更新', '利用できる追加更新はありません。');
+                return;
+            }
+            await Updates.fetchUpdateAsync();
+            Alert.alert('更新の準備ができました', 'アプリを再起動して更新を適用します。', [
+                { text: 'あとで', style: 'cancel' },
+                { text: '更新を適用', onPress: () => { void Updates.reloadAsync().catch(() => Alert.alert('更新できませんでした', 'アプリを完全に終了して、再度開いてください。')); } },
+            ]);
+        } catch (error) {
+            console.warn('App update check failed:', error);
+            Alert.alert('更新を取得できませんでした', '通信状態を確認し、時間をおいてもう一度お試しください。');
+        } finally {
+            setIsCheckingUpdate(false);
+        }
+    };
+
+    const refreshWidget = async () => {
+        if (isSyncingWidget) return;
+        if (!userId) {
+            Alert.alert('ウィジェットの更新', 'アカウントの準備中です。少し待ってからもう一度お試しください。');
+            return;
+        }
+        setIsSyncingWidget(true);
+        try {
+            if (!await syncWidgetIdentity(userId)) throw new Error('Widget identity synchronization failed');
+            const synced = await syncInstalledWidgetTrivia(userId);
+            Alert.alert('ウィジェットの更新', synced
+                ? '最新の雑学を保存し、ウィジェットへ更新を通知しました。'
+                : 'ウィジェットへ接続情報を送り、更新を通知しました。ホーム画面にウィジェットが追加されていることをご確認ください。');
+        } catch (error) {
+            console.warn('Manual widget sync failed:', error);
+            Alert.alert('ウィジェットを更新できませんでした', '通信状態を確認し、もう一度お試しください。');
+        } finally {
+            setIsSyncingWidget(false);
+        }
+    };
 
     const refreshNotificationStatus = async () => {
         setNotificationStatus(await TriviaGeofenceManager.getStatus());
@@ -286,9 +337,22 @@ export default function SettingsScreen() {
                     <View style={styles.infoRow}>
                         <Text style={styles.infoLabel}>バージョン</Text>
                         <Text style={styles.infoValue}>
-                            {Constants.expoConfig?.version ?? '-'}
+                            {Constants.nativeAppVersion ?? Constants.expoConfig?.version ?? '-'}
+                            {`（${Constants.nativeBuildVersion ?? Constants.expoConfig?.ios?.buildNumber ?? '-'}）`}
                         </Text>
                     </View>
+                    <View style={styles.infoRow}>
+                        <Text style={styles.infoLabel}>更新状態</Text>
+                        <Text style={styles.infoValue}>{Updates.isEmbeddedLaunch ? 'インストール済みの版' : '追加更新を適用済み'}</Text>
+                    </View>
+                    <Pressable style={styles.infoRow} onPress={checkForAppUpdate} disabled={isCheckingUpdate}>
+                        <Text style={styles.infoLabel}>アプリの更新を確認</Text>
+                        {isCheckingUpdate ? <ActivityIndicator /> : <Ionicons name="refresh-outline" size={20} color={Colors.light.subtext} />}
+                    </Pressable>
+                    {Platform.OS === 'ios' && <Pressable style={styles.infoRow} onPress={refreshWidget} disabled={isSyncingWidget}>
+                        <Text style={styles.infoLabel}>ウィジェットを更新</Text>
+                        {isSyncingWidget ? <ActivityIndicator /> : <Ionicons name="refresh-outline" size={20} color={Colors.light.subtext} />}
+                    </Pressable>}
                     <Pressable style={styles.infoRow} onPress={() => Linking.openURL('https://docs.google.com/document/d/1_K7priRhIk6OSG3c_YQBngnW4uVpTcCOdIEHVN7jFnw/edit?usp=sharing')}>
                         <Text style={styles.infoLabel}>利用規約</Text>
                         <Ionicons name="chevron-forward" size={20} color={Colors.light.subtext} />

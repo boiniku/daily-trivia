@@ -1,12 +1,77 @@
 import DefaultPreference from 'react-native-default-preference';
 import { Platform } from 'react-native';
 import { getAuth, getIdToken } from '@react-native-firebase/auth';
-import { getIsWidgetInstalled } from '../modules/widget-control';
+import { getIsWidgetInstalled, reloadAllTimelines } from '../modules/widget-control';
 import { Config } from '../constants/Config';
 import { fetchWithToken } from './apiClient';
 
 const APP_GROUP_IDENTIFIER = 'group.com.dailytrivia.app';
 const widgetRequests = new Map<string, Promise<boolean>>();
+const TOKEN_TIMEOUT_MS = 5000;
+let widgetWriteQueue: Promise<unknown> = Promise.resolve();
+const serializeWidgetWrite = <T,>(operation: () => Promise<T>): Promise<T> => {
+    const pending = widgetWriteQueue.catch(() => undefined).then(operation);
+    widgetWriteQueue = pending.catch(() => undefined);
+    return pending;
+};
+
+const readWidgetToken = async (user: NonNullable<ReturnType<typeof getAuth>['currentUser']>): Promise<string | undefined> => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+        return await Promise.race([
+            getIdToken(user, false),
+            new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error('Widget token request timed out')), TOKEN_TIMEOUT_MS); }),
+        ]);
+    } catch (error) {
+        console.warn('Could not refresh widget authentication:', error);
+        return undefined;
+    } finally {
+        if (timer) clearTimeout(timer);
+    }
+};
+
+async function prepareWidgetIdentity(userId: string): Promise<boolean> {
+    if (Platform.OS !== 'ios' || !userId || getAuth().currentUser?.uid !== userId) return false;
+    const currentUser = getAuth().currentUser!;
+    const token = await readWidgetToken(currentUser);
+    if (getAuth().currentUser?.uid !== userId) return false;
+    await DefaultPreference.setName(APP_GROUP_IDENTIFIER);
+    if (getAuth().currentUser?.uid !== userId) return false;
+    const previousId = await DefaultPreference.get('user_id');
+    if (getAuth().currentUser?.uid !== userId) return false;
+    if (previousId !== userId) {
+        await DefaultPreference.set('daily_trivia', '[]');
+        if (getAuth().currentUser?.uid !== userId) return false;
+        await DefaultPreference.set('firebase_token', '');
+        if (getAuth().currentUser?.uid !== userId) return false;
+    }
+    await DefaultPreference.set('user_id', userId);
+    if (getAuth().currentUser?.uid !== userId) return false;
+    if (token) await DefaultPreference.set('firebase_token', token);
+    return getAuth().currentUser?.uid === userId;
+}
+
+/** Prime credentials even when Home has no cards or a network request fails. */
+export const syncWidgetIdentity = (userId: string): Promise<boolean> => serializeWidgetWrite(async () => {
+    try {
+        if (!await prepareWidgetIdentity(userId)) return false;
+        reloadAllTimelines();
+        return true;
+    } catch (error) {
+        console.error('Failed to prepare widget authentication:', error);
+        return false;
+    }
+});
+
+export const clearSignedOutWidgetIdentity = (): Promise<void> => serializeWidgetWrite(async () => {
+    if (Platform.OS !== 'ios' || getAuth().currentUser) return;
+    await DefaultPreference.setName(APP_GROUP_IDENTIFIER);
+    for (const [key, value] of [['user_id', ''], ['firebase_token', ''], ['daily_trivia', '[]']]) {
+        if (getAuth().currentUser) return;
+        await DefaultPreference.set(key, value);
+    }
+    if (!getAuth().currentUser) reloadAllTimelines();
+});
 
 const getEffectiveDate = () => {
     const now = new Date();
@@ -18,31 +83,16 @@ const getEffectiveDate = () => {
 
 // Cache preparation does not mark trivia as read. An installed widget, or a
 // card swipe in the app, must explicitly cause history registration.
-export const syncTriviaToWidget = async (trivias: any[], userId?: string, date = getEffectiveDate()) => {
-    if (Platform.OS !== 'ios') return;
-    if (userId && getAuth().currentUser?.uid !== userId) return;
+export const syncTriviaToWidget = (trivias: any[], userId?: string, date = getEffectiveDate()): Promise<boolean> => serializeWidgetWrite(async () => {
+    if (Platform.OS !== 'ios' || !userId || getAuth().currentUser?.uid !== userId) return false;
+    const batch = trivias.slice(0, 3);
+    if (!batch.length || batch.some(item => !item || !Number.isInteger(item.id) || item.id <= 0 || typeof item.title !== 'string' || typeof item.content !== 'string')) return false;
 
     try {
-        const currentUser = getAuth().currentUser;
-        let firebaseToken: string | undefined;
-        if (currentUser) {
-            try {
-                firebaseToken = await getIdToken(currentUser, false);
-            } catch (e) {
-                console.error('Failed to get token for widget sync:', e);
-            }
-        }
-        // Token refresh can outlive a sign-out or an account switch.
-        if (userId && getAuth().currentUser?.uid !== userId) return;
-        await DefaultPreference.setName(APP_GROUP_IDENTIFIER);
-        if (userId && getAuth().currentUser?.uid !== userId) return;
-        if (userId) await DefaultPreference.set('user_id', userId);
-        if (firebaseToken && (!userId || getAuth().currentUser?.uid === userId)) {
-            await DefaultPreference.set('firebase_token', firebaseToken);
-        }
+        if (!await prepareWidgetIdentity(userId)) return false;
 
         // Keep the batch's logical date, including when a request crosses 2 AM.
-        const widgetData = trivias.slice(0, 3).map(t => ({
+        const widgetData = batch.map(t => ({
             id: t.id ?? 0,
             title: t.title,
             content: t.content,
@@ -50,16 +100,17 @@ export const syncTriviaToWidget = async (trivias: any[], userId?: string, date =
         }));
 
         // 4. Save to UserDefaults
-        if (userId && getAuth().currentUser?.uid !== userId) return;
+        if (getAuth().currentUser?.uid !== userId) return false;
         await DefaultPreference.set('daily_trivia', JSON.stringify(widgetData));
-
-        console.log('✅ Widget data synced!', widgetData);
-
-        // The widget consumes the cache on its next timeline update.
+        if (getAuth().currentUser?.uid !== userId) return false;
+        // Saving UserDefaults does not tell an already visible widget to reload.
+        reloadAllTimelines();
+        return true;
     } catch (error) {
         console.error('Failed to sync widget data:', error);
+        return false;
     }
-};
+});
 
 export async function syncInstalledWidgetTrivia(userId: string, date = getEffectiveDate()): Promise<boolean> {
     if (Platform.OS !== 'ios' || !userId || date !== getEffectiveDate()) return false;
@@ -89,8 +140,7 @@ export async function syncInstalledWidgetTrivia(userId: string, date = getEffect
         )) throw new Error('Invalid widget trivia response');
         if (data.length === 0) return false;
         if (getAuth().currentUser?.uid !== userId) return false;
-        await syncTriviaToWidget(data, userId, date);
-        return true;
+        return await syncTriviaToWidget(data, userId, date);
     })();
 
     widgetRequests.set(key, request);

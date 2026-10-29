@@ -12,6 +12,7 @@ import { Config, getBackendUrl } from '../constants/Config';
 import { registerBackgroundFetchAsync } from '../tasks/backgroundFetch';
 import '../tasks/triviaGeofencing';
 import { MapUnlockSyncBridge } from '../components/MapUnlockSyncBridge';
+import { WidgetSyncBridge } from '../components/WidgetSyncBridge';
 
 const compareVersions = (current: string, minimum: string) => {
   const currentParts = current.split('.').map((part) => Number(part) || 0);
@@ -107,6 +108,7 @@ export default function RootLayout() {
       <ActionSheetProvider>
         <RevenueCatProvider>
           <AuthProvider>
+            <WidgetSyncBridge />
             <MapUnlockSyncBridge />
             <View style={{ flex: 1 }}>
               <Stack screenOptions={{ headerShown: false }}>

@@ -8,11 +8,18 @@ export async function getIsWidgetInstalled(): Promise<boolean> {
     if (!WidgetControl || typeof WidgetControl.getIsWidgetInstalled !== 'function') {
         return false;
     }
+    let timer: ReturnType<typeof setTimeout> | undefined;
     try {
-        return await WidgetControl.getIsWidgetInstalled() === true;
+        const result = await Promise.race([
+            WidgetControl.getIsWidgetInstalled(),
+            new Promise<boolean>(resolve => { timer = setTimeout(() => resolve(false), 3000); }),
+        ]);
+        return result === true;
     } catch (error) {
         console.warn('WidgetControl: Could not read installed widgets', error);
         return false;
+    } finally {
+        if (timer) clearTimeout(timer);
     }
 }
 

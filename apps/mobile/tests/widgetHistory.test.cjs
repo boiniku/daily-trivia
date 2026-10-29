@@ -23,20 +23,24 @@ function setupWidget({ platform = 'ios', installed = true, nativeAvailable = tru
         preferences: new Map(),
         response: { ok: true, json: async () => trivia },
         token: async () => 'firebase-token',
+        reloads: [],
     };
     const preferences = {
         async setName(value) { state.group = value; },
+        async get(key) { return state.preferences.get(key); },
         async set(key, value) {
             state.writes.push({ key, value });
             state.preferences.set(key, value);
         },
     };
+    state.preferenceApi = preferences;
     const native = nativeAvailable ? {
         async getIsWidgetInstalled() {
             state.installationChecks++;
             if (state.installed instanceof Error) throw state.installed;
             return typeof state.installed === 'function' ? state.installed() : state.installed;
         },
+        reloadAllTimelines() { state.reloads.push(new Map(state.preferences)); },
     } : {};
     state.utility = load(path.resolve(__dirname, '../utils/widgetSync.ts'), {
         'react-native': { Platform: { OS: platform } },
@@ -229,6 +233,84 @@ test('cache preparation also defaults to the local 2 AM day', async (t) => {
     assert.ok(JSON.parse(app.preferences.get('daily_trivia')).every(item => item.date === '2026-10-21'));
 });
 
+test('preparing shared widget credentials works without fetching Home cards and requests a timeline reload', async () => {
+    const app = setupWidget({ installed: false });
+    assert.equal(await app.utility.syncWidgetIdentity('user-a'), true);
+    assert.equal(app.preferences.get('user_id'), 'user-a');
+    assert.equal(app.preferences.get('firebase_token'), 'firebase-token');
+    assert.equal(app.requests.length, 0);
+    assert.equal(app.installationChecks, 0);
+    assert.equal(app.reloads.length, 1);
+    assert.equal(app.reloads[0].get('user_id'), 'user-a');
+});
+
+test('saving cards reloads a visible widget only after the complete shared cache was written', async (t) => {
+    freezeLocalTime(t);
+    const app = setupWidget();
+    assert.equal(await app.utility.syncTriviaToWidget(trivia, 'user-a'), true);
+    assert.equal(app.reloads.length, 1);
+    assert.equal(app.reloads[0].get('firebase_token'), 'firebase-token');
+    assert.deepEqual(JSON.parse(app.reloads[0].get('daily_trivia')), trivia.map(item => ({ ...item, date: '2026-10-22' })));
+});
+
+test('empty or malformed card responses never overwrite a usable widget cache', async () => {
+    const app = setupWidget();
+    app.preferences.set('daily_trivia', 'usable-cache');
+    for (const items of [[], [{ id: 0, title: 'Broken', content: 'Missing ID' }], [{ id: 1, title: 'Broken' }]]) {
+        assert.equal(await app.utility.syncTriviaToWidget(items, 'user-a'), false);
+    }
+    assert.equal(app.preferences.get('daily_trivia'), 'usable-cache');
+    assert.equal(app.reloads.length, 0);
+});
+
+test('a credential switch clears the outgoing account cache and token before the new widget identity is used', async () => {
+    const app = setupWidget();
+    app.preferences.set('user_id', 'user-b');
+    app.preferences.set('daily_trivia', 'other-account-cache');
+    app.preferences.set('firebase_token', 'other-account-token');
+    app.token = async () => { throw new Error('Offline'); };
+    assert.equal(await app.utility.syncWidgetIdentity('user-a'), true);
+    assert.equal(app.preferences.get('daily_trivia'), '[]');
+    assert.equal(app.preferences.get('firebase_token'), '');
+    assert.equal(app.reloads[0].get('user_id'), 'user-a');
+});
+
+test('a failed native cache write is not reported as a successful installed-widget refresh', async () => {
+    const app = setupWidget();
+    app.preferences.set('user_id', 'user-a');
+    app.preferenceApi.set = async () => { throw new Error('App Group write failed'); };
+    assert.equal(await app.utility.syncInstalledWidgetTrivia('user-a'), false);
+    assert.equal(app.reloads.length, 0);
+});
+
+test('startup identity initialization and Home cache preparation cannot erase each other', async (t) => {
+    freezeLocalTime(t);
+    const app = setupWidget();
+    const result = await Promise.all([
+        app.utility.syncTriviaToWidget(trivia, 'user-a'),
+        app.utility.syncWidgetIdentity('user-a'),
+    ]);
+    assert.deepEqual(result, [true, true]);
+    assert.deepEqual(JSON.parse(app.preferences.get('daily_trivia')), trivia.map(item => ({ ...item, date: '2026-10-22' })));
+    assert.equal(app.reloads.length, 2);
+});
+
+test('a stalled token refresh is bounded and preserves the same account cache', async (t) => {
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    const app = setupWidget();
+    app.preferences.set('user_id', 'user-a');
+    app.preferences.set('daily_trivia', 'usable-cache');
+    app.preferences.set('firebase_token', 'cached-token');
+    app.token = () => new Promise(() => {});
+    const pending = app.utility.syncWidgetIdentity('user-a');
+    await new Promise(resolve => setImmediate(resolve));
+    t.mock.timers.tick(5000);
+    assert.equal(await pending, true);
+    assert.equal(app.preferences.get('daily_trivia'), 'usable-cache');
+    assert.equal(app.preferences.get('firebase_token'), 'cached-token');
+    assert.equal(app.reloads.length, 1);
+});
+
 test('an account change while obtaining the widget token prevents every native cache write', async (t) => {
     freezeLocalTime(t);
     const app = setupWidget();
@@ -276,6 +358,16 @@ test('the real widget bridge accepts only a boolean true from native installatio
         });
         assert.equal(await bridge.getIsWidgetInstalled(), false);
     }
+});
+
+test('a stalled native widget configuration lookup times out without registering a widget', async (t) => {
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    const bridge = load(path.resolve(__dirname, '../modules/widget-control/index.ts'), {
+        'expo-modules-core': { requireOptionalNativeModule: () => ({ getIsWidgetInstalled: () => new Promise(() => {}) }) },
+    });
+    const result = bridge.getIsWidgetInstalled();
+    t.mock.timers.tick(3000);
+    assert.equal(await result, false);
 });
 
 function setupBackground({ userId = 'user-a', syncResult = false, error = null } = {}) {
