@@ -34,8 +34,8 @@ Applying a downloaded update requires user confirmation in the app before reload
 
 The changes use existing native methods, with feature detection for older
 binaries. Existing 1.1.3/1.1.4/1.1.5 runtimes can receive the JavaScript repair.
-The next iOS build is 1.1.5 (158), embedding the repair from first launch.
-Actual display on the user's iPhone still requires confirmation after delivery.
+Build 1.1.5 (158) embeds the repair from first launch and has been uploaded.
+The user subsequently confirmed that the widget displays trivia on their iPhone.
 
 ## Delivery evidence
 
@@ -55,6 +55,15 @@ Actual display on the user's iPhone still requires confirmation after delivery.
   1.1.5/158, matching widget extension 1.1.5/158, production update channel,
   production AdMob app/unit IDs, and the new widget initialization functions.
 
-An actual Store-device update/advertisement check and widget display check
-remain distinct from these server/artifact validations. A test device registered
-in AdMob can receive test creatives even when the compiled IDs are production.
+## User confirmation
+
+On 2026-10-29 the user confirmed that the widget now displays trivia. The reply
+did not distinguish build 158 from build 157 with the compatible OTA repair.
+
+The user also confirmed that the iPhone is registered as an AdMob test device.
+Registered devices receive test-mode advertising even with production ad units:
+https://support.google.com/admob/answer/9691433?hl=ja
+The continued test creative on that device therefore cannot verify whether a
+Store installation uses demo IDs or production IDs. Real ad delivery on an
+unregistered device has not been checked. The test-device registration was not
+changed.
