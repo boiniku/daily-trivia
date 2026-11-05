@@ -121,9 +121,7 @@ class TriviaWorkflowTests(unittest.TestCase):
         with self.assertRaises(CandidateError):
             approve_candidate(self.db, candidate.id, "test")
         self.assertEqual(self.db.query(Trivia).count(), 0)
-        refreshed = self.db.query(TriviaCandidate).filter_by(id=candidate.id).one()
-        self.assertEqual(refreshed.status, "rejected")
-        self.assertIsNone(refreshed.published_trivia_id)
+        self.assertIsNone(self.db.get(TriviaCandidate, candidate.id))
 
     def test_manual_candidate_rejects_similar_published_trivia(self):
         self.db.add(Trivia(

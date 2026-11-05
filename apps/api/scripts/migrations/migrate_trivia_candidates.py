@@ -3,6 +3,7 @@ from sqlalchemy import inspect, text
 from database import engine
 
 COLUMNS = {
+    "collection_metadata": "JSON",
     "image_url": "VARCHAR",
     "updated_at": "TIMESTAMP DEFAULT CURRENT_TIMESTAMP",
     "reviewed_at": "TIMESTAMP",
