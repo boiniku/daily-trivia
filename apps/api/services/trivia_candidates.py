@@ -384,9 +384,8 @@ def reject_candidate(db: Session, candidate_id: int, reviewed_by: str) -> Trivia
     if candidate.status != "pending":
         raise CandidateError(f"Candidate is already {candidate.status}")
 
-    candidate.status = "rejected"
-    candidate.reviewed_at = datetime.utcnow()
-    candidate.reviewed_by = reviewed_by
+    # Rejection removes temporary content and its research metadata from Neon.
+    # Retain the loaded object for the LINE reply after commit.
+    db.delete(candidate)
     db.commit()
-    db.refresh(candidate)
     return candidate

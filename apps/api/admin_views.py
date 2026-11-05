@@ -209,8 +209,9 @@ def render_csv(db):
 
 def render_candidates(db, images):
     st.header("AI収集・承認待ちの雑学")
+    st.caption("GitHub Actionsの定期収集もこの一覧に届きます。出典と本文を確認し、編集・採用・却下を選んでください。却下すると候補はデータベースから削除されます。")
     if not images.OPENAI_API_KEY:
-        st.info("AI収集はOPENAI_API_KEYの設定後に利用できます。登録済み候補の確認・承認はこのまま行えます。")
+        st.info("この画面からの手動AI収集はOPENAI_API_KEYの設定後に利用できます。GitHub Actionsで届いた候補の編集・採用・却下はキーなしで利用できます。")
     with st.form("ai_gen_form"):
         target = st.radio("収集タイプ", ["収集（通常）", "収集（地図用）"], horizontal=True, key="ai_collection_target")
         topic = st.text_input("トピック (例: 宇宙, 猫, 歴史)", placeholder="空欄なら幅広いジャンルから収集")
@@ -245,6 +246,23 @@ def render_candidates(db, images):
     labels = {item.id: f"#{item.id}: {item.title}" for item in pending}
     selected = st.selectbox("確認する候補", ids, format_func=lambda value: labels[value], key="candidate_select")
     item = by_id[selected]
+    metadata = item.collection_metadata or {}
+    if metadata.get("origin") == "regular_execution_trivia":
+        st.caption(f"定期収集: {metadata.get('collected_at', '')} / {metadata.get('target', '')}")
+        with st.expander("収集時の出典・確認メモ", expanded=True):
+            st.write(metadata.get("central_fact", ""))
+            for source in metadata.get("sources", []):
+                url = source.get("url", "")
+                st.write(source.get("page_title", ""))
+                if url.startswith(("https://", "http://")):
+                    st.link_button("収集元の記事を確認", url)
+                st.caption(f"確認日時: {source.get('checked_at', '')} / 用途: {source.get('role', '')}")
+                st.write(source.get("evidence", ""))
+                st.text(source.get("excerpt", ""))
+            if metadata.get("location_basis"):
+                st.write(metadata["location_basis"])
+            if metadata.get("notes"):
+                st.warning(metadata["notes"])
     key = f"candidate_{item.id}"
     remember_fields(f"{key}_normal", f"{key}_map")
     is_map = bool(item.map_address or item.map_prefecture)
@@ -257,6 +275,7 @@ def render_candidates(db, images):
             st.link_button("出典を開いて確認", values["source"])
         if add_map:
             st.subheader("雑学MAPの場所")
+            st.caption("座標が未確認でも候補の変更は保存できます。MAPへ採用する前に緯度・経度と地点を確認してください。")
             values.update(render_location_fields(f"{key}_location", item))
     with right:
         editor = render_image_editor(images, key, item.image_url, item.image_urls, current_sources=item.image_sources)
@@ -269,7 +288,7 @@ def render_candidates(db, images):
         try:
             if approve and not (add_normal or add_map):
                 raise ValueError("登録先を1つ以上選択してください。")
-            validate_trivia_values(**values, add_to_map=add_map)
+            validate_trivia_values(**values, add_to_map=bool(approve and add_map))
             values.update(save_images(images, editor))
             if approve:
                 result = publish_candidate(db, item.id, add_to_normal=add_normal, add_to_map=add_map, **values)
@@ -286,7 +305,7 @@ def render_candidates(db, images):
     if reject:
         try:
             reject_candidate(db, item.id, "streamlit")
-            finish_action("候補を却下しました。", f"{key}_")
+            finish_action("候補を却下し、データベースから削除しました。", f"{key}_")
         except Exception as exc:
             db.rollback()
             st.error(f"却下エラー: {exc}")

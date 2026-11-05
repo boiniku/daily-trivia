@@ -124,6 +124,7 @@ class TriviaCandidate(Base):
     map_longitude = Column(Float, nullable=True)
     map_radius = Column(Integer, nullable=True)
     map_hint = Column(String, nullable=True)
+    collection_metadata = Column(JSON, nullable=True) # Scheduled evidence; removed with candidate
     status = Column(String, default="pending", index=True) # pending, approved, rejected
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
